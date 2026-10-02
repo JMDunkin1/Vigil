@@ -778,7 +778,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.doesNotMatch(page, /document\.referrer/);
   assert.doesNotMatch(page, /history\.go/);
   assert.match(page, /color-scheme: dark/);
-  assert.match(page, /--paper: #101111/);
+  assert.match(page, /--paper: #101216/);
   assert.doesNotMatch(page, /--paper: #eee8dc/);
   assert.doesNotMatch(page, /Adaptive friction/);
   assert.doesNotMatch(page, /Intentional break/);

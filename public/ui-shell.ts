@@ -13,21 +13,31 @@ export function errorMessage(error: unknown): string {
 }
 
 export function initTheme(): void {
-  let saved;
-  try {
-    saved = localStorage.getItem("vigil-theme") || "";
-  } catch {
-    saved = "";
-  }
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
-  setTheme(saved || (prefersDark ? "dark" : "light"));
+  applyTheme(themePreference());
+  window.matchMedia?.("(prefers-color-scheme: dark)")?.addEventListener("change", () => {
+    if (themePreference() === "system") applyTheme("system");
+  });
 }
 
 export function setTheme(theme: string): void {
-  const next = theme === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
+  const next = theme === "dark" || theme === "light" ? theme : "system";
+  applyTheme(next);
   try {
     localStorage.setItem("vigil-theme", next);
   } catch {
   }
+}
+
+export function themePreference(): string {
+  try {
+    const saved = localStorage.getItem("vigil-theme");
+    return saved === "dark" || saved === "light" ? saved : "system";
+  } catch {
+    return "system";
+  }
+}
+
+function applyTheme(theme: string): void {
+  const dark = theme === "dark" || (theme === "system" && window.matchMedia?.("(prefers-color-scheme: dark)")?.matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
 }

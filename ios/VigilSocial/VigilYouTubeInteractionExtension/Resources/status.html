@@ -12,13 +12,17 @@
     h1 { font-size: 1.65rem; }
     p { color: var(--muted); font-size: .9rem; line-height: 1.55; }
     #details { font-size: .8rem; overflow-wrap: anywhere; }
-    button { width: 100%; min-height: 44px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: #222321; font: 600 .85rem var(--font-body); cursor: pointer; }
-    #allow { border-color: transparent; color: #16120f; background: var(--primary); }
+    button { width: 100%; min-height: 44px; margin-top: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: var(--surface, var(--paper-2)); font: 600 .85rem var(--font-body); cursor: pointer; }
+    #allow { border-color: transparent; color: #ffffff; background: var(--primary); }
     button:hover { border-color: var(--primary-strong); }
     #allow:hover { background: var(--primary-strong); }
-    button:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 3px; }
+    button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
     button:disabled { opacity: .55; cursor: default; }
-  </style>
+
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; --paper: #f5f6f8; --paper-2: #edf0f5; --surface: #ffffff; --ink: #1a1f2a; --muted: #596575; --line: #dde2ea; --line-strong: #bdc6d4; --primary: #315ae8; --primary-strong: #244bc9; --blue: #315ae8; --focus: #e9efff; }
+}
+</style>
 </head>
 <body>
   <div class="brand-lockup">
@@ -28,7 +32,7 @@
   <h1>YouTube controls</h1>
   <p id="status" role="status">Checking this page…</p>
   <p id="details"></p>
-  <a id="open-vigil" hidden style="display:none;width:100%;box-sizing:border-box;padding:12px;border-radius:9px;background:var(--primary);color:#16120f;text-align:center;text-decoration:none;font-weight:600">Open in Vigil</a>
+  <a id="open-vigil" hidden style="display:none;width:100%;box-sizing:border-box;padding:12px;border-radius:9px;background:var(--primary);color:#ffffff;text-align:center;text-decoration:none;font-weight:600">Open in Vigil</a>
   <button id="allow">Allow YouTube and reload</button>
   <button id="check">Check again</button>
   <script src="status.js"></script>

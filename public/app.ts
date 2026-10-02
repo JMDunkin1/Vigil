@@ -5,8 +5,8 @@ import { createAppUpdatePanel } from "./app-update.js";
 import { startDashboardRefresh } from "./dashboard-refresh.js";
 import { formHasUnsavedChanges, formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import { daysText, formatDuration, lines } from "./format.js";
-import { createSaintStage } from "./saint-stage.js";
-import { $, $$, errorMessage, initTheme } from "./ui-shell.js";
+import { nextSchedule, nextScheduleLabel, protectionStatus } from "./home-state.js";
+import { $, $$, errorMessage, initTheme, setTheme, themePreference } from "./ui-shell.js";
 import { bindWindowResizeHandles } from "./window-resize.js";
 import type {
   ActivePolicy,
@@ -81,18 +81,18 @@ let toastTimer: number | null = null;
 
 const appUpdatePanel = createAppUpdatePanel({ $, get, post, toast, errorMessage });
 const accountUi = createAccountUi();
-const saintStage = createSaintStage();
 
 boot();
 
 function boot(): void {
   initTheme();
+  $("#appearanceTheme").value = themePreference();
+  $("#appearanceTheme").addEventListener("change", () => setTheme($("#appearanceTheme").value));
   if ("vigilWindowResize" in window) document.documentElement.classList.add("electron-shell");
   bindWindowResizeHandles();
   bindNavigation();
   bindConfigurationNavigation();
   bindProtectionActions();
-  saintStage.bind();
   bindScheduleActions();
   bindProfileActions();
   bindLimitActions();
@@ -231,11 +231,6 @@ function bindProtectionActions(): void {
   const choices = $$<HTMLButtonElement>("[data-protection-level-choice]");
   let appliedLevel = normalizedProtectionLevel(Number(input.value || 1));
 
-  const setOpen = (open: boolean) => {
-    control.classList.toggle("is-open", open);
-    control.setAttribute("aria-expanded", String(open));
-    for (const choice of choices) choice.tabIndex = open ? 0 : -1;
-  };
   const preview = (level: number) => applyProtectionLevelPresentation(level, true, { input, control, label, status });
   const apply = (level: number) => {
     const normalized = normalizedProtectionLevel(level);
@@ -256,24 +251,10 @@ function bindProtectionActions(): void {
   input.addEventListener("input", () => preview(Number(input.value || 1)));
   input.addEventListener("change", () => apply(Number(input.value || 1)));
   control.addEventListener("pointerleave", () => control.classList.remove("is-settling"));
-  control.addEventListener("keydown", (event: KeyboardEvent) => {
-    if (event.key === "Escape") {
-      setOpen(false);
-      input.focus();
-    }
-  });
-  document.addEventListener("pointerdown", (event) => {
-    if (!control.contains(event.target as Node)) setOpen(false);
-  });
   for (const choice of choices) {
     choice.addEventListener("click", () => {
       if (input.disabled) return;
-      if (!control.classList.contains("is-open")) {
-        setOpen(true);
-        return;
-      }
       const requested = Number(choice.dataset.protectionLevelChoice || 1);
-      setOpen(false);
       if (requested === Number(input.value || 1)) return;
       apply(preview(requested));
     });
@@ -292,14 +273,14 @@ async function setProtectionLevel(levelValue: number): Promise<void> {
       toast(`Panic lock started for ${durationMinutes} minute${durationMinutes === 1 ? "" : "s"}`);
     } else {
       await post("/api/protection/level", { level, deviceTargets: ["computer", "phone"] });
-      toast(level === 1 ? "Filtered social restored" : "Full Brick applied");
+      toast(level === 1 ? "Focus applied" : "Brick applied");
     }
   } catch (error) {
     handleMutationError(error);
   } finally {
     await refresh();
     protectionRequestInFlight = false;
-    setProtectionButtonsDisabled(false);
+    setProtectionButtonsDisabled(activeProtectionLevel(ui.data?.state || {} as DashboardState) === 3);
   }
 }
 
@@ -316,21 +297,35 @@ function renderHome(data: DashboardData): void {
   if (!userAdjusting) {
     input.value = String(level);
     $("#protectionLevelControl").dataset.level = String(level);
-    $("#protectionLevelLabel").textContent = level === 3 ? "Panic" : `Level ${level}`;
+    $("#protectionLevelLabel").textContent = level === 3 ? "Panic" : level === 1 ? "Focus" : "Brick";
   }
   input.disabled = protectionRequestInFlight || level === 3;
-  input.setAttribute("aria-valuetext", level === 3 ? "Panic, locked for three minutes" : `Level ${level}`);
+  input.setAttribute("aria-valuetext", level === 3 ? "Panic, locked for three minutes" : level === 1 ? "Focus" : "Brick");
   for (const button of $$<HTMLButtonElement>("[data-protection-level-choice]")) {
     const selected = Number(button.dataset.protectionLevelChoice) === level;
     button.classList.toggle("is-selected", selected);
     button.setAttribute("aria-pressed", String(selected));
+    button.disabled = protectionRequestInFlight || level === 3;
   }
   if (level === 3 && active) {
     const seconds = Math.max(0, Math.ceil((new Date(active.endsAt).getTime() - Date.now()) / 1_000));
     $("#protectionLevelStatus").textContent = `${formatDuration(seconds)} locked`;
   } else if (!userAdjusting) {
-    $("#protectionLevelStatus").textContent = level === 1 ? "Filtered Social" : "Full Brick";
+    $("#protectionLevelStatus").textContent = level === 1 ? "Focus" : "Brick";
   }
+
+  const status = protectionStatus({
+    policyKind: active?.kind,
+    monitorOk: data.monitor.ok,
+    monitorError: data.monitor.lastError,
+    phaseKind: active?.phase?.kind || data.state.sessionPhase?.kind,
+    maintenanceUntil: data.protection.activeWindow?.until
+  });
+  $("#protectionStateLabel").textContent = status.label;
+  $("#vigilOrb").dataset.tone = status.tone;
+  const upcoming = nextSchedule(allScheduleEntries(data));
+  $("#nextScheduleLabel").textContent = upcoming ? nextScheduleLabel(upcoming.startsAt) : "None";
+  $("#nextScheduleLabel").title = upcoming?.name || "No enabled schedules";
 
   const phase = active?.phase || data.state.sessionPhase;
   const activeBlocks = data.limits.activeBlocks.filter((block) => new Date(block.until).getTime() > Date.now());
@@ -736,7 +731,7 @@ function fillScheduleProfileOptions(appState: DashboardState | null | undefined)
 function profileOption(profile: Profile): HTMLOptionElement {
   const option = document.createElement("option");
   option.value = profile.id;
-  option.textContent = profile.name;
+  option.textContent = profile.id === "brick-mode" ? "Brick" : profile.name;
   return option;
 }
 
@@ -747,7 +742,7 @@ function baselineProfileId(appState: DashboardState | null | undefined): string 
 }
 
 function profileName(profileId: string): string {
-  return ui.data?.state.profiles.find((profile) => profile.id === profileId)?.name || "Missing ruleset";
+  return profileId === "brick-mode" ? "Brick" : ui.data?.state.profiles.find((profile) => profile.id === profileId)?.name || "Missing ruleset";
 }
 
 function scheduleModeLabel(mode: string): string {
@@ -802,7 +797,7 @@ function renderProfiles(appState: DashboardState): void {
   const custom = !BUILT_IN_PROFILE_IDS.has(profile.id);
   $("#editProfile").disabled = !custom;
   $("#editProfile").textContent = custom ? "Edit custom profile" : "Built-in profile";
-  $("#rulesConfigStatus").textContent = profile.name;
+  $("#rulesConfigStatus").textContent = profile.id === "brick-mode" ? "Brick" : profile.name;
   $("#managedBlocklistSummary").textContent = custom
     ? `${(profile.blockedApps || []).length} apps · ${(profile.blockedSites || []).length} sites. Vigil’s unsafe-content blocklist also applies.`
     : `Built-in ruleset. Create a custom profile to edit app and site rules.`;

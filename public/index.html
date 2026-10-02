@@ -13,7 +13,7 @@
   <aside class="sidebar" aria-label="Vigil navigation">
     <div class="brand-lockup">
       <span class="brand-mark" aria-hidden="true">
-        <img src="/app-icons/jerusalem-cross.png" alt="">
+        <img src="/app-icons/blue.png" alt="">
       </span>
       <span><strong>Vigil</strong></span>
     </div>
@@ -29,7 +29,7 @@
       </button>
       <button class="nav-item" type="button" data-view-target="configuration" aria-selected="false">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.25 6.5h9.5M17.75 6.5h2M4.25 12h2M10.25 12h9.5M4.25 17.5h7.5M15.75 17.5h4"/><circle cx="15.75" cy="6.5" r="2"/><circle cx="8.25" cy="12" r="2"/><circle cx="13.75" cy="17.5" r="2"/></svg>
-        <span>Configuration</span>
+        <span>Settings</span>
       </button>
     </nav>
 
@@ -44,72 +44,24 @@
   <main class="app-main">
     <section id="view-home" class="view is-active" data-view="home">
       <div class="home-stage">
-        <div id="vigilOrb" class="vigil-orb idle" aria-hidden="true"></div>
-        <aside id="saintInfoPopover" class="saint-info-popover" role="dialog" aria-labelledby="saintInfoName" tabindex="-1" hidden>
-          <div class="saint-info-actions">
-            <nav class="saint-info-navigation" aria-label="Browse sacred portraits">
-              <button id="saintInfoPrevious" class="saint-info-navigation-button" type="button" aria-label="Show previous sacred portrait" title="Previous portrait">&larr;</button>
-              <button id="saintInfoNext" class="saint-info-navigation-button" type="button" aria-label="Show next sacred portrait" title="Next portrait">&rarr;</button>
-            </nav>
-            <button id="saintInfoClose" class="saint-info-close" type="button" aria-label="Close portrait details">&times;</button>
-          </div>
-          <p id="saintInfoEpithet" class="saint-info-eyebrow"></p>
-          <h2 id="saintInfoName"></h2>
-          <blockquote>
-            <p id="saintInfoQuote"></p>
-            <cite id="saintInfoSource"></cite>
-          </blockquote>
-        </aside>
-        <div id="saintStage" class="saint-stage" data-saint="michael">
-          <button id="saintStageButton" class="saint-artifact" type="button" aria-label="Show the next sacred portrait" aria-haspopup="dialog" aria-controls="saintInfoPopover" aria-expanded="false">
-            <img id="saintArtwork" class="saint-artwork" src="/art/saints/traditional/michael.png" alt="Saint Michael the Archangel" draggable="false">
-            <span id="saintFallback" class="saint-fallback" aria-hidden="true">M</span>
+        <section id="protectionLevelControl" class="protection-level-control" data-level="1" aria-label="Protection mode">
+          <button id="vigilOrb" class="vigil-orb idle" type="button" data-config-link="maintenance" aria-label="Protection health">
+            <svg viewBox="0 0 240 240" aria-hidden="true"><circle class="status-ring" cx="120" cy="120" r="113"/><circle class="status-dot" cx="120" cy="7" r="6"/></svg>
           </button>
-        </div>
-
-        <div id="protectionLevelControl" class="protection-level-control" data-level="1" aria-expanded="false">
-          <div class="protection-level-readout">
-            <output id="protectionLevelLabel" for="protectionLevel">Level 1</output>
-            <span id="protectionLevelStatus" aria-live="polite">Filtered Social</span>
+          <h1 id="protectionStateLabel" aria-live="polite">Checking</h1>
+          <output id="protectionLevelLabel" class="sr-only" for="protectionLevel">Focus</output>
+          <span id="protectionLevelStatus" class="sr-only" aria-live="polite">Focus</span>
+          <input id="protectionLevel" type="range" min="1" max="3" step="1" value="1" hidden aria-label="Focus, Brick, or Panic protection mode">
+          <div class="protection-level-bloom" aria-label="Choose a protection mode">
+            <button class="protection-level-choice is-selected" type="button" data-protection-level="1" data-protection-level-choice="1" aria-pressed="true">Focus</button>
+            <button class="protection-level-choice" type="button" data-protection-level="2" data-protection-level-choice="2" aria-pressed="false">Brick</button>
           </div>
-          <input id="protectionLevel" type="range" min="1" max="3" step="1" value="1" aria-label="Protection level. Level 1 keeps filtered social apps, Level 2 applies Full Brick, and Panic starts a three minute lock.">
-          <div class="protection-level-bloom" aria-hidden="true">
-            <span class="protection-level-trace"></span>
-            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="1" data-protection-level-choice="1" aria-label="Level 1, filtered social apps without Reels"><span>1</span></button>
-            <button class="protection-level-choice" type="button" tabindex="-1" data-protection-level="2" data-protection-level-choice="2" aria-label="Level 2, Full Brick"><span>2</span></button>
-            <button class="protection-level-choice protection-level-choice-panic" type="button" tabindex="-1" data-protection-level="3" data-protection-level-choice="3" aria-label="Panic, three minute lock"><span>!</span></button>
-          </div>
-        </div>
-
-        <div id="homeRuntimeStatus" class="home-runtime-status" aria-live="polite">
-          <span id="sessionTitle">Ready</span>
-          <span id="sessionCountdown">--</span>
-        </div>
-
-        <details id="emergencyPanel" class="emergency emergency-drawer" hidden>
-          <summary class="emergency-summary">
-            <span class="emergency-summary-copy">
-              <strong id="emergencyTitle">Emergency unlock</strong>
-              <span id="emergencyCopy">No pending unlock.</span>
-            </span>
-            <svg class="emergency-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
-          </summary>
-          <div class="emergency-drawer-body">
-            <p id="emergencyExplanation" class="emergency-explanation" hidden></p>
-            <div id="emergencyControls" class="emergency-controls">
-              <input id="emergencyReason" type="text" placeholder="Reason (20+ characters)">
-              <input id="emergencyPasscode" type="password" placeholder="Keyholder passcode">
-              <div class="distance-input">
-                <input id="emergencyDistanceKey" type="password" placeholder="Distance key">
-                <button class="secondary compact" type="button" data-scan-distance-key="#emergencyDistanceKey">Scan</button>
-              </div>
-              <code id="emergencyChallenge" class="typing-challenge" hidden></code>
-              <input id="emergencyChallengeInput" type="text" placeholder="Typing challenge" hidden>
-              <button id="requestEmergency" class="danger" type="button">Request</button>
-              <button id="confirmEmergency" class="danger ghost" type="button" disabled>Confirm</button>
-            </div>
-          </div>
-        </details>
+          <div id="homeRuntimeStatus" class="home-runtime-status hidden"><strong id="sessionTitle">Ready</strong><span id="sessionCountdown"></span></div>
+        </section>
+        <footer class="home-footer">
+          <button class="next-schedule" type="button" data-view-target="schedules"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="16" rx="2"/><path d="M7.5 3v4M16.5 3v4M3.5 10h17"/></svg><span>Next schedule</span><span id="nextScheduleLabel">Checking</span><svg class="schedule-chevron" viewBox="0 0 20 20" aria-hidden="true"><path d="m7 4 6 6-6 6"/></svg></button>
+          <button class="protection-level-choice protection-level-choice-panic" type="button" data-protection-level="3" data-protection-level-choice="3" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16v.1"/></svg><span>Panic</span></button>
+        </footer>
       </div>
     </section>
 
@@ -127,14 +79,14 @@
       </section>
 
       <div class="schedule-overview">
-        <div class="section-heading"><div><h2>Your schedules</h2></div><span id="scheduleCount" class="count-pill">0 schedules</span></div>
+        <div class="section-heading"><div><h2>All schedules</h2></div><span id="scheduleCount" class="count-pill">0 schedules</span></div>
         <div id="scheduleList" class="schedule-list" aria-live="polite"></div>
       </div>
     </section>
 
     <section id="view-configuration" class="view" data-view="configuration" hidden>
       <header class="page-header configuration-header">
-        <div><h1>Configuration</h1></div>
+        <div><h1>Settings</h1></div>
         <label class="config-search"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25"/><path d="m12.5 12.5 4 4"/></svg><input id="configurationSearch" type="search" aria-label="Find a setting" placeholder="Find a setting"></label>
       </header>
 
@@ -172,7 +124,7 @@
 
       <div id="configurationDetails" class="configuration-details" hidden>
         <section class="config-panel" data-config-panel="rules" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Blocking rules</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Blocking rules</h2></div></header>
           <div class="settings-surface">
             <div class="field-heading"><label for="profileSelect"><strong>Baseline ruleset</strong><small>Used whenever no stronger session is active.</small></label><select id="profileSelect"></select></div>
             <div id="profileSummary" class="managed-note"><span>✓</span><div><strong>Ruleset details</strong><p id="managedBlocklistSummary">Loading effective rules…</p></div></div>
@@ -190,7 +142,7 @@
         </section>
 
         <section class="config-panel" data-config-panel="limits" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Limits &amp; app locks</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Limits &amp; app locks</h2></div></header>
 
           <div class="settings-surface">
             <div class="section-heading"><div><h3>Time &amp; open limits</h3></div><button id="newLimit" class="button secondary" type="button">New limit</button></div>
@@ -229,7 +181,7 @@
         </section>
 
         <section class="config-panel" data-config-panel="protection" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Core protection</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Core protection</h2></div></header>
           <div class="settings-surface">
             <h3>Browser &amp; network</h3>
             <div class="switch-list">
@@ -273,7 +225,7 @@
         </section>
 
         <section class="config-panel" data-config-panel="access" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Unlock safeguards</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Unlock safeguards</h2></div></header>
           <div class="settings-surface">
             <div class="switch-list">
               <label class="switch-row"><span><strong>Protect settings changes</strong><small>Require maintenance approval to reduce protection.</small></span><input id="protectedEditsEnabled" data-setting="protectedEditsEnabled" type="checkbox"><i></i></label>
@@ -289,10 +241,34 @@
             <div class="inline-form"><input id="keyholderPasscode" type="password" placeholder="New passcode"><button class="button secondary" type="submit">Save passcode</button></div>
           </form>
           <div class="settings-surface maintenance-callout"><div><h3>Protected changes</h3><p>Open maintenance to change protected settings.</p></div><button class="button secondary" type="button" data-config-link="maintenance">Go to maintenance</button></div>
+        <details id="emergencyPanel" class="emergency emergency-drawer" hidden>
+          <summary class="emergency-summary">
+            <span class="emergency-summary-copy">
+              <strong id="emergencyTitle">Emergency unlock</strong>
+              <span id="emergencyCopy">No pending unlock.</span>
+            </span>
+            <svg class="emergency-chevron" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="m5.5 7.5 4.5 4.5 4.5-4.5"/></svg>
+          </summary>
+          <div class="emergency-drawer-body">
+            <p id="emergencyExplanation" class="emergency-explanation" hidden></p>
+            <div id="emergencyControls" class="emergency-controls">
+              <input id="emergencyReason" type="text" placeholder="Reason (20+ characters)">
+              <input id="emergencyPasscode" type="password" placeholder="Keyholder passcode">
+              <div class="distance-input">
+                <input id="emergencyDistanceKey" type="password" placeholder="Distance key">
+                <button class="secondary compact" type="button" data-scan-distance-key="#emergencyDistanceKey">Scan</button>
+              </div>
+              <code id="emergencyChallenge" class="typing-challenge" hidden></code>
+              <input id="emergencyChallengeInput" type="text" placeholder="Typing challenge" hidden>
+              <button id="requestEmergency" class="danger" type="button">Request</button>
+              <button id="confirmEmergency" class="danger ghost" type="button" disabled>Confirm</button>
+            </div>
+          </div>
+        </details>
         </section>
 
         <section class="config-panel" data-config-panel="devices" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>iPhone &amp; devices</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>iPhone &amp; devices</h2></div></header>
           <form id="iosForm" class="settings-surface">
             <div class="section-heading"><div><h3 id="iosStatusTitle">Vigil content filter</h3><p id="iosStatusText">Checking phone policy…</p></div><span id="iosStatus" class="count-pill">Ready</span></div>
             <div class="switch-list">
@@ -310,18 +286,19 @@
         </section>
 
         <section class="config-panel" data-config-panel="appearance" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Appearance</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Appearance</h2></div></header>
+          <div class="settings-surface"><label for="appearanceTheme">Theme</label><select id="appearanceTheme"><option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select><p class="field-note">Choose what feels comfortable. Protection stays the same.</p></div>
           <fieldset class="settings-surface icon-picker">
             <legend>App icon</legend>
-            <label><input type="radio" name="appIconTheme" value="jerusalem-cross"><span class="icon-preview"><img src="/app-icons/jerusalem-cross.png" alt=""></span><span><strong>Jerusalem Cross</strong></span></label>
-            <label><input type="radio" name="appIconTheme" value="sacred-heart"><span class="icon-preview"><img src="/app-icons/sacred-heart.png" alt=""></span><span><strong>Sacred Heart</strong></span></label>
-            <label><input type="radio" name="appIconTheme" value="saint-michael"><span class="icon-preview"><img src="/app-icons/saint-michael.png" alt=""></span><span><strong>Saint Michael</strong></span></label>
+            <label><input type="radio" name="appIconTheme" value="blue"><span class="icon-preview"><img src="/app-icons/blue.png" alt=""></span><span><strong>Blue</strong></span></label>
+            <label><input type="radio" name="appIconTheme" value="graphite"><span class="icon-preview"><img src="/app-icons/graphite.png" alt=""></span><span><strong>Graphite</strong></span></label>
+            <label><input type="radio" name="appIconTheme" value="mist"><span class="icon-preview"><img src="/app-icons/mist.png" alt=""></span><span><strong>Mist</strong></span></label>
             <p id="iconThemeStatus" class="field-note">Loading icon…</p>
           </fieldset>
         </section>
 
         <section class="config-panel" data-config-panel="maintenance" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Health &amp; maintenance</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Health &amp; maintenance</h2></div></header>
           <div class="settings-surface">
             <div class="section-heading"><div><h3>Protection health</h3></div><span id="healthSummary" class="count-pill">Checking</span></div>
             <div id="hardeningAudit" class="health-list"></div>

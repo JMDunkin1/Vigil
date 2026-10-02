@@ -63,19 +63,20 @@ const protectionBrandIcon = `data:image/png;base64,${readFileSync(new URL("../..
 
 // Shared by the blocked and companion pages; static extension pages use the same styles.
 const protectionPageCss = `
-/* Vigil protection surfaces: charcoal, copper, and editorial serif headings.
+/* Vigil protection surfaces: neutral surfaces, blue actions, and system typography.
    Keep aligned with public/focused-redesign.css and the server protection pages. */
 :root {
   color-scheme: dark;
-  --paper: #101111;
-  --paper-2: #161717;
-  --ink: #f0ece5;
-  --muted: #aaa398;
-  --primary: #b77952;
-  --primary-strong: #d5a16b;
-  --line: rgba(235, 225, 203, .14);
+  --paper: #101216;
+  --paper-2: #14171d;
+  --ink: #f4f6fa;
+  --muted: #a4adb8;
+  --primary: #315ae8;
+  --primary-strong: #244bc9;
+  --blue: #89abff;
+  --line: rgba(210, 220, 240, .14);
   --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
-  --font-display: "Iowan Old Style", Baskerville, Georgia, serif;
+  --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
   -webkit-text-size-adjust: 100%;
   background: var(--paper);
   color: var(--ink);
@@ -90,7 +91,7 @@ body {
   place-items: center;
   padding: max(40px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
   background:
-    radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .10), transparent 34rem),
+    radial-gradient(circle at 78% -8%, rgba(49, 90, 232, .10), transparent 34rem),
     linear-gradient(180deg, var(--paper), var(--paper-2));
 }
 main { width: min(560px, 100%); }
@@ -98,7 +99,7 @@ main { width: min(560px, 100%); }
 /* The logo is decoration, not page media. Keeping it out of the media DOM
    prevents a flagged word in a block explanation from hiding its whole panel. */
 .brand-mark { display: block; width: 44px; height: 44px; flex: 0 0 auto; background: url("${protectionBrandIcon}") center / contain no-repeat; }
-.eyebrow { margin: 0; color: var(--primary-strong); font-size: .72rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+.eyebrow { margin: 0; color: var(--blue); font-size: .72rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
 h1 {
   max-width: 16ch;
   margin: 0;
@@ -129,7 +130,7 @@ h1 {
   border: 1px solid transparent;
   border-radius: 9px;
   background: var(--primary);
-  color: #16120f;
+  color: #ffffff;
   font-size: .94rem;
   font-weight: 700;
   line-height: 1.4;
@@ -138,7 +139,7 @@ h1 {
 }
 .escape-actions a:hover { background: var(--primary-strong); }
 .escape-actions a:active { transform: translateY(1px); }
-.escape-actions a:focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 4px; }
+.escape-actions a:focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
 strong { color: var(--ink); }
 @media (max-width: 520px) {
   .brand-lockup { margin-bottom: 28px; }
@@ -156,7 +157,11 @@ export function companionPage(): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Open Vigil</title>
-  <style>${protectionPageCss}</style>
+  <style>${protectionPageCss}
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; --paper: #f5f6f8; --paper-2: #edf0f5; --surface: #ffffff; --surface-strong: #ffffff; --ink: #1a1f2a; --muted: #596575; --line: #dde2ea; --line-strong: #bdc6d4; --primary: #315ae8; --primary-strong: #244bc9; --blue: #315ae8; --focus: #e9efff; }
+}
+</style>
 </head>
 <body>
   <main>
@@ -222,7 +227,11 @@ export function blockedPage(input: PageInput): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Blocked · Vigil</title>
-  <style>${protectionPageCss}</style>
+  <style>${protectionPageCss}
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; --paper: #f5f6f8; --paper-2: #edf0f5; --surface: #ffffff; --surface-strong: #ffffff; --ink: #1a1f2a; --muted: #596575; --line: #dde2ea; --line-strong: #bdc6d4; --primary: #315ae8; --primary-strong: #244bc9; --blue: #315ae8; --focus: #e9efff; }
+}
+</style>
 </head>
 <body data-vigil-block-page="1">
   <main>
@@ -273,7 +282,11 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Pause expired · Vigil</title>
-  <style>${pausePageCss()}</style>
+  <style>${pausePageCss()}
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; --paper: #f5f6f8; --paper-2: #edf0f5; --surface: #ffffff; --surface-strong: #ffffff; --ink: #1a1f2a; --muted: #596575; --line: #dde2ea; --line-strong: #bdc6d4; --primary: #315ae8; --primary-strong: #244bc9; --blue: #315ae8; --focus: #e9efff; }
+}
+</style>
 </head>
 <body data-vigil-intentional-use="1">
   <main class="expired-shell">
@@ -294,7 +307,11 @@ export function pausePage({ url, state, port = PORT }: PageInput): string {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Intentional Use · Vigil</title>
-  <style>${activePausePageCss()}</style>
+  <style>${activePausePageCss()}
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; --paper: #f5f6f8; --paper-2: #edf0f5; --surface: #ffffff; --surface-strong: #ffffff; --ink: #1a1f2a; --muted: #596575; --line: #dde2ea; --line-strong: #bdc6d4; --primary: #315ae8; --primary-strong: #244bc9; --blue: #315ae8; --focus: #e9efff; }
+}
+</style>
 </head>
 <body data-vigil-intentional-use="1">
   <div id="breathGuide" class="breath-guide" aria-hidden="true">
@@ -435,13 +452,15 @@ function activePausePageCss() {
   return `
     :root {
       color-scheme: dark;
-      --paper: #101111;
-      --paper-2: #161717;
-      --ink: #f0ece5;
-      --muted: #aaa398;
-      --primary: #b77952;
-      --primary-strong: #d5a16b;
-      --focus: rgba(213, 161, 107, .28);
+      --paper: #101216;
+      --paper-2: #14171d;
+      --surface: #191c22;
+      --ink: #f4f6fa;
+      --muted: #a4adb8;
+      --primary: #315ae8;
+      --primary-strong: #244bc9;
+  --blue: #89abff;
+      --focus: rgba(137, 171, 255, .28);
       --edge: clamp(22px, 4vh, 42px);
     }
     * { box-sizing: border-box; }
@@ -453,8 +472,8 @@ function activePausePageCss() {
       overflow: hidden;
       color: var(--ink);
       background:
-        radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem),
-        radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem),
+        radial-gradient(circle at 78% -8%, rgba(49, 90, 232, .08), transparent 34rem),
+        radial-gradient(circle at 28% 106%, rgba(49, 90, 232, .04), transparent 30rem),
         linear-gradient(180deg, var(--paper), var(--paper-2));
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
     }
@@ -478,7 +497,7 @@ function activePausePageCss() {
       max-width: 13ch;
       margin: 0;
       color: var(--ink);
-      font: 600 clamp(2.5rem, 5vw, 3.75rem)/1.08 "Iowan Old Style", Baskerville, Georgia, serif;
+      font: 600 clamp(2.5rem, 5vw, 3.75rem)/1.08 -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
       letter-spacing: -.04em;
       text-wrap: balance;
     }
@@ -503,10 +522,10 @@ function activePausePageCss() {
     }
     .breath-line {
       z-index: 2;
-      background: linear-gradient(90deg, rgba(213, 161, 107, .48), var(--primary-strong) 8%, var(--primary-strong) 92%, rgba(213, 161, 107, .48));
+      background: linear-gradient(90deg, rgba(137, 171, 255, .48), var(--primary-strong) 8%, var(--primary-strong) 92%, rgba(137, 171, 255, .48));
       box-shadow:
-        0 0 0 1px rgba(213, 161, 107, .08),
-        0 0 18px rgba(183, 121, 82, .18);
+        0 0 0 1px rgba(137, 171, 255, .08),
+        0 0 18px rgba(49, 90, 232, .18);
     }
     .breath-line::before {
       content: "";
@@ -514,7 +533,7 @@ function activePausePageCss() {
       inset: -8px 2%;
       border-radius: inherit;
       pointer-events: none;
-      background: rgba(213, 161, 107, .18);
+      background: rgba(137, 171, 255, .18);
       filter: blur(10px);
       opacity: .68;
     }
@@ -525,7 +544,7 @@ function activePausePageCss() {
       left: 8%;
       width: 18%;
       border-radius: inherit;
-      background: linear-gradient(90deg, transparent, rgba(255, 225, 190, .92), transparent);
+      background: linear-gradient(90deg, transparent, rgba(244, 246, 250, .92), transparent);
       filter: blur(1px);
       opacity: .72;
       animation: glint-drift 3.8s cubic-bezier(.45, 0, .55, 1) infinite alternate;
@@ -533,7 +552,7 @@ function activePausePageCss() {
     .breath-echo {
       z-index: 1;
       height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(213, 161, 107, .5) 12%, rgba(213, 161, 107, .5) 88%, transparent);
+      background: linear-gradient(90deg, transparent, rgba(137, 171, 255, .5) 12%, rgba(137, 171, 255, .5) 88%, transparent);
       opacity: .32;
     }
     .breath-echo:nth-of-type(3) { right: 3.5%; left: 3.5%; opacity: .25; }
@@ -558,13 +577,13 @@ function activePausePageCss() {
       height: 48px;
       display: grid;
       place-items: center;
-      border: 1px solid rgba(213, 161, 107, .52);
+      border: 1px solid rgba(137, 171, 255, .52);
       border-radius: 9px;
       padding: 0;
       color: var(--ink);
       overflow: hidden;
-      background: linear-gradient(135deg, rgba(183, 121, 82, .16), rgba(31, 31, 29, .96) 68%);
-      box-shadow: 0 0 38px rgba(183, 121, 82, .09);
+      background: var(--surface);
+      box-shadow: 0 0 38px rgba(49, 90, 232, .09);
       font-weight: 720;
       cursor: wait;
       opacity: 1;
@@ -586,9 +605,9 @@ function activePausePageCss() {
     }
     .countdown-control.finishing {
       border-color: var(--primary);
-      color: #16120f;
+      color: #ffffff;
       background: var(--primary);
-      box-shadow: 0 10px 34px rgba(183, 121, 82, .22);
+      box-shadow: 0 10px 34px rgba(49, 90, 232, .22);
       animation: continue-arrival .42s cubic-bezier(.22, 1, .36, 1);
     }
     .countdown-control.finishing #countdown,
@@ -605,7 +624,7 @@ function activePausePageCss() {
     }
     .countdown-control.ready {
       border-color: var(--primary);
-      color: #16120f;
+      color: #ffffff;
       background: var(--primary);
       cursor: pointer;
     }
@@ -614,7 +633,7 @@ function activePausePageCss() {
       transform: translateY(-1px);
     }
     .countdown-control:focus-visible {
-      outline: 2px solid var(--primary-strong);
+      outline: 2px solid var(--blue);
       outline-offset: 3px;
     }
     .status {
@@ -646,16 +665,17 @@ function pausePageCss() {
   return `
     :root {
       color-scheme: dark;
-      --paper: #101111;
-      --surface-strong: #222321;
-      --ink: #f0ece5;
-      --muted: #aaa398;
-      --line: #353532;
-      --line-strong: #575248;
-      --primary: #b77952;
-      --primary-strong: #d5a16b;
-      --accent-soft: rgba(183, 121, 82, .12);
-      --focus: rgba(213, 161, 107, .24);
+      --paper: #101216;
+      --surface-strong: #22262e;
+      --ink: #f4f6fa;
+      --muted: #a4adb8;
+      --line: #30343d;
+      --line-strong: #485265;
+      --primary: #315ae8;
+      --primary-strong: #244bc9;
+  --blue: #89abff;
+      --accent-soft: rgba(49, 90, 232, .12);
+      --focus: rgba(137, 171, 255, .24);
     }
     * { box-sizing: border-box; }
     html { min-width: 0; background: var(--paper); }
@@ -665,8 +685,8 @@ function pausePageCss() {
       padding: clamp(20px, 4vw, 52px);
       color: var(--ink);
       background:
-        radial-gradient(circle at 72% 0%, rgba(183, 121, 82, .055), transparent 28rem),
-        linear-gradient(180deg, var(--paper), #131414);
+        radial-gradient(circle at 72% 0%, rgba(49, 90, 232, .055), transparent 28rem),
+        linear-gradient(180deg, var(--paper), #13161c);
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
     }
     button, input, select { font: inherit; }
@@ -685,7 +705,7 @@ function pausePageCss() {
     button:hover:not(:disabled), .button:hover { transform: translateY(-1px); }
     button:disabled { opacity: .5; cursor: not-allowed; }
     button:focus-visible, .button:focus-visible, input:focus-visible, select:focus-visible {
-      outline: 2px solid var(--primary-strong);
+      outline: 2px solid var(--blue);
       outline-offset: 2px;
     }
     .breath-guide {
@@ -701,9 +721,9 @@ function pausePageCss() {
       right: 0;
       left: 0;
       height: 100%;
-      border-top: 1px solid rgba(213, 161, 107, .46);
-      background: linear-gradient(180deg, rgba(183, 121, 82, .08), rgba(183, 121, 82, .015) 42%, transparent);
-      box-shadow: 0 -14px 62px rgba(183, 121, 82, .12);
+      border-top: 1px solid rgba(137, 171, 255, .46);
+      background: linear-gradient(180deg, rgba(49, 90, 232, .08), rgba(49, 90, 232, .015) 42%, transparent);
+      box-shadow: 0 -14px 62px rgba(49, 90, 232, .12);
       animation: breath-rise 6s cubic-bezier(.45, 0, .55, 1) infinite;
       transition: opacity .6s ease;
       will-change: transform;
@@ -744,7 +764,7 @@ function pausePageCss() {
       height: 30px;
       display: grid;
       place-items: center;
-      border: 1px solid rgba(213, 161, 107, .46);
+      border: 1px solid rgba(137, 171, 255, .46);
       border-radius: 9px;
       color: var(--primary-strong);
       background: var(--accent-soft);
@@ -759,7 +779,7 @@ function pausePageCss() {
       border-radius: 999px;
       padding: 0 12px;
       color: var(--muted);
-      background: rgba(34, 35, 33, .72);
+      background: rgba(34, 38, 46, .72);
       font-size: .74rem;
       font-weight: 700;
     }
@@ -778,7 +798,7 @@ function pausePageCss() {
     }
     h1 {
       margin: 0;
-      font-family: "Iowan Old Style", Baskerville, Georgia, serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
       font-size: clamp(2.35rem, 7vw, 3.6rem);
       font-weight: 600;
       line-height: .98;
@@ -800,9 +820,9 @@ function pausePageCss() {
       display: grid;
       align-content: center;
       justify-items: center;
-      border: 1px solid rgba(213, 161, 107, .42);
+      border: 1px solid rgba(137, 171, 255, .42);
       border-radius: 50%;
-      background: radial-gradient(circle, rgba(183, 121, 82, .12), rgba(34, 35, 33, .72) 68%);
+      background: radial-gradient(circle, rgba(49, 90, 232, .12), rgba(34, 38, 46, .72) 68%);
     }
     .timer strong {
       color: var(--ink);
@@ -850,7 +870,7 @@ function pausePageCss() {
       color: var(--ink);
       background: var(--surface-strong);
     }
-    input::placeholder { color: #77736c; }
+    input::placeholder { color: #929dac; }
     input:focus-visible, select:focus-visible { border-color: var(--primary); }
     .alternatives {
       margin-top: 24px;
@@ -876,7 +896,7 @@ function pausePageCss() {
       border-radius: 999px;
       padding: 0 10px;
       color: var(--ink);
-      background: rgba(34, 35, 33, .68);
+      background: rgba(34, 38, 46, .68);
       font-size: .7rem;
       font-weight: 660;
       text-align: left;
@@ -887,7 +907,7 @@ function pausePageCss() {
     }
     .choice.selected {
       border-color: var(--primary);
-      color: #f7e8d8;
+      color: #f4f6fa;
       background: var(--accent-soft);
     }
     .meta-line {
@@ -906,7 +926,7 @@ function pausePageCss() {
     }
     .primary {
       border-color: var(--primary);
-      color: #17130f;
+      color: #ffffff;
       background: var(--primary);
     }
     .primary:hover:not(:disabled), .button.primary:hover { background: var(--primary-strong); }

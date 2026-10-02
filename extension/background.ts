@@ -566,7 +566,7 @@ async function performCheckUrl(
       }
     }
   } else {
-    await setBadge(tabId, "", "#b77952");
+    await setBadge(tabId, "", "#315ae8");
     if (!await isCurrentTabRequest(tabId, generation, url, options.documentId)) {
       return await supersedingCheckResult(tabId, generation, options);
     }

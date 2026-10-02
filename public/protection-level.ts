@@ -4,8 +4,8 @@ export function normalizedProtectionLevel(requestedLevel: number): number {
 
 export function protectionLevelStatus(level: number): string {
   const normalized = normalizedProtectionLevel(level);
-  if (normalized === 1) return "Filtered Social";
-  if (normalized === 2) return "Full Brick";
+  if (normalized === 1) return "Focus";
+  if (normalized === 2) return "Brick";
   return "3 min lock";
 }
 
@@ -22,7 +22,7 @@ export function applyProtectionLevelPresentation(
   const level = normalizedProtectionLevel(requestedLevel);
   elements.input.value = String(level);
   elements.control.dataset.level = String(level);
-  elements.label.textContent = level === 3 ? "Panic" : `Level ${level}`;
+  elements.label.textContent = level === 3 ? "Panic" : protectionLevelStatus(level);
   elements.status.textContent = preview
     ? (level === 3 ? "3 min lock" : "Release to apply")
     : protectionLevelStatus(level);

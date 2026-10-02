@@ -10,7 +10,7 @@ const [html, appSource, accountSource, updateSource, styles] = await Promise.all
 ]);
 
 assert.match(html, /<title>Vigil<\/title>/u);
-assert.match(html, /class="brand-mark"[\s\S]*?src="\/app-icons\/jerusalem-cross\.png"/u, "the sidebar brand must use the Jerusalem Cross app icon");
+assert.match(html, /class="brand-mark"[\s\S]*?src="\/app-icons\/blue\.png"/u, "the sidebar brand must use the neutral Vigil app icon");
 assert.doesNotMatch(html, /Focus protection|runtime-chip|runtimeDot|runtimeLabel|runtimeDetail/u, "the sidebar must omit the redundant subtitle and health summary chip");
 
 const ids = [...html.matchAll(/\bid="([A-Za-z][\w:-]*)"/g)].map((match) => match[1]);
@@ -27,7 +27,7 @@ const navButtons = [...primaryNav.matchAll(/<button class="nav-item[^>]*data-vie
 assert.deepEqual(navButtons, [
   { target: "home", label: "Home" },
   { target: "schedules", label: "Schedules" },
-  { target: "configuration", label: "Configuration" }
+  { target: "configuration", label: "Settings" }
 ], "primary navigation must expose exactly the focused three-view structure");
 assert.equal((primaryNav.match(/class="nav-item is-active"/g) || []).length, 1, "Home must be the only initially active destination");
 assert.match(primaryNav, /data-view-target="home"[^>]*aria-selected="true"/u, "Home must be selected initially");
@@ -59,9 +59,8 @@ assert.deepEqual([...missingQueries], [], "the active renderer graph must not qu
 
 assert.match(html, /id="view-home"[\s\S]*?data-protection-level="1"[\s\S]*?data-protection-level="2"[\s\S]*?data-protection-level="3"/u, "Home must expose two numbered levels and the separate Panic action");
 assert.doesNotMatch(html, /data-protection-level="4"/u, "the retired third numbered protection level must not remain in the Home selector");
-assert.match(html, /id="emergencyPanel"[\s\S]*?id="requestEmergency"[\s\S]*?id="confirmEmergency"/u, "Home must keep the protected emergency flow reachable");
-assert.match(html, /src="\/art\/saints\/traditional\/michael\.png"/u, "Home must retain Saint Michael as its initial visual anchor");
-assert.match(html, /id="saintInfoPopover"[\s\S]*?Browse sacred portraits[\s\S]*?id="saintStageButton"/u, "Home must retain the established sacred portrait interaction");
+assert.match(html, /id="emergencyPanel"[\s\S]*?id="requestEmergency"[\s\S]*?id="confirmEmergency"/u, "Settings must keep the protected emergency flow reachable");
+assert.doesNotMatch(html, /saintStage|sacred portrait|art\/saints/u, "the shell must retire decorative religious imagery");
 
 assert.match(html, /id="newSchedule"/u);
 assert.match(html, /id="scheduleList"/u);
@@ -95,9 +94,9 @@ assert.match(html, /id="protectedEditsEnabled"[^>]*data-setting="protectedEditsE
 assert.match(html, /id="requestMaintenance"[\s\S]*?id="confirmMaintenance"/u, "authenticated maintenance must remain reachable");
 assert.doesNotMatch(html, />\s*(?:Quit|Force Quit|Stop Vigil|Disable watchdog)\s*</iu, "the redesign must not expose an availability bypass");
 
-assert.match(html, /name="appIconTheme" value="jerusalem-cross"/u);
-assert.match(html, /name="appIconTheme" value="sacred-heart"/u);
-assert.match(html, /name="appIconTheme" value="saint-michael"/u);
+assert.match(html, /name="appIconTheme" value="blue"/u);
+assert.match(html, /name="appIconTheme" value="graphite"/u);
+assert.match(html, /name="appIconTheme" value="mist"/u);
 assert.match(html, /id="appUpdatePanel"[^>]*aria-busy="false"/u);
 assert.match(html, /id="appUpdateStatus"[^>]*role="status"[^>]*aria-live="polite"/u);
 assert.match(html, /id="appUpdateProgress"[^>]*max="1"[^>]*hidden/u);
@@ -111,13 +110,16 @@ assert.match(appSource, /post\("\/api\/devices\/ios\/settings"/u);
 assert.match(appSource, /\/api\/protection\/maintenance\/request/u);
 assert.match(appSource, /startDashboardRefresh/u, "dashboard polling must use the visibility-aware presentation scheduler");
 
-assert.match(styles, /--sidebar-width:\s*218px/u, "the redesign must replace the oversized legacy sidebar");
-assert.match(styles, /--bg:\s*#101111[\s\S]*?--bg-deep:\s*#0c0d0d[\s\S]*?--surface:\s*#1c1d1c[\s\S]*?--surface-raised:\s*#222321[\s\S]*?--surface-soft:\s*#242520/u, "the whole shell must use the neutral Ember surface palette");
-assert.match(styles, /--sidebar:\s*#121313/u, "the sidebar must retain the established neutral Ember background");
-assert.match(styles, /\.sidebar\s*\{[\s\S]*?radial-gradient\(circle at 24% 8%, rgba\(169, 111, 76, 0\.05\)/u, "the sidebar must retain the established warm Ember color treatment");
-assert.doesNotMatch(styles, /#111514|#0b0f0e|#171c1a|#1b211f|#202724|#1c211e|#141917|#111614|#101412|#0f1312|#222825/u, "green-tinted neutral backgrounds must not return");
-assert.match(styles, /\.home-layout\s*\{[\s\S]*?grid-template-columns:/u, "Home must use a purposeful dashboard composition");
-assert.match(styles, /\.configuration-index\s*\{[^}]*grid-template-columns:\s*repeat\(2/u, "Configuration should scan as a compact card grid at wide sizes");
-assert.match(styles, /@media \(max-width: 820px\)/u, "the redesign must handle the minimum Electron window width");
-assert.match(styles, /@media \(max-height: 650px\)/u, "the redesign must handle the minimum Electron window height");
-assert.doesNotMatch(styles, /\.audio-|\.habit-|\.journal-|\.activity-/u, "the new stylesheet must not carry legacy feature styling");
+assert.match(styles, /--sidebar-width:\s*172px/u);
+assert.match(styles, /:root\[data-theme="dark"\]/u, "the shell must honor dark appearance");
+assert.match(styles, /--bg:\s*#f5f6f8/u, "light appearance must use the neutral palette");
+assert.match(styles, /#view-home \.home-stage\s*\{[^}]*display: flex/u);
+assert.match(styles, /\.configuration-index\s*\{[^}]*grid-template-columns:\s*repeat\(2/u);
+assert.match(styles, /@media \(max-width: 820px\)/u);
+assert.match(styles, /@media \(max-height: 650px\)/u);
+assert.doesNotMatch(styles, /Iowan|Baskerville|Georgia|saint|#b77952/u);
+
+const home = html.match(/<section id="view-home"[\s\S]*?<\/footer>/u)?.[0] || "";
+assert.doesNotMatch(home, /Pause|Level 1|Full Brick|emergencyPanel/u, "Home must stay sparse with no Pause or guarded exit controls");
+assert.match(home, />Focus<\/button>[\s\S]*?>Brick<\/button>/u);
+assert.match(html, /data-config-panel="access"[\s\S]*?id="emergencyPanel"/u, "Settings must retain the guarded emergency flow");
