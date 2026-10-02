@@ -68,7 +68,7 @@ const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-searc
 const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
 assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
 assert.match(blockedPageSource, /data-vigil-block-page="1"/u);
-assert.match(blockedPageSource, /--primary: #b77952/u);
+assert.match(blockedPageSource, /--primary: #315ae8/u);
 assert.match(blockedPageSource, /<p class="eyebrow">Vigil<\/p>/u);
 assert.match(blockedPageSource, /id="leaveBlockedPage" href="about:blank">Go back/u);
 assert.match(blockedPageSource, /<script src="blocked-navigation\.js"><\/script>/u);
@@ -76,7 +76,7 @@ assert.match(blockedPageScriptSource, /location\.replace\("about:blank"\)/u);
 assert.doesNotMatch(blockedPageSource, /history\.(?:back|go)/u);
 assert.match(blockedPageScriptSource, /history\.back\(\)/u, "manual Back uses the browser's same-tab history when no verified return is available");
 assert.doesNotMatch(blockedPageScriptSource, /\nexport \{\};?\s*$/u, "the blocked-page script must be emitted as a classic extension script");
-assert.match(optionsPageSource, /--primary: #b77952/u, "the companion options page must use Vigil's current copper accent");
+assert.match(optionsPageSource, /--primary: #315ae8/u, "the companion options page must use Vigil's current blue accent");
 assert.match(optionsPageSource, /color-scheme: dark/u, "the companion options page must use the current charcoal surface");
 assert.doesNotMatch(optionsPageSource, /#126a6f|#f6f1e8|#fffcf4/u, "the companion options page must not return to the retired teal theme");
 const webAccessibleResources = extensionManifest.web_accessible_resources as Array<{ resources?: unknown }> | undefined;
@@ -108,7 +108,7 @@ assert.match(
   /const generation = \+\+pulseGeneration[\s\S]*?if \(generation !== pulseGeneration\)\s*return;[\s\S]*?handlePulseResult\(result\)/u,
   "stale pulse responses must not release a newer navigation guard"
 );
-assert.match(contentSource, /background: #b77952/u, "the injected pause overlay must use Vigil's current copper action");
+assert.match(contentSource, /background: #315ae8/u, "the injected pause overlay must use Vigil's current blue action");
 assert.doesNotMatch(contentSource, /#18345b|#142238|#d1a94d/u, "the injected pause overlay must not return to the retired navy-and-gold theme");
 assert.match(compactExtensionRuleSignature("large canonical rule payload"), /^sha256:[a-f0-9]{64}$/u);
 assert.equal(

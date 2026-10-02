@@ -1,3 +1,5 @@
+import { DEFAULT_ICON_THEME, normalizeIconTheme } from "./icon-theme.js";
+import type { IconTheme } from "./icon-theme.js";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -58,9 +60,6 @@ const DEFAULT_WINDOW_WIDTH = 750;
 const DEFAULT_WINDOW_HEIGHT = 550;
 const MIN_WINDOW_WIDTH = 680;
 const MIN_WINDOW_HEIGHT = 520;
-const ICON_THEMES = ["jerusalem-cross", "sacred-heart", "saint-michael"] as const;
-type IconTheme = typeof ICON_THEMES[number];
-const DEFAULT_ICON_THEME: IconTheme = "jerusalem-cross";
 
 interface TrayStatus {
   label: string;
@@ -1593,10 +1592,6 @@ function installMenuBarCompanion(appUrl: string): void {
     void refreshTrayStatus(appUrl);
   }, TRAY_STATUS_POLL_INTERVAL_MS);
   void refreshTrayStatus(appUrl);
-}
-
-function normalizeIconTheme(value: unknown): IconTheme | null {
-  return typeof value === "string" && ICON_THEMES.includes(value as IconTheme) ? value as IconTheme : null;
 }
 
 function loadIconThemePreference(): IconTheme {

@@ -199,7 +199,7 @@ assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-get", handleIconThe
 assert.match(mainSource, /ipcMain\.handle\("vigil:icon-theme-set", handleIconThemeSet\)/u);
 assert.doesNotMatch(mainSource, /cursorAuraWindow|CURSOR_AURA_MARGIN|vigil:cursor-aura-update/u, "the cursor glow must not create an oversized native window around Vigil");
 assert.equal(exposed.has("vigilCursorAura"), false, "the preload must not expose a bridge for a removed native aura window");
-assert.match(mainSource, /ICON_THEMES = \["jerusalem-cross", "sacred-heart", "saint-michael"\]/u);
+assert.match(mainSource, /normalizeIconTheme.*from "\.\/icon-theme\.js"/u);
 assert.match(mainSource, /!event\.senderFrame \|\| !isTrustedAppUrl\(event\.senderFrame\.url\)/u);
 assert.doesNotMatch(mainSource, /\/api\/app-update\/(?:status|start)/u);
 assert.match(updaterSource, /launchAgentRepoRoot\(app\)/u);

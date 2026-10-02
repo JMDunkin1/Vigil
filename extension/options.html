@@ -7,16 +7,17 @@
   <style>
     :root {
       color-scheme: dark;
-      --paper: #101111;
-      --paper-2: #161717;
-      --surface: #222321;
-      --ink: #f0ece5;
-      --muted: #aaa398;
-      --line: #353532;
-      --line-strong: #575248;
-      --primary: #b77952;
-      --primary-strong: #d5a16b;
-      --focus: rgba(213, 161, 107, .24);
+      --paper: #101216;
+      --paper-2: #14171d;
+      --surface: #22262e;
+      --ink: #f4f6fa;
+      --muted: #a4adb8;
+      --line: #30343d;
+      --line-strong: #485265;
+      --primary: #315ae8;
+      --primary-strong: #244bc9;
+  --blue: #89abff;
+      --focus: rgba(137, 171, 255, .24);
     }
 
     body {
@@ -25,7 +26,7 @@
       min-height: 100vh;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at 78% -8%, rgba(183, 121, 82, .08), transparent 34rem),
+        radial-gradient(circle at 78% -8%, rgba(49, 90, 232, .08), transparent 34rem),
         linear-gradient(180deg, var(--paper), var(--paper-2));
       color: var(--ink);
     }
@@ -38,7 +39,7 @@
 
     h1 {
       margin: 0 0 24px;
-      font-family: "Iowan Old Style", Baskerville, Georgia, serif;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
       font-size: 2rem;
       font-weight: 600;
       letter-spacing: -.035em;
@@ -66,13 +67,13 @@
       border: 1px solid var(--line-strong);
       border-radius: 9px;
       padding: 0 12px;
-      background: #151616;
+      background: var(--surface);
       color: var(--ink);
       font: inherit;
     }
     input:focus-visible,
     button:focus-visible {
-      outline: 2px solid var(--primary-strong);
+      outline: 2px solid var(--blue);
       outline-offset: 2px;
     }
 
@@ -97,7 +98,7 @@
 
     button[type="submit"] {
       background: var(--primary);
-      color: #16120f;
+      color: #ffffff;
     }
     button[type="submit"]:hover { background: var(--primary-strong); }
 
@@ -142,12 +143,16 @@
       border: 1px dashed var(--line);
       border-radius: 9px;
       padding: 8px 10px;
-      background: #151616;
+      background: var(--surface);
       color: var(--ink);
       font-size: 0.82rem;
       line-height: 1.35;
     }
-  </style>
+
+@media (prefers-color-scheme: light) {
+  :root { color-scheme: light; --paper: #f5f6f8; --paper-2: #edf0f5; --surface: #ffffff; --ink: #1a1f2a; --muted: #596575; --line: #dde2ea; --line-strong: #bdc6d4; --primary: #315ae8; --primary-strong: #244bc9; --blue: #315ae8; --focus: #e9efff; }
+}
+</style>
 </head>
 <body>
   <main>
