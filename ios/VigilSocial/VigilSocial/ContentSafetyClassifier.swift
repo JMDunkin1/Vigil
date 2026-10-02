@@ -135,10 +135,34 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
         let maximumDistanceCharacters: Int
     }
 
+    private struct MultilingualRule: Sendable {
+        let labels: Set<String>
+        let pattern: String
+    }
+
+    // Keep these bounded grammatical forms and normalization aligned with
+    // containsMultilingualExplicitText in src/explicitMediaContext.ts. A rule
+    // is active only when the supplied policy contains its existing label.
+    private static let multilingualRules: [MultilingualRule] = [
+        .init(labels: ["اباحي", "اباحية"], pattern: #"(?:^|[^\p{L}\p{N}])(?:(?:[وف]?ال|[بك]ال|لل|[وف]))?اباحي(?:ة|ا|ات|ون|ين)?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["فيديو جنسي", "فيديوهات جنسية"], pattern: #"(?:^|[^\p{L}\p{N}])(?:ال)?فيديو(?:هات)?[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["فيلم جنسي"], pattern: #"(?:^|[^\p{L}\p{N}])(?:ال)?فيلم[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["افلام جنسية"], pattern: #"(?:^|[^\p{L}\p{N}])(?:ال)?افلام[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["pornografia", "pornografico", "pornografica"], pattern: #"(?:^|[^\p{L}\p{N}])pornografi(?:a|co|ca)s?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["pornographie", "pornographique"], pattern: #"(?:^|[^\p{L}\p{N}])pornographi(?:e|ques?)(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["pornografie"], pattern: #"(?:^|[^\p{L}\p{N}])pornografie(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["pornografisch"], pattern: #"(?:^|[^\p{L}\p{N}])pornografisch(?:e[rmns]?)?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["порно"], pattern: #"(?:^|[^\p{L}\p{N}])порно(?:видео|фильм(?:ы|ов)?|ролик(?:и|ов)?)?(?=$|[^\p{L}\p{N}])"#),
+        .init(labels: ["порнография"], pattern: #"(?:^|[^\p{L}\p{N}])порнографи\p{Cyrillic}*(?=$|[^\p{L}\p{N}])"#)
+    ]
+    private static let latinAccentPattern = try! NSRegularExpression(pattern: #"\p{Latin}\p{M}*"#)
+
     private struct CompiledPolicy: Sendable {
         let phrases: [String]
         let terms: Set<String>
         let prefixTerms: [String]
+        let unspacedTerms: [String]
+        let multilingualPatterns: [String]
         let contextualRules: [CompiledContextualRule]
     }
 
@@ -149,11 +173,26 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
             self.policy = nil
             return
         }
-        let terms = Set(policy.terms.map(Self.normalize).filter { !$0.isEmpty })
+        let multilingualTerms = Set(policy.terms.map(Self.normalizeMultilingual))
+        let multilingualRules = Self.multilingualRules.filter { !$0.labels.isDisjoint(with: multilingualTerms) }
+        // Preserve Japanese voicing marks and Korean syllables when matching
+        // these labels, rather than applying the ordinary Latin text folding.
+        let unspacedTerms = multilingualTerms.filter {
+            $0.range(of: #"[\p{Han}\p{Katakana}\p{Hangul}]"#, options: .regularExpression) != nil
+        }
+        let multilingualLabels = Set(multilingualRules.flatMap { $0.labels }).union(unspacedTerms)
+        let terms = Set(policy.terms.filter { !multilingualLabels.contains(Self.normalizeMultilingual($0)) }
+            .map(Self.normalize).filter { !$0.isEmpty })
+        // Some languages express a policy term with multiple words. Match
+        // those as bounded phrases rather than looking for a single token.
+        let phrases = Set(policy.phrases.map(Self.normalize).filter { !$0.isEmpty })
+            .union(terms.filter { $0.contains(" ") })
         self.policy = CompiledPolicy(
-            phrases: policy.phrases.map(Self.normalize).filter { !$0.isEmpty }.map { " \($0) " },
+            phrases: phrases.sorted().map { " \($0) " },
             terms: terms.subtracting(["porn", "porno"]),
             prefixTerms: ["porn", "porno"].filter { terms.contains($0) },
+            unspacedTerms: unspacedTerms.sorted(),
+            multilingualPatterns: multilingualRules.map { $0.pattern },
             contextualRules: policy.contextualRules.map { rule in
                 CompiledContextualRule(
                     contexts: Set(rule.contexts.map(Self.normalize)),
@@ -167,6 +206,13 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
     func classify(pageText: String, wasTruncated: Bool) async -> ContentSafetyVerdict {
         _ = wasTruncated
         guard let policy else { return .unknown }
+        let multilingualText = Self.normalizeMultilingual(pageText)
+        if policy.unspacedTerms.contains(where: multilingualText.contains)
+            || policy.multilingualPatterns.contains(where: {
+                multilingualText.range(of: $0, options: .regularExpression) != nil
+            }) {
+            return .sensitive
+        }
         let normalized = Self.normalize(pageText)
         let tokens = Self.tokens(normalized)
         guard !tokens.isEmpty else { return .safe }
@@ -184,6 +230,29 @@ struct ConservativePageTextClassifier: PageTextSafetyClassifying {
         // The caller records truncation for diagnostics, but long feeds should
         // not become unusable solely because they exceed a bounded inspection.
         return .safe
+    }
+
+    private static func normalizeMultilingual(_ value: String) -> String {
+        var text = value.precomposedStringWithCompatibilityMapping
+            .replacingOccurrences(of: #"[\u200b-\u200d\u2060\ufeff\u0640]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[أإآٱ]"#, with: "ا", options: .regularExpression)
+        let source = text as NSString
+        // Fold only Latin accents, as the shared helper does. Other scripts'
+        // combining marks can distinguish unrelated words and names.
+        for match in latinAccentPattern.matches(in: text, range: NSRange(location: 0, length: source.length)).reversed() {
+            let original = source.substring(with: match.range)
+            let unmarked = String(String.UnicodeScalarView(original.decomposedStringWithCanonicalMapping.unicodeScalars.filter {
+                switch $0.properties.generalCategory {
+                case .nonspacingMark, .spacingMark, .enclosingMark: return false
+                default: return true
+                }
+            }))
+            if unmarked != original, let range = Range(match.range, in: text) {
+                text.replaceSubrange(range, with: unmarked)
+            }
+        }
+        return text.lowercased()
     }
 
     private static func normalize(_ value: String) -> String {

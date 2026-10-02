@@ -12,6 +12,7 @@ export interface PhoneSuiteOptions {
 }
 
 export function parseArguments(args: string[]): { command: string; options: PhoneSuiteOptions };
+export const COMBINED_SOCIAL_SERVICE_IDS: readonly string[];
 export function socialContainerSettings(ios: unknown): Record<string, unknown>;
 export function validateSocialMigrationLedger(bytes: Uint8Array): Record<string, unknown>;
 export function activateSocialContainer(server: string, verifyLaunch: () => Promise<{ ok: boolean; detail?: string }>): Promise<void>;

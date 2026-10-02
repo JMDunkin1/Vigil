@@ -10,7 +10,8 @@ import { shouldBlockUrl } from "../src/policy.js";
 const platforms = ["x.com", "twitter.com", "bsky.app", "pixiv.net", "patreon.com", "itch.io", "creator.itch.io", "discord.com", "discordapp.com"];
 const blocked = [
   ...["X rated", "x-rated documentary", "XX_rated", "XXXX–rated", "rated X", "ｘ ｒａｔｅｄ", "x\u200brated",
-    "adult videos", "adult vids", "vids for adults", "videos adult", "spicy clips", "spicy adult", "cream pie videos", "creampie compilation", "cream-pie spicy", "xx vids", "x videos"
+    "adult videos", "adult vids", "vids for adults", "videos adult", "spicy clips", "spicy adult", "cream pie videos", "creampie compilation", "cream-pie spicy", "xx vids", "x videos",
+    "nude videos", "naked photos", "nudity compilation", "erotic films", "lewd pictures", "spicy steamy", "uncensored nude", "mature erotic clips", "naked cream pie", "nude ＶＩＤＥＯＳ"
   ].flatMap(q => ["catalog.example", "www.google.com", "www.reddit.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://catalog.example/search.php/x-rated",
   "https://catalog.example/#/search/cream%20pie%20videos",
@@ -45,7 +46,8 @@ const blocked = [
   "https://search.example/?q=adult+content+on+pixiv"
 ];
 const allowed = [
-  ...["spicy", "cream pie", "creampie", "banana cream pie recipe video", "spicy chicken videos", "adult education video", "video editing for adult learning", "Model X video", "X-Men film", "X Files documentary", "spicy recipe clips", "adult", "vids"
+  ...["spicy", "cream pie", "creampie", "banana cream pie recipe video", "spicy chicken videos", "adult education video", "video editing for adult learning", "Model X video", "X-Men film", "X Files documentary", "spicy recipe clips", "adult", "vids",
+    "nude", "naked", "erotic", "lewd", "steamy", "mature films", "uncensored interview video", "nude makeup videos", "nude figure drawing photos", "nudity anatomy video", "naked mole rat documentary", "naked eye astronomy video", "naked cake video", "spicy recipe steamy clips", "spicy news today. A long unrelated story about gardening has many pictures"
   ].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),
   "https://catalog.example/watch?id=xxxxx&tracking=x-rated",
   "https://catalog.example/article/x-rated",
@@ -93,6 +95,11 @@ for (const [expected, urls] of [[true, blocked], [false, allowed]] as const) {
     if (expected) assert.equal(evaluateExtensionCheck(state, {}, { url, event: "navigation" }).blocked, true, url);
   }
 }
+for (const query of ["Jane Example nudes naked eye", "naked cake Jane Example porn", "naked cake nude photos"]) {
+  const url = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+  assert.equal(shouldBlockUrl(profile, url), true, "an ordinary phrase cannot cancel separate explicit evidence: " + query);
+  assert.equal(Boolean(runInContext(`explicitSearchBlockRedirect(${JSON.stringify(url)})`, context)), true, query);
+}
 runInContext('location.href = "https://www.reddit.com/"', context);
 assert.equal(runInContext('containsExplicitSearchText("adult content")', context), true,
   "search-box input must use the current platform before a URL exists");
@@ -127,7 +134,8 @@ for (const hostname of ["www.reddit.com", "www.artstation.com", "www.pixiv.net",
 }
 for (const hostname of ["health.example", "news.example", "reddit.com.example.org"]) {
   const explicitTitle = runInNewContext(titlePredicateSource, { location: { protocol: "https:", hostname } }) as (value: string) => boolean;
-  for (const term of ["sex education", "adult content", "mature content"]) assert.equal(explicitTitle(term), false, `${hostname}: ${term}`);
+  for (const term of ["sex education", "adult content", "mature content", "nude", "steamy films", "uncensored interview videos", "nude makeup photos", "nude art videos", "naked mole rat documentary"]) assert.equal(explicitTitle(term), false, `${hostname}: ${term}`);
+  for (const term of ["nude videos", "naked photos", "erotic films", "lewd pictures", "uncensored nude", "spicy steamy"]) assert.equal(explicitTitle(term), true, `${hostname}: ${term}`);
   assert.equal(explicitTitle("pornography"), true, "unambiguous protections remain in force");
   assert.equal(explicitTitle("Chapter XXX"), false, "Roman numerals must not hide ordinary media");
   assert.equal(explicitTitle("xxx videos"), true, "explicit phrases remain protected");

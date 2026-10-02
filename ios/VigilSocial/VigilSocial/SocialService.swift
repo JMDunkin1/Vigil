@@ -119,9 +119,9 @@ enum LinkedInAppleAuthentication {
 
 enum InstagramSingleReelPolicy {
     static func blocksNavigation(from source: URL?, to destination: URL) -> Bool {
-        guard let source, let current = mediaRoute(source), current.kind == "reel",
+        guard let source, let current = mediaRoute(source), ["reel", "p"].contains(current.kind),
               let next = mediaRoute(destination) else { return false }
-        return next.kind != "reel" || current.id != next.id
+        return next.kind != current.kind || current.id != next.id
     }
 
     private static func mediaRoute(_ url: URL) -> (kind: String, id: String)? {
@@ -139,6 +139,10 @@ enum SocialService: String, CaseIterable, Identifiable {
     case youtube
     case snapchat
     case linkedin
+    case facebook
+    case x
+    case tiktok
+    case reddit
 
     var id: String { rawValue }
 
@@ -148,6 +152,10 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .youtube: "YouTube"
         case .snapchat: "Snapchat"
         case .linkedin: "LinkedIn"
+        case .facebook: "Facebook"
+        case .x: "X"
+        case .tiktok: "TikTok"
+        case .reddit: "Reddit"
         }
     }
 
@@ -157,6 +165,10 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .youtube: "play.rectangle"
         case .snapchat: "message"
         case .linkedin: "briefcase"
+        case .facebook: "person.2"
+        case .x: "bubble.left"
+        case .tiktok: "music.note"
+        case .reddit: "text.bubble"
         }
     }
 
@@ -180,6 +192,21 @@ enum SocialService: String, CaseIterable, Identifiable {
             // on this first-party route keeps the companion out of the public
             // Stories and Spotlight surfaces on snapchat.com.
             URL(string: "https://www.snapchat.com/web/")!
+        case .facebook, .x, .tiktok, .reddit:
+            URL(string: focusedRoutePolicy!.homeURL)!
+        }
+    }
+
+    // Posting stays inside the filtered companion. Unsupported web upload
+    // flows have no shortcut into an unrestricted original app or new host.
+    var postingURL: URL? {
+        switch self {
+        case .instagram, .youtube, .snapchat: nil
+        case .linkedin: URL(string: "https://www.linkedin.com/feed/?shareActive=true")
+        case .facebook: URL(string: "https://www.facebook.com/composer/")
+        case .x: URL(string: "https://x.com/compose/post")
+        case .tiktok: URL(string: "https://www.tiktok.com/tiktokstudio/upload?from=creator_center")
+        case .reddit: URL(string: "https://www.reddit.com/submit")
         }
     }
 
@@ -198,6 +225,8 @@ enum SocialService: String, CaseIterable, Identifiable {
         case .snapchat:
             // Leave chat-list and conversation swipes to Snapchat's web UI.
             false
+        case .facebook, .x, .tiktok, .reddit:
+            true
         }
     }
 
@@ -213,6 +242,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             true
         case .snapchat:
             false
+        case .facebook, .x, .tiktok, .reddit:
+            true
         }
     }
 
@@ -227,6 +258,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             return ["linkedin.com", "www.linkedin.com"].contains(normalized)
         case .snapchat:
             return ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(normalized)
+        case .facebook, .x, .tiktok, .reddit:
+            return focusedRoutePolicy?.hosts.contains(normalized) == true
         }
     }
 
@@ -246,6 +279,9 @@ enum SocialService: String, CaseIterable, Identifiable {
         if host == "youtube.com" || host.hasSuffix(".youtube.com") || host == "youtu.be" { return .youtube }
         if host == "linkedin.com" || host == "www.linkedin.com" { return .linkedin }
         if host == "snapchat.com" || host.hasSuffix(".snapchat.com") { return .snapchat }
+        for service in [SocialService.facebook, .x, .tiktok, .reddit] {
+            if service.isCanonicalAppHost(host) { return service }
+        }
         return nil
     }
 
@@ -275,6 +311,8 @@ enum SocialService: String, CaseIterable, Identifiable {
                 return true
             }
             return host == "accounts.snapchat.com"
+        case .facebook, .x, .tiktok, .reddit:
+            return focusedRoutePolicy?.canonicalPath(url) != nil
         }
     }
 
@@ -296,6 +334,9 @@ enum SocialService: String, CaseIterable, Identifiable {
         if self == .youtube, Self.isYouTubeEmbeddedAuthenticationFrameURL(url) {
             return true
         }
+        if focusedRoutePolicy != nil, Self.isRecaptchaFrameURL(url) {
+            return usesUnmodifiedAuthenticationDocument(mainDocumentURL)
+        }
         return allowsNavigation(to: url) && !isRestrictedSurface(url)
     }
 
@@ -304,6 +345,9 @@ enum SocialService: String, CaseIterable, Identifiable {
               url.scheme?.lowercased() == "https",
               url.port == nil || url.port == 443,
               let host = url.host?.lowercased() else { return false }
+        if let policy = focusedRoutePolicy {
+            return policy.isAuthentication(url)
+        }
         if self == .youtube {
             return host == "accounts.google.com"
                 || host == "consent.youtube.com"
@@ -368,6 +412,8 @@ enum SocialService: String, CaseIterable, Identifiable {
             let path = url.path.lowercased()
             return path == "/spotlight" || path.hasPrefix("/spotlight/")
                 || path == "/discover" || path.hasPrefix("/discover/")
+        case .facebook, .x, .tiktok, .reddit:
+            return focusedRoutePolicy?.allowsContent(url) != true
         }
     }
 
@@ -399,7 +445,13 @@ enum SocialService: String, CaseIterable, Identifiable {
                 return .advisory("Sign in with your Snapchat username, email, or phone number. Google sign-in isn’t supported in this app.")
             }
             return .advisory("Opening this allowed Snapchat page.")
+        case .facebook, .x, .tiktok, .reddit:
+            return .advisory("Opening this allowed \(displayName) page.")
         }
+    }
+
+    var focusedRoutePolicy: FocusedSocialRoutePolicy? {
+        FocusedSocialRoutePolicy.policies[rawValue]
     }
 
     private static func host(_ host: String, matches domain: String) -> Bool {
@@ -456,6 +508,118 @@ enum SocialService: String, CaseIterable, Identifiable {
         // can turn an encoded spelling into a native allow while JavaScript's
         // URL.pathname still sees a different document.
         return paths.contains(encodedPath)
+    }
+}
+
+// One source of truth for native and SPA navigation. Expanded services retain
+// exact first-party login and purposeful destinations; unknown routes fail closed.
+struct FocusedSocialRoutePolicy: Codable {
+    let hosts: [String]
+    let homeURL: String
+    let installationFlag: String
+    let authentication: [String]
+    let allowed: [String]
+    let restricted: [String]
+    let concealed: [String]
+    let controlLabels: [String]
+
+    static let configurationJSON = #"""
+    {
+      "facebook": {
+        "hosts": ["facebook.com", "www.facebook.com", "m.facebook.com", "mbasic.facebook.com", "messenger.com", "www.messenger.com"],
+        "homeURL": "https://www.facebook.com/messages/",
+        "installationFlag": "__vigilFacebookInstalled",
+        "authentication": ["^/(login(?:\\.php)?|logout(?:\\.php)?|checkpoint|recover|reg|two_factor|confirmemail)(/|$)", "^/dialog/oauth/?$"],
+        "allowed": ["^/(messages|messenger|composer|settings|notifications|friends/list|bookmarks)(/|$)", "^/(profile|story|photo|permalink|composer)\\.php$", "^/(photo|photos|posts)/[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*/?$", "^/groups/[A-Za-z0-9._-]+(?:/(posts/[A-Za-z0-9._-]+|members|about|create))?/?$", "^/[A-Za-z0-9._-]+(?:/(posts|photos|about|friends)(?:/[A-Za-z0-9._-]+)*)?/?$", "^/(new|t/[A-Za-z0-9._-]+|e2ee/t/[A-Za-z0-9._-]+)/?$"],
+        "restricted": ["^/$", "^/(watch|reel|reels|stories|marketplace|gaming|video|videos|discover|explore|feed|home|pages|events|friends/(suggestions|requests)|share|l\\.php)(/|$)", "^/(friends|groups|search)/?$"],
+        "concealed": ["[aria-label='Reels' i]", "[data-pagelet*='Reels' i]", "[data-pagelet*='Suggested' i]", "[data-pagelet*='Sponsored' i]", "[aria-label='Suggested for you' i]", "[aria-label='People you may know' i]", "[role='complementary']", "[data-testid*='recommend' i]", "[data-testid*='sponsor' i]"],
+        "controlLabels": ["reels", "watch", "videos", "gaming", "marketplace", "suggested for you", "people you may know"]
+      },
+      "x": {
+        "hosts": ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"],
+        "homeURL": "https://x.com/messages",
+        "installationFlag": "__vigilXInstalled",
+        "authentication": ["^/(login|logout|signup|account/(login_challenge|access)|i/flow/(login|signup|password_reset)|i/oauth2/authorize|oauth/authenticate)(/|$)"],
+        "allowed": ["^/(messages|notifications|settings)(/|$)", "^/i/(chat|bookmarks|lists|communities)(/|$)", "^/compose/(post|tweet)/?$", "^/search/?$", "^/[A-Za-z0-9_]{1,15}(?:/(status/[0-9]+(?:/(photo|video)/[0-9]+)?|with_replies|media|followers|following))?/?$"],
+        "restricted": ["^/$", "^/(home|explore|trending|jobs|premium|grok|i/(grok|videos|immersive|timeline|trends|connect_people|spaces)|hashtag|topics)(/|$)"],
+        "concealed": ["[data-testid='sidebarColumn']", "[data-testid='placementTracking']", "[data-testid='promotedIndicator']", "[data-testid*='recommend' i]", "[aria-label='Who to follow' i]", "[aria-label='Timeline: Trending now' i]", "[aria-label='Timeline: For you' i]"],
+        "controlLabels": ["for you", "explore", "trending", "who to follow", "videos", "grok", "spaces"]
+      },
+      "tiktok": {
+        "hosts": ["tiktok.com", "www.tiktok.com", "m.tiktok.com"],
+        "homeURL": "https://www.tiktok.com/messages",
+        "installationFlag": "__vigilTikTokInstalled",
+        "authentication": ["^/(login|signup|passport|verify)(/|$)"],
+        "allowed": ["^/(messages|inbox|notifications|settings|upload)(/|$)", "^/creator-center(?:/upload)?/?$", "^/tiktokstudio/upload/?$", "^/search/user/?$", "^/@[A-Za-z0-9._-]+(?:/(video|photo)/[0-9]+)?/?$"],
+        "restricted": ["^/$", "^/(foryou|for-you|following|friends|explore|discover|live|tag|music|channel|shop|t|embed)(/|$)"],
+        "concealed": ["[data-e2e='recommend-list-item-container']", "[data-e2e='video-recommend-card']", "[data-e2e='recommend-user-list']", "[data-e2e='suggest-accounts']", "[data-e2e='related-video']", "[data-e2e='browse-video-list']", "[class*='DivRecommend' i]", "[class*='DivRelated' i]"],
+        "controlLabels": ["for you", "following", "friends", "explore", "live", "shop", "suggested accounts", "related videos"]
+      },
+      "reddit": {
+        "hosts": ["reddit.com", "www.reddit.com", "old.reddit.com", "new.reddit.com", "sh.reddit.com"],
+        "homeURL": "https://www.reddit.com/message/inbox/",
+        "installationFlag": "__vigilRedditInstalled",
+        "authentication": ["^/(login|register|password|account/login|account/register|auth|api/v1/authorize)(/|$)"],
+        "allowed": ["^/(message|chat|notifications|settings|prefs|submit)(/|$)", "^/(user|u)/[A-Za-z0-9_-]+(?:/(comments|submitted|saved|about|m/[A-Za-z0-9_-]+))?/?$", "^/r/[A-Za-z0-9_]+(?:/(comments/[A-Za-z0-9]+(?:/[^/]+)?(?:/[A-Za-z0-9]+)?|submit|about(?:/[A-Za-z0-9_-]+)?|new|top|hot|wiki(?:/[A-Za-z0-9_/-]+)?))?/?$", "^/comments/[A-Za-z0-9]+(?:/[^/]+)?(?:/[A-Za-z0-9]+)?/?$", "^/search/?$"],
+        "restricted": ["^/$", "^/(explore|best|popular|all|trending|videos|watch|games|topics|media)(/|$)", "^/r/(all|popular|randnsfw|random)(/|$)"],
+        "concealed": ["shreddit-post[is-promoted]", "shreddit-post[nsfw]", "shreddit-post[content-type='nsfw']", "[data-testid*='recommend' i]", "[data-testid*='promot' i]", "[data-testid*='nsfw' i]", ".promotedlink", ".over18", "[class*='recommendation' i]", "[slot='right-sidebar']", "faceplate-tracker[source='post-recommendations']"],
+        "controlLabels": ["popular", "all", "explore", "trending", "related posts", "recommended for you"]
+      }
+    }
+    """#
+
+    static let policies: [String: FocusedSocialRoutePolicy] = {
+        guard let data = configurationJSON.data(using: .utf8),
+              let policies = try? JSONDecoder().decode([String: FocusedSocialRoutePolicy].self, from: data)
+        else { return [:] }
+        return policies
+    }()
+
+    var javascriptConfiguration: String {
+        guard let data = try? JSONEncoder().encode(self),
+              let value = String(data: data, encoding: .utf8) else { return "null" }
+        return value
+    }
+
+    func canonicalPath(_ url: URL) -> String? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == "https", parts.port == nil || parts.port == 443,
+              parts.user == nil, parts.password == nil,
+              hosts.contains(parts.host?.lowercased() ?? ""),
+              !parts.percentEncodedPath.contains("%"), !url.absoluteString.contains("\\"),
+              !parts.percentEncodedPath.split(separator: "/").contains(where: { $0 == "." || $0 == ".." })
+        else { return nil }
+        return parts.percentEncodedPath.isEmpty ? "/" : parts.percentEncodedPath
+    }
+
+    func isAuthentication(_ url: URL) -> Bool {
+        guard let path = canonicalPath(url) else { return false }
+        return matches(path, patterns: authentication)
+    }
+
+    func allowsContent(_ url: URL) -> Bool {
+        guard let path = canonicalPath(url) else { return false }
+        if matches(path, patterns: authentication) { return true }
+        return !matches(path, patterns: restricted) && matches(path, patterns: allowed)
+    }
+
+    private func matches(_ path: String, patterns: [String]) -> Bool {
+        patterns.contains { path.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+    }
+}
+
+enum TikTokSingleItemPolicy {
+    static func blocksNavigation(from source: URL?, to destination: URL) -> Bool {
+        guard let source, let current = itemRoute(source), let next = itemRoute(destination) else { return false }
+        return current != next
+    }
+
+    private static func itemRoute(_ url: URL) -> String? {
+        guard SocialService.tiktok.focusedRoutePolicy?.allowsContent(url) == true else { return nil }
+        let components = url.path.split(separator: "/")
+        guard components.count == 3, components[0].hasPrefix("@"),
+              ["video", "photo"].contains(String(components[1])) else { return nil }
+        return String(components[2])
     }
 }
 

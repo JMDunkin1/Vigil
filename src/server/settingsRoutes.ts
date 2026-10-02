@@ -251,6 +251,7 @@ const SETTING_MUTATIONS = {
   appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds"),
   siteRedirectEnabled: booleanSetting("siteRedirectEnabled"),
   contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled"),
+  sketchySiteMaxAgeDays: numberSetting("sketchySiteMaxAgeDays", { min: 1, max: 90 }),
   adultBlocklistEnabled: booleanSetting("adultBlocklistEnabled"),
   adultBlocklistSourceId: enumSetting("adultBlocklistSourceId", ["hagezi-nsfw", "stevenblack-porn", "blocklistproject-porn", "shadowwhisperer-adult", "custom"]),
   adultBlocklistCustomUrl: stringSetting("adultBlocklistCustomUrl"),

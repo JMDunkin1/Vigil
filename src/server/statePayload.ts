@@ -270,6 +270,7 @@ export function publicState(current: VigilState, policy: ActivePolicy | null) {
   return {
     settings: current.settings,
     adultBlocklist: current.adultBlocklist,
+    sketchySites: current.sketchySites,
     profiles: current.profiles,
     schedules: current.schedules,
     limitRules: current.limitRules || [],

@@ -246,19 +246,25 @@ assert.ok(
   };
   type SafeSearchListener = (event: TestEvent) => void;
   class TestElement {
-    anchor: { href: string } | null = null;
+    anchor: TestAnchor | null = null;
     tagName = "";
     textContent = "";
     value = "";
     attributes = new Map<string, string>();
 
-    closest(selector: string): TestElement | { href: string } | null {
+    closest(selector: string): TestElement | null {
       return selector === "a[href]" ? this.anchor : null;
     }
 
     getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
 
     querySelectorAll(): TestElement[] { return []; }
+  }
+  class TestAnchor extends TestElement {
+    constructor(readonly href: string) {
+      super();
+      this.tagName = "A";
+    }
   }
   class TestForm {
     action = "https://www.google.com/search";
@@ -403,7 +409,7 @@ assert.ok(
   }
 
   const linkTarget = new TestElement();
-  linkTarget.anchor = { href: "https://images.google.com/search?q=reference&safe=off" };
+  linkTarget.anchor = new TestAnchor("https://images.google.com/search?q=reference&safe=off");
   let linkPrevented = false;
   let linkPropagationStopped = false;
   must(listeners.get("click"), "SafeSearch click listener")({
@@ -416,7 +422,7 @@ assert.ok(
   const linkRedirect = new URL(must(assignments.at(-1), "link SafeSearch redirect"));
   assert.equal(linkRedirect.searchParams.get("safe"), "active");
 
-  linkTarget.anchor = { href: "https://duckduckgo.com/?q=encoded+p%6Frn" };
+  linkTarget.anchor = new TestAnchor("https://duckduckgo.com/?q=encoded+p%6Frn");
   must(listeners.get("click"), "explicit-search click listener")({
     target: linkTarget,
     preventDefault() {},

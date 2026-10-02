@@ -155,6 +155,7 @@ export interface AppSettings {
   appQuitEscalationSeconds: number;
   siteRedirectEnabled: boolean;
   contentFilterEnabled: boolean;
+  sketchySiteMaxAgeDays: number;
   adultBlocklistEnabled: boolean;
   adultBlocklistSourceId: string;
   adultBlocklistCustomUrl: string;
@@ -725,7 +726,7 @@ export interface IosMdmSettings {
   lastGrayscaleCommandQueuedAt: string | null;
 }
 
-export type FocusedSocialPlatformId = "instagram" | "youtube" | "snapchat" | "linkedin";
+export type FocusedSocialPlatformId = "instagram" | "youtube" | "snapchat" | "linkedin" | "facebook" | "x" | "tiktok" | "reddit";
 
 export interface FocusedSocialPlatformSettings {
   enabled: boolean;
@@ -742,6 +743,10 @@ export interface FocusedSocialPlatformSettings {
 
 export interface FocusedSocialSettings {
   linkedin: FocusedSocialPlatformSettings & { shorts: boolean };
+  facebook: FocusedSocialPlatformSettings & { shorts: boolean };
+  x: FocusedSocialPlatformSettings & { shorts: boolean };
+  tiktok: FocusedSocialPlatformSettings & { shorts: boolean };
+  reddit: FocusedSocialPlatformSettings & { shorts: boolean };
   enabled: boolean;
   /** @deprecated Persisted compatibility key; this now enables the native companion-app path. */
   forceWebClips: boolean;
@@ -778,7 +783,7 @@ export interface IosSettings {
   allowSafariHistoryClearing: boolean;
   /** Retired native Snapchat exception; normalization always resets it to false. */
   allowNativeSnapchat?: boolean;
-  /** The four fixed services share the existing Instagram app container. */
+  /** The fixed services share the existing Instagram app container. */
   socialContainer?: boolean;
   blockedAppBundleIds: string[];
   allowedAppBundleIds: string[];
@@ -821,6 +826,7 @@ export interface VigilState {
   version: number;
   createdAt: string;
   settings: AppSettings;
+  sketchySites: import("./sketchySites.js").SketchySiteEvidence[];
   adultBlocklist: AdultBlocklistState;
   profiles: Profile[];
   schedules: Schedule[];

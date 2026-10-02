@@ -38,17 +38,42 @@ export const IOS_SOCIAL_COMPANION_BUNDLE_IDS = {
   instagram: "tech.caseline.vigil.instagram",
   youtube: "tech.caseline.vigil.youtube",
   snapchat: "tech.caseline.vigil.snapchat",
-  linkedin: "tech.caseline.vigil.linkedin"
+  linkedin: "tech.caseline.vigil.linkedin",
+  facebook: "tech.caseline.vigil.facebook",
+  x: "tech.caseline.vigil.x",
+  tiktok: "tech.caseline.vigil.tiktok",
+  reddit: "tech.caseline.vigil.reddit"
 } as const satisfies Record<FocusedSocialPlatformId, string>;
 
 export const IOS_SOCIAL_COMPANION_APPS = [
   { id: "instagram", label: "Instagram", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.instagram },
   { id: "youtube", label: "YouTube", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.youtube },
   { id: "snapchat", label: "Snapchat", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.snapchat },
-  { id: "linkedin", label: "LinkedIn", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.linkedin }
+  { id: "linkedin", label: "LinkedIn", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.linkedin },
+  { id: "facebook", label: "Facebook", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.facebook },
+  { id: "x", label: "X", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.x },
+  { id: "tiktok", label: "TikTok", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.tiktok },
+  { id: "reddit", label: "Reddit", bundleId: IOS_SOCIAL_COMPANION_BUNDLE_IDS.reddit }
 ] as const;
 
 export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
+  ...([
+    ["facebook", "Facebook", "com.facebook.Facebook"],
+    ["x", "X", "com.atebits.Tweetie2"],
+    ["tiktok", "TikTok", "com.zhiliaoapp.musically"],
+    ["reddit", "Reddit", "com.reddit.Reddit"]
+  ] as const).map(([id, label, nativeBundleId]): FocusedSocialPlatformDefinition => ({
+    id, label, nativeBundleId,
+    // Document-start and native route guards in the combined app permanently
+    // enforce these surfaces. Keep Apple's scarce deny slots for priority
+    // adult/proxy policy and whole-service restrictions.
+    features: [
+      { key: "shorts", label: "Short-form video feeds", permanent: true, deniedUrls: [] },
+      { key: "explore", label: "Discovery feeds", permanent: true, deniedUrls: [] },
+      { key: "suggested", label: "Recommended content", permanent: true, deniedUrls: [] },
+      { key: "ads", label: "Ads and sponsored posts", permanent: true, deniedUrls: [] }
+    ]
+  })),
   {
     id: "linkedin", label: "LinkedIn", nativeBundleId: "com.linkedin.LinkedIn",
     features: [{
@@ -231,6 +256,10 @@ export function defaultFocusedSocialSettings(): FocusedSocialSettings {
   return {
     enabled: true,
     forceWebClips: true,
+    facebook: defaultExpandedServiceSettings(),
+    x: defaultExpandedServiceSettings(),
+    tiktok: defaultExpandedServiceSettings(),
+    reddit: defaultExpandedServiceSettings(),
     linkedin: { enabled: false, shorts: true, explore: false, suggested: false, ads: false },
     instagram: {
       enabled: true,
@@ -266,6 +295,10 @@ export function normalizeFocusedSocialSettings(value: unknown = {}, existing: Pa
   return {
     enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, true),
     forceWebClips: body.forceWebClips === undefined ? current.forceWebClips !== false : parseBoolean(body.forceWebClips, true),
+    facebook: normalizeExpandedServiceSettings(recordValue(body.facebook), current.facebook),
+    x: normalizeExpandedServiceSettings(recordValue(body.x), current.x),
+    tiktok: normalizeExpandedServiceSettings(recordValue(body.tiktok), current.tiktok),
+    reddit: normalizeExpandedServiceSettings(recordValue(body.reddit), current.reddit),
     instagram: normalizeInstagramSettings(recordValue(body.instagram), current.instagram, defaults.instagram),
     youtube: normalizeYoutubeSettings(recordValue(body.youtube), current.youtube, defaults.youtube),
     linkedin: {
@@ -302,7 +335,7 @@ export function withoutFocusedSocialDeniedUrls(values: readonly unknown[]): stri
 
 export function focusedSocialBrowserCleanupEnabled(value: unknown): boolean {
   const settings = normalizeFocusedSocialSettings(value);
-  return Boolean(settings.enabled && (settings.instagram.enabled || settings.youtube.enabled || settings.snapchat.enabled || settings.linkedin.enabled));
+  return Boolean(settings.enabled && FOCUSED_SOCIAL_PLATFORMS.some((platform) => settings[platform.id].enabled));
 }
 
 export function focusedSocialBrowserCleanupSettings(value: unknown): FocusedSocialSettings {
@@ -369,6 +402,10 @@ function mergeFocusedSocialSettings(defaults: FocusedSocialSettings, existing: P
   return {
     enabled: existing.enabled === undefined ? defaults.enabled : Boolean(existing.enabled),
     forceWebClips: existing.forceWebClips === undefined ? defaults.forceWebClips : Boolean(existing.forceWebClips),
+    facebook: { ...defaults.facebook, ...existing.facebook },
+    x: { ...defaults.x, ...existing.x },
+    tiktok: { ...defaults.tiktok, ...existing.tiktok },
+    reddit: { ...defaults.reddit, ...existing.reddit },
     linkedin: { ...defaults.linkedin, ...(recordValue(existing.linkedin) as Partial<FocusedSocialSettings["linkedin"]>) },
     instagram: {
       ...defaults.instagram,
@@ -382,6 +419,17 @@ function mergeFocusedSocialSettings(defaults: FocusedSocialSettings, existing: P
       ...defaults.snapchat,
       ...(recordValue(existing.snapchat) as Partial<FocusedSocialSettings["snapchat"]>)
     }
+  };
+}
+
+function defaultExpandedServiceSettings(): FocusedSocialSettings["facebook"] {
+  return { enabled: true, shorts: true, explore: true, suggested: true, ads: true };
+}
+
+function normalizeExpandedServiceSettings(body: UnknownRecord, current: FocusedSocialSettings["facebook"]): FocusedSocialSettings["facebook"] {
+  return {
+    enabled: body.enabled === undefined ? current.enabled !== false : parseBoolean(body.enabled, true),
+    shorts: true, explore: true, suggested: true, ads: true
   };
 }
 

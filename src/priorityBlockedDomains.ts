@@ -228,8 +228,10 @@ export const DEFAULT_FILTER_BYPASS_BLOCKED_SITES = [
   "zenmate.com"
 ] as const;
 
-/** Direct proxies confirmed to answer over plain HTTP during the audit. */
+/** Priority destinations that also require plain-HTTP enforcement. */
 export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
+  "go2offer-1.com",
+  "r.go2offer-1.com",
   "anonymizer.net",
   "anonymouse.com",
   "anonymouse.org",
@@ -277,6 +279,9 @@ export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
  * classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
+  // User-reported redirect: enforce outside Safari's overridable content blockers.
+  "go2offer-1.com",
+  "r.go2offer-1.com",
   // Whole-site Internet Archive ban, including Wayback and media subdomains.
   "archive.org",
   "xerography14macro.com",

@@ -12,7 +12,8 @@ const socialIcons = [
     source: ["Icons", "youtube-webclip.png"]
   },
   { name: "linkedin.png", source: ["Icons", "linkedin.png"] },
-  { name: "snapchat.png", source: ["Icons", "snapchat.png"] }
+  { name: "snapchat.png", source: ["Icons", "snapchat.png"] },
+  ...["facebook", "x", "tiktok", "reddit"].map((id) => ({ name: `${id}.png`, source: ["Icons", `${id}.png`] }))
 ];
 
 await copyProjectFile("package.json");

@@ -4,62 +4,40 @@ import WebKit
 
 struct SocialContainerView: View {
     @ObservedObject var container: SocialContainerStore
+    @ObservedObject private var preferences: SocialPreferences
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingOpenLink = false
+    @State private var showingSettings = false
+    @State private var showingHelp = false
     @State private var sharedLink = ""
     @State private var linkError: String?
+    @State private var now = Date()
+    @State private var trackedPostingDeadline: Date?
+
+    init(container: SocialContainerStore) {
+        self.container = container
+        preferences = container.preferences
+    }
 
     var body: some View {
         ZStack {
             ForEach(SocialService.allCases) { service in
                 if let store = container.stores[service] {
-                    SocialServiceAccessView(store: store, isServiceVisible: container.selectedService == service)
-                        .opacity(container.selectedService == service ? 1 : 0)
-                        .allowsHitTesting(container.selectedService == service)
-                        .accessibilityHidden(container.selectedService != service)
+                    VStack(spacing: 0) {
+                        // Instagram keeps its established full-size canvas and counter.
+                        // Its existing home gesture and VoiceOver actions stay available.
+                        if service != .instagram { serviceNavigation(service) }
+                        SocialServiceAccessView(store: store,
+                                                isServiceVisible: container.selectedService == service,
+                                                restriction: preferences.blockingReason(for: service, at: now))
+                    }
+                    .id(ObjectIdentifier(store))
+                    .opacity(container.selectedService == service ? 1 : 0)
+                    .allowsHitTesting(container.selectedService == service)
+                    .accessibilityHidden(container.selectedService != service)
                 }
             }
-            if container.selectedService == nil {
-                GeometryReader { geometry in
-                  ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    Spacer()
-                    Text("Vigil").font(.largeTitle.bold())
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                        ForEach(SocialService.allCases) { service in
-                            Button { container.select(service) } label: {
-                                VStack(spacing: 12) {
-                                    if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
-                                       let icon = UIImage(contentsOfFile: path) {
-                                        Image(uiImage: icon).resizable().scaledToFit()
-                                            .frame(width: 58, height: 58)
-                                            .clipShape(RoundedRectangle(cornerRadius: 13))
-                                    } else {
-                                        Image(systemName: service.systemImage).font(.largeTitle)
-                                            .frame(width: 58, height: 58)
-                                    }
-                                    Text(service.displayName).font(.headline)
-                                }
-                                .frame(maxWidth: .infinity).padding(.vertical, 24)
-                                .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                            in: RoundedRectangle(cornerRadius: 24))
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("social-launch-\(service.rawValue)")
-                        }
-                    }
-                    Button { showingOpenLink = true } label: {
-                        Label("Open a shared link", systemImage: "link")
-                    }
-                    .buttonStyle(.bordered)
-                    Text("Double-tap with three fingers to return here.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    Spacer()
-                }
-                .padding(28).frame(maxWidth: .infinity, minHeight: geometry.size.height)
-                  }
-                }
-                .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
-            }
+            if container.selectedService == nil { home }
             if !container.migrationReady {
                 VStack(spacing: 16) {
                     ProgressView()
@@ -78,60 +56,223 @@ struct SocialContainerView: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-        .background(SocialHomeGesture(action: container.showHome))
-        .accessibilityAction(named: Text("Return to apps"), container.showHome)
-        .sheet(isPresented: $showingOpenLink) {
+        .task(id: scenePhase == .active) {
+            guard scenePhase == .active else { return }
+            SocialNotifications.shared.rescheduleReminders(preferences: preferences)
+            while !Task.isCancelled {
+                now = Date()
+                container.enforceRestrictions(at: now)
+                reconcilePostingSession()
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+        .background(SocialHomeGesture(action: returnHome))
+        .accessibilityAction(named: Text("Return to apps"), returnHome)
+        .accessibilityAction(named: Text("Open settings")) { showingSettings = true }
+        .accessibilityAction(named: Text("Open help")) { showingHelp = true }
+        .sheet(isPresented: $showingSettings) { SocialSettingsView(container: container) }
+        .sheet(isPresented: $showingHelp) {
             NavigationStack {
-                Form {
-                    TextField("Paste a link", text: $sharedLink)
-                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                    Text("Open Instagram, YouTube, Snapchat, or LinkedIn in your existing Vigil session. Direct YouTube videos use watch time without a Watch Later save.")
-                        .font(.footnote).foregroundStyle(.secondary)
-                    if let linkError { Text(linkError).foregroundStyle(.red) }
-                    Button("Open in Vigil") {
-                        guard let url = URL(string: sharedLink.trimmingCharacters(in: .whitespacesAndNewlines)),
-                              SocialIncomingLink(url) != nil else {
-                            linkError = "Paste a supported link. Restricted pages stay unavailable."
-                            return
+                SocialHelpView().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showingHelp = false } } }
+            }
+        }
+        .sheet(isPresented: $showingOpenLink) { sharedLinkSheet }
+        .onChange(of: preferences.postingUntil) { _, _ in reconcilePostingSession() }
+        .onChange(of: preferences.routines) { _, _ in SocialNotifications.shared.rescheduleReminders(preferences: preferences) }
+        .onChange(of: preferences.sleepUntil) { _, _ in SocialNotifications.shared.rescheduleReminders(preferences: preferences) }
+        .onChange(of: preferences.postingUntil) { _, _ in SocialNotifications.shared.rescheduleReminders(preferences: preferences) }
+    }
+
+    private var home: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Vigil").font(.largeTitle.bold())
+                        Text("Your services").foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button { showingHelp = true; preferences.selectionFeedback() } label: { Image(systemName: "questionmark.circle").font(.title2) }
+                        .accessibilityLabel("Help")
+                        .accessibilityIdentifier("social-help")
+                    Button { showingSettings = true; preferences.selectionFeedback() } label: { Image(systemName: "gearshape").font(.title2) }
+                        .accessibilityLabel("Settings")
+                        .accessibilityIdentifier("social-settings")
+                }
+                if let end = preferences.sleepRestriction(at: now)?.until {
+                    Label("Sleep Mode until \(end.formatted(date: .abbreviated, time: .shortened))", systemImage: "moon.fill")
+                        .font(.subheadline).foregroundStyle(.secondary)
+                }
+                if let service = preferences.postingService, let end = preferences.postingUntil, end > now {
+                    HStack {
+                        Label("\(service.displayName) posting", systemImage: "square.and.pencil")
+                        Text(end, style: .timer).monospacedDigit()
+                        Spacer()
+                        Button("End") { endPostingSession() }
+                    }.font(.subheadline)
+                }
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                    ForEach(SocialService.allCases) { service in
+                        let restriction = preferences.blockingReason(for: service, at: now)
+                        Button {
+                            container.select(service)
+                            preferences.selectionFeedback()
+                        } label: {
+                            VStack(spacing: 12) {
+                                if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
+                                   let icon = UIImage(contentsOfFile: path) {
+                                    Image(uiImage: icon).resizable().scaledToFit()
+                                        .frame(width: 58, height: 58)
+                                        .clipShape(RoundedRectangle(cornerRadius: 13))
+                                } else {
+                                    Image(systemName: service.systemImage).font(.largeTitle)
+                                        .frame(width: 58, height: 58)
+                                }
+                                Text(service.displayName).font(.headline)
+                                if let restriction {
+                                    Text(restriction.name).font(.caption).foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity).padding(.vertical, 24)
+                            .background(Color(uiColor: .secondarySystemGroupedBackground),
+                                        in: RoundedRectangle(cornerRadius: 24))
                         }
-                        container.open(url)
-                        showingOpenLink = false
-                        sharedLink = ""
-                        linkError = nil
+                        .buttonStyle(.plain)
+                        .disabled(restriction != nil)
+                        .accessibilityIdentifier("social-launch-\(service.rawValue)")
+                        .accessibilityHint(restriction?.message ?? "Open your filtered session")
                     }
                 }
-                .navigationTitle("Open a shared link")
-                .toolbar { ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showingOpenLink = false }
-                } }
+                Button { showingOpenLink = true } label: { Label("Open a shared link", systemImage: "link") }
+                    .buttonStyle(.bordered)
+                Text("Double-tap with three fingers to return here from any service.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
-            .presentationDetents([.medium, .large])
+            .padding(24).frame(maxWidth: 650)
+            .frame(maxWidth: .infinity)
         }
+        .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
+    }
+
+    private func serviceNavigation(_ service: SocialService) -> some View {
+        VStack(spacing: 8) {
+          HStack(spacing: 16) {
+            Button(action: returnHome) { Label("Apps", systemImage: "square.grid.2x2") }
+                .accessibilityIdentifier("social-return-home")
+            Spacer(minLength: 0)
+            if service == .youtube, let store = container.stores[service], store.youtubePictureInPictureEnabled {
+                Button {
+                    Task { if await store.requestYouTubePictureInPicture() { preferences.selectionFeedback() } }
+                } label: { Image(systemName: "pip.enter") }
+                    .disabled(!store.youtubeExternalPlaybackAvailable)
+                    .accessibilityLabel("Start picture-in-picture")
+            }
+            Text(service.displayName).font(.subheadline.bold()).lineLimit(1)
+            Spacer(minLength: 0)
+            Menu {
+                Button("Existing account") { container.selectAccount(nil, for: service); preferences.selectionFeedback() }
+                ForEach(preferences.accounts(for: service)) { account in
+                    Button(account.name) { container.selectAccount(account.id, for: service); preferences.selectionFeedback() }
+                }
+                Divider()
+                Button("Manage accounts") { showingSettings = true }
+            } label: { Image(systemName: "person.crop.circle") }
+                .accessibilityLabel("Switch \(service.displayName) account")
+                .disabled(preferences.isBlocked(for: service, at: now))
+            Button { showingSettings = true; preferences.selectionFeedback() } label: { Image(systemName: "gearshape") }
+                .accessibilityLabel("Settings")
+          }
+          if preferences.postingService == service, let end = preferences.postingUntil, end > now {
+              HStack {
+                  Text("Posting session").foregroundStyle(.secondary)
+                  Text(end, style: .timer).monospacedDigit()
+                  Spacer()
+                  Button("End") { endPostingSession() }
+              }.font(.caption)
+          }
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 16).padding(.vertical, 10)
+        .background(Color(uiColor: .systemBackground))
+    }
+
+    private func returnHome() { container.showHome(); preferences.selectionFeedback() }
+
+    private func reconcilePostingSession() {
+        guard let end = preferences.postingUntil, let service = preferences.postingService else {
+            if trackedPostingDeadline != nil { SocialLiveActivity.end(); trackedPostingDeadline = nil }
+            return
+        }
+        guard Date() < end, !preferences.isBlocked(for: service) else { endPostingSession(); return }
+        if trackedPostingDeadline != end {
+            trackedPostingDeadline = end
+            SocialLiveActivity.start(title: "\(service.displayName) posting", endsAt: end)
+        }
+    }
+
+    private func endPostingSession() {
+        preferences.endPosting()
+        trackedPostingDeadline = nil
+        SocialLiveActivity.end()
+        container.showHome()
+    }
+
+    private var sharedLinkSheet: some View {
+        NavigationStack {
+            Form {
+                TextField("Paste a link", text: $sharedLink)
+                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                Text("Open a supported service in your existing Vigil session. Direct YouTube videos use watch time without a Watch Later save.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let linkError { Text(linkError).foregroundStyle(.red) }
+                Button("Open in Vigil") {
+                    guard let url = URL(string: sharedLink.trimmingCharacters(in: .whitespacesAndNewlines)),
+                          let link = SocialIncomingLink(url) else {
+                        linkError = "Paste a supported link. Restricted pages stay unavailable."
+                        return
+                    }
+                    if let restriction = preferences.blockingReason(for: link.service) {
+                        linkError = restriction.message
+                        return
+                    }
+                    container.open(url)
+                    showingOpenLink = false
+                    sharedLink = ""
+                    linkError = nil
+                    preferences.selectionFeedback()
+                }
+            }
+            .navigationTitle("Open a shared link")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingOpenLink = false } } }
+        }
+        .presentationDetents([.medium, .large])
     }
 }
 
-// A previously loaded web page must not stay interactive when a later profile
-// blocks this service. Check through WebKit (which observes Apple's BuiltIn
-// filter), in an isolated content world that site scripts cannot override.
+// A loaded page becomes inaccessible immediately when policy or a routine denies it.
+// The WebKit probe remains isolated from page scripts and still runs after pauses end.
 private struct SocialServiceAccessView: View {
     @ObservedObject var store: SocialWebViewStore
     let isServiceVisible: Bool
+    let restriction: SocialRestriction?
     @Environment(\.scenePhase) private var scenePhase
     @State private var accessConfirmed = false
     @State private var checking = true
 
     var body: some View {
         ZStack {
-            RootView(store: store, isServiceVisible: isServiceVisible && accessConfirmed)
-                .opacity(accessConfirmed ? 1 : 0)
-                .allowsHitTesting(accessConfirmed)
-                .accessibilityHidden(!accessConfirmed)
-            if !accessConfirmed {
+            RootView(store: store, isServiceVisible: isServiceVisible && accessConfirmed && restriction == nil)
+                .opacity(accessConfirmed && restriction == nil ? 1 : 0)
+                .allowsHitTesting(accessConfirmed && restriction == nil)
+                .accessibilityHidden(!accessConfirmed || restriction != nil)
+            if !accessConfirmed || restriction != nil {
                 VStack(spacing: 16) {
-                    if checking { ProgressView() }
-                    Text(checking ? "Opening \(store.fixedService.displayName)…" : "\(store.fixedService.displayName) is unavailable")
+                    if checking && restriction == nil { ProgressView() }
+                    Text(restriction != nil ? "\(store.fixedService.displayName) is paused" :
+                         (checking ? "Opening \(store.fixedService.displayName)…" : "\(store.fixedService.displayName) is unavailable"))
                         .font(.headline)
-                    if !checking {
+                    if let restriction { Text(restriction.message).font(.subheadline).foregroundStyle(.secondary) }
+                    else if !checking {
                         Text("Vigil could not confirm access under the current web policy. This will retry automatically when access and your connection are available.")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
@@ -143,13 +284,19 @@ private struct SocialServiceAccessView: View {
                 .environment(\.colorScheme, .dark)
             }
         }
-        .task(id: isServiceVisible && scenePhase == .active) {
-            accessConfirmed = false
-            guard isServiceVisible && scenePhase == .active else {
-                store.suspendAllMedia(relinquishExternalPlayback: scenePhase != .active)
+        .task(id: isServiceVisible && scenePhase == .active && restriction == nil) {
+            guard restriction == nil else {
+                accessConfirmed = false
+                store.suspendAllMedia(relinquishExternalPlayback: true)
                 return
             }
+            guard isServiceVisible && scenePhase == .active else {
+                await store.handleSceneActivity(scenePhase == .active, isServiceVisible: isServiceVisible)
+                return
+            }
+            accessConfirmed = false
             checking = true
+            await store.handleSceneActivity(true, isServiceVisible: true)
             store.suspendAllMedia(relinquishExternalPlayback: false)
             while !Task.isCancelled {
                 let allowed = await store.confirmServiceAccess()
@@ -288,15 +435,10 @@ struct RootView: View {
             }
 
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active && isServiceVisible {
-                    store.resumeSuspendedMedia()
-                } else {
-                    store.suspendAllMedia(relinquishExternalPlayback: phase != .active)
-                }
+                Task { await store.handleSceneActivity(phase == .active, isServiceVisible: isServiceVisible) }
             }
             .onChange(of: isServiceVisible) { _, visible in
-                if visible && scenePhase == .active { store.resumeSuspendedMedia() }
-                else { store.suspendAllMedia(relinquishExternalPlayback: false) }
+                Task { await store.handleSceneActivity(scenePhase == .active, isServiceVisible: visible) }
             }
     }
 

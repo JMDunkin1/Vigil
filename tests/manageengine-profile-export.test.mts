@@ -5,8 +5,9 @@ import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { defaultState } from "../src/defaults.js";
+import { DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS, defaultState } from "../src/defaults.js";
 import { parsePlist } from "../src/plist.js";
+import { iosPolicyTargets } from "../src/iosProfiles.js";
 import { detectManageEngineDeploymentState, exportManageEngineIosProfile, pinManageEngineCurrentGeneration, resolveManageEngineCurrentGeneration } from "../src/manageEngineExport.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS } from "../src/socialFeatureFilters.js";
 import type { VigilState } from "../src/types.js";
@@ -67,7 +68,7 @@ try {
   assert.equal(restrictionsPayload?.allowAppRemoval, true);
   assert.equal(restrictionsPayload?.allowUIAppInstallation, true);
   assert.ok(Array.isArray(restrictionsPayload?.blockedAppBundleIDs));
-  assert.equal((restrictionsPayload?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"), false);
+  assert.equal((restrictionsPayload?.blockedAppBundleIDs as unknown[]).includes("com.google.chrome.ios"), true);
   assert.equal(restrictionsPayload?.allowListedAppBundleIDs, undefined);
   const baselineWebFilter = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
@@ -86,7 +87,9 @@ try {
   assert.equal(summary.stateSaved, true);
   assert.equal(summary.deliveryProvider, "manageengine");
   assert.equal(summary.normalFreeDeliveryPath, true);
-  assert.equal(summary.appBundleCount, 10);
+  assert.equal(summary.appBundleCount, DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS.length);
+  assert.deepEqual([...(restrictionsPayload?.blockedAppBundleIDs as string[])].sort(), [...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS].sort(),
+    "the exported baseline must retain every restricted native app, including expanded social services");
   assert.ok(Number(summary.deniedUrlCount) > 0);
   assert.equal(summary.enforcementActive, false);
   assert.equal(summary.focusedSocialEnforcementActive, false);
@@ -102,8 +105,8 @@ try {
   assert.equal(deployment.artifactOnly, true);
   assert.equal(deployment.requiresManageEngineUploadAndAssignment, true);
   const companionApps = recordValue(summary.companionApps, "companion app summary");
-  assert.equal(companionApps.appCount, 4);
-  assert.deepEqual(companionApps.labels, ["Instagram", "YouTube", "Snapchat", "LinkedIn"]);
+  assert.equal(companionApps.appCount, IOS_SOCIAL_COMPANION_APPS.length);
+  assert.deepEqual(companionApps.labels, IOS_SOCIAL_COMPANION_APPS.map((app) => app.label));
   assert.deepEqual(companionApps.bundleIds, Object.values(IOS_SOCIAL_COMPANION_BUNDLE_IDS));
   assert.deepEqual(companionApps.apps, IOS_SOCIAL_COMPANION_APPS.map((app) => ({ ...app })));
   const retiredLauncher = recordValue(summary.launcherProfile, "retired launcher summary");
@@ -381,8 +384,20 @@ async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
     assert.equal(summary.enforcementActive, false, "the second queued Level 1 export should win as a complete artifact set");
     const profile = recordValue(parsePlist(profileText), "overlap profile");
     assert.ok(Array.isArray(profile.PayloadContent));
-    assert.equal(profile.PayloadContent.length, 3, "Personal edition should contain restrictions, Apple's BuiltIn web filter, and SafeSearch DNS");
+    const targets = iosPolicyTargets(secondState);
+    const expectedDenyLists = [targets.deniedUrls, ...targets.supplementalDeniedUrls.length ? [targets.supplementalDeniedUrls] : []];
+    assert.equal(profile.PayloadContent.length, 2 + expectedDenyLists.length,
+      "Personal edition must contain restrictions, every required BuiltIn deny payload, and SafeSearch DNS");
     const payloads = profile.PayloadContent.map((value) => recordValue(value, "overlap payload"));
+    const builtInFilters = payloads.filter(payload => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn");
+    assert.equal(builtInFilters.length, expectedDenyLists.length);
+    for (const [index, filter] of builtInFilters.entries()) {
+      assert.equal(filter.AutoFilterEnabled, true);
+      assert.ok(Array.isArray(filter.DenyListURLs) && filter.DenyListURLs.length <= 500);
+      assert.deepEqual([...(filter.DenyListURLs as string[])].sort(), [...expectedDenyLists[index]!].sort(),
+        "the published policy generation must retain primary and supplemental coverage together");
+    }
+    assert.equal(new Set(builtInFilters.map(filter => filter.PayloadUUID)).size, builtInFilters.length);
     assert.equal(payloads.some((payload) => payload.FilterType === "Plugin"), false);
     const releasePayload = payloads.find((payload) => payload.PayloadType === "com.apple.applicationaccess")!;
     assert.equal(releasePayload.PayloadType, "com.apple.applicationaccess");

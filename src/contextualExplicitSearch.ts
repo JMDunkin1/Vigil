@@ -1,4 +1,8 @@
-import { containsContextualExplicitMedia } from "./explicitMediaContext.js";
+import { containsContextualExplicitMedia, containsMultilingualExplicitText } from "./explicitMediaContext.js";
+
+export function containsExplicitMediaLabel(value: string): boolean {
+  return containsContextualExplicitMedia(value);
+}
 
 // Mixed-use platforms supply context only for search/tag/community navigation.
 // Ordinary page prose, unrelated hosts, and generic searches retain their own
@@ -53,7 +57,12 @@ export function containsContextualExplicitSearch(query: string, hostname = "", i
 }
 
 export function matchContextualExplicitSearchUrl(value: unknown): boolean {
-  return searchQueries(value).some(({ query, hostname }) => containsContextualExplicitSearch(query, hostname));
+  if (searchQueries(value).some(({ query, hostname }) => containsContextualExplicitSearch(query, hostname))) return true;
+  try {
+    const url = new URL(String(value || ""));
+    return ["http:", "https:"].includes(url.protocol)
+      && [url.pathname, url.hash].some(path => containsMultilingualExplicitText(contextualSearchDecode(path)));
+  } catch { return false; }
 }
 
 // XXX occurs in document IDs, tracking values and Roman numerals. It is only

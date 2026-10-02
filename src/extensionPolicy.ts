@@ -1,3 +1,4 @@
+import { matchSketchySite } from "./sketchySites.js";
 import { PORT, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
@@ -96,6 +97,14 @@ export function extensionRuleSnapshot(state: VigilState, now = new Date()) {
   }
 
   if (baseline) {
+    for (const entry of state.sketchySites) {
+      const match = matchSketchySite(state, `https://${entry.domain}/`, now);
+      if (!match) continue;
+      const until = entry.registeredAt ? new Date(Date.parse(entry.registeredAt) + state.settings.sketchySiteMaxAgeDays * 86_400_000).toISOString() : "";
+      addRuleEntries(entries, [entry.domain], { ...baseline, kind: "browser-control", endsAt: until }, "sketchy-site");
+      const rule = entries.get(entry.domain);
+      if (rule?.reason === "sketchy-site") rule.redirectUrl = blockedUrl(match.label, { ...baseline, kind: "browser-control" });
+    }
     addAdultBlocklistRuleEntries(entries, state, baseline);
   }
 
@@ -245,6 +254,16 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
   const contentMatch = matchContentFilterForActivePolicy(state, parsed.url, now);
   const siteBlocked = policy ? shouldBlockSite(policy.profile, hostname) : false;
   const urlPattern = policy && !siteBlocked ? matchBlockedUrlPattern(policy.profile, sample.url) : null;
+  const sketchySite = matchSketchySite(state, sample.url, now);
+  const sketchyPolicy = activePolicy(state, now) || baselinePolicy(state, now, { device: "computer" });
+  if (sketchySite && sketchyPolicy) return {
+    ok: true, blocked: true, ignored: false, reason: "sketchy-site", hostname, event, recorded,
+    redirectUrl: blockedUrl(sketchySite.label, sketchyPolicy, safeBackUrl(state, usage, input.previousUrl, parsed.url, now)),
+    policy: publicPolicy(sketchyPolicy), contentFilterEnabled: true,
+    browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+    focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+    focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
+  };
   if (contentMatch) {
     const backUrl = safeBackUrl(state, usage, input.previousUrl, parsed.url, now);
     const redirectUrl = blockedUrl(
@@ -420,14 +439,21 @@ function addRuleEntries(entries: Map<string, ExtensionRule>, sites: string[], po
 function addAdultBlocklistRuleEntries(entries: Map<string, ExtensionRule>, state: VigilState, baseline: ActivePolicy): void {
   const available = Math.max(0, ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT - entries.size);
   if (!available) return;
-  addRuleEntries(entries, adultBlocklistPreloadDomains(state, { limit: available }), {
+  const policy: BrowserPolicy = {
     ...baseline,
     kind: "adult-blocklist",
     session: {
       ...baseline.session,
       title: "Adult blocklist"
     }
-  }, "adult-blocklist");
+  };
+  // The preload starts with built-in domains that may already have higher
+  // priority rules. Those duplicates must not consume the remaining capacity.
+  for (const domain of adultBlocklistPreloadDomains(state, { limit: available + entries.size })) {
+    if (entries.has(domain)) continue;
+    addRuleEntries(entries, [domain], policy, "adult-blocklist");
+    if (entries.size >= ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT) break;
+  }
 }
 
 function contentRulesForPolicies(
@@ -510,7 +536,7 @@ function urlPatternToUrlFilters(value: string): string[] {
 }
 
 function rulePriority(reason: string): number {
-  const priorities: Record<string, number> = { session: 4, "app-lock": 3, limit: 2 };
+  const priorities: Record<string, number> = { "sketchy-site": 5, session: 4, "app-lock": 3, limit: 2 };
   return priorities[reason] || 1;
 }
 
@@ -585,6 +611,7 @@ export function safeBackUrl(state: VigilState, usage: UsageState, value: unknown
   const policy = activePolicy(snapshot, now) || baselinePolicy(snapshot, now, { device: "computer" });
   if (matchContentFilterUrl(state, parsed.url, policy)) return "";
   if (safariFilterDenyMatch(state, parsed.url, now)) return "";
+  if (matchSketchySite(state, parsed.url.href, now)) return "";
   return parsed.url.toString();
 }
 

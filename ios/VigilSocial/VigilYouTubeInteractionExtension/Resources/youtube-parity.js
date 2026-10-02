@@ -184,155 +184,6 @@
     else document.addEventListener('DOMContentLoaded', install, { once: true });
   }
 
-  const PLAYER_RESPONSE_PATHS = new Set([
-    '/youtubei/v1/player', '/youtubei/v1/get_watch', '/get_watch', '/playlist'
-  ]);
-  const PLAYER_AD_KEYS = ['adPlacements', 'playerAds', 'adSlots'];
-  const playerResponseURL = value => {
-    let raw = value;
-    if (typeof Request !== 'undefined' && value instanceof Request) raw = value.url;
-    else if (value instanceof URL) raw = value.href;
-    let url;
-    try { url = new URL(String(raw || ''), location.href); } catch { return false; }
-    return url.protocol === 'https:' && (!url.port || url.port === '443')
-      && allowedHosts.has(url.hostname.toLowerCase())
-      && PLAYER_RESPONSE_PATHS.has(url.pathname);
-  };
-  const plainRecord = value => {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-    const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null;
-  };
-  const playablePlayerResponse = value => plainRecord(value)
-    && plainRecord(value.videoDetails)
-    && typeof value.videoDetails.videoId === 'string'
-    && value.videoDetails.videoId.length > 0
-    && (plainRecord(value.streamingData) || plainRecord(value.playabilityStatus));
-  const collectPlayerAdFields = (value, targets, seen = new WeakSet()) => {
-    if (!value || typeof value !== 'object' || seen.has(value)) return false;
-    seen.add(value);
-    if (Array.isArray(value)) return value.every(item => collectPlayerAdFields(item, targets, seen));
-    if (!plainRecord(value)) return false;
-    if (playablePlayerResponse(value)) {
-      for (const key of PLAYER_AD_KEYS) {
-        if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
-        const descriptor = Object.getOwnPropertyDescriptor(value, key);
-        if (!descriptor?.configurable || !Array.isArray(descriptor.value)) return false;
-        targets.push([value, key]);
-      }
-    }
-    if (!Object.prototype.hasOwnProperty.call(value, 'playerResponse')) return true;
-    return collectPlayerAdFields(value.playerResponse, targets, seen);
-  };
-  const prunePlayerResponse = value => {
-    const targets = [];
-    try {
-      if (!collectPlayerAdFields(value, targets) || targets.length === 0) return false;
-      return targets.every(([target, key]) => Reflect.deleteProperty(target, key));
-    } catch { return false; }
-  };
-  const clonedPrunedPlayerResponse = value => {
-    try {
-      const clone = JSON.parse(JSON.stringify(value));
-      return prunePlayerResponse(clone) ? clone : null;
-    } catch { return null; }
-  };
-  const rewrittenHeaders = response => {
-    const headers = new Headers(response.headers);
-    for (const name of [
-      'content-encoding', 'content-length', 'content-md5', 'content-range',
-      'digest', 'etag', 'transfer-encoding'
-    ]) headers.delete(name);
-    return headers;
-  };
-  const eligiblePlayerResponse = response => response instanceof Response
-    && !response.bodyUsed && response.status === 200 && !response.redirected
-    && ['basic', 'cors', 'default'].includes(response.type)
-    && (!response.url || playerResponseURL(response.url))
-    && /(?:^|[/+])json(?:\s*;|$)/i.test(response.headers.get('content-type') || '');
-  const rewrittenPlayerResponse = responseBefore => {
-    if (!eligiblePlayerResponse(responseBefore)) return Promise.resolve(responseBefore);
-    return responseBefore.clone().json().then(payload => {
-      if (!prunePlayerResponse(payload)) return responseBefore;
-      const responseAfter = new Response(JSON.stringify(payload), {
-        status: responseBefore.status,
-        statusText: responseBefore.statusText,
-        headers: rewrittenHeaders(responseBefore)
-      });
-      for (const property of ['ok', 'redirected', 'type', 'url']) {
-        try { Object.defineProperty(responseAfter, property, { value: responseBefore[property] }); } catch {}
-      }
-      return responseAfter;
-    }).catch(() => responseBefore);
-  };
-  const installFetchPlayerResponseGuard = () => {
-    if (typeof window.fetch !== 'function') return;
-    const nativeFetch = window.fetch;
-    window.fetch = new Proxy(nativeFetch, {
-      apply(target, thisArg, argumentsList) {
-        const result = Reflect.apply(target, thisArg, argumentsList);
-        return playerResponseURL(argumentsList[0])
-          ? result.then(rewrittenPlayerResponse, () => result)
-          : result;
-      }
-    });
-  };
-  const installXHRPlayerResponseGuard = () => {
-    const NativeXHR = window.XMLHttpRequest;
-    if (typeof NativeXHR !== 'function') return;
-    const guarded = new WeakSet();
-    window.XMLHttpRequest = class extends NativeXHR {
-      open(method, url, ...rest) {
-        guarded.delete(this);
-        if (playerResponseURL(url)) guarded.add(this);
-        return super.open(method, url, ...rest);
-      }
-      get response() {
-        const raw = super.response;
-        if (!guarded.has(this) || this.readyState !== 4 || Number(this.status) !== 200) return raw;
-        const responseURL = String(this.responseURL || '');
-        if (responseURL && !playerResponseURL(responseURL)) return raw;
-        const contentType = String(this.getResponseHeader?.('content-type') || '');
-        if (contentType && !/(?:^|[/+])json(?:\s*;|$)/i.test(contentType)) return raw;
-        if (!['', 'text', 'json'].includes(String(this.responseType || ''))) return raw;
-        try {
-          const wasText = typeof raw === 'string';
-          const payload = wasText ? JSON.parse(raw) : clonedPrunedPlayerResponse(raw);
-          if (!payload || (wasText && !prunePlayerResponse(payload))) return raw;
-          return wasText ? JSON.stringify(payload) : payload;
-        } catch { return raw; }
-      }
-      get responseText() {
-        const value = this.response;
-        return typeof value === 'string' ? value : super.responseText;
-      }
-    };
-  };
-  const installInitialPlayerResponseGuard = () => {
-    const key = 'ytInitialPlayerResponse';
-    const descriptor = Object.getOwnPropertyDescriptor(window, key);
-    if (descriptor) {
-      if ('value' in descriptor && descriptor.configurable) {
-        const sanitized = clonedPrunedPlayerResponse(descriptor.value);
-        if (sanitized) {
-          try { Object.defineProperty(window, key, { ...descriptor, value: sanitized }); } catch {}
-        }
-      }
-      return;
-    }
-    let current;
-    try {
-      Object.defineProperty(window, key, {
-        configurable: true,
-        enumerable: true,
-        get: () => current,
-        set: value => { current = clonedPrunedPlayerResponse(value) || value; }
-      });
-    } catch {}
-  };
-  installFetchPlayerResponseGuard();
-  installXHRPlayerResponseGuard();
-  installInitialPlayerResponseGuard();
 
   const STYLE_ID = 'vigil-youtube-parity-style';
   const MORE_VIDEOS_ATTRIBUTE = 'data-vigil-youtube-more-videos';
@@ -435,6 +286,31 @@
       return (rightPlayer + rightRect.width * rightRect.height)
         - (leftPlayer + leftRect.width * leftRect.height);
     })[0] || null;
+  let seekBurst = null, tapStart = null, lastPlayerTap = null;
+  let suppressSeekClickUntil = 0;
+  const seekBy = (video, seconds) => {
+    if (!video || !Number.isFinite(video.currentTime)
+        || video.closest('.ad-showing, .ad-interrupting')) return false;
+    const now = performance.now();
+    // WebKit may still expose the pre-seek position during consecutive taps.
+    // Accumulate against our last requested target until that burst ends.
+    const base = seekBurst?.video === video && now - seekBurst.at < 600
+      ? seekBurst.position : video.currentTime;
+    const maximum = Number.isFinite(video.duration) ? Math.max(0, video.duration - .01) : Infinity;
+    const position = Math.max(0, Math.min(maximum, base + seconds));
+    try { video.currentTime = position; } catch { return false; }
+    seekBurst = { video, position, at: now };
+    return true;
+  };
+  const seekControlDelta = target => {
+    const control = target?.closest('button, [role="button"]');
+    if (!control?.closest(PLAYER_SELECTOR)) return 0;
+    const label = `${control.getAttribute('aria-label') || ''} ${control.getAttribute('title') || ''}`.trim();
+    if (!/\b10\s*(?:seconds?|s)\b/i.test(label)) return 0;
+    if (/\b(?:forward|ahead)\b/i.test(label)) return 10;
+    if (/\b(?:backward|back|rewind)\b/i.test(label)) return -10;
+    return 0;
+  };
   const playerForVideo = video => video?.closest('ytm-player')
     || video?.closest('ytd-player') || video?.closest('#player-container-id')
     || video?.closest('#player') || video?.parentElement || null;
@@ -612,6 +488,15 @@
 
   document.addEventListener('click', event => {
     const target = event.target instanceof Element ? event.target : null;
+    if (event.isTrusted && target?.closest(PLAYER_SELECTOR)) {
+      if (performance.now() < suppressSeekClickUntil) {
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
+      const delta = seekControlDelta(target);
+      if (delta && seekBy(mainVideo(), delta)) {
+        event.preventDefault(); event.stopImmediatePropagation(); return;
+      }
+    }
     if (performance.now() < suppressPlayerClickUntil && target?.closest(PLAYER_SELECTOR)) {
       event.preventDefault(); event.stopImmediatePropagation(); return;
     }
@@ -622,6 +507,41 @@
     if (allowedHosts.has(destination.hostname.toLowerCase()) && isShortsPath(destination.pathname)) {
       event.preventDefault(); event.stopImmediatePropagation(); location.assign(focusedEntryURL);
     }
+  }, true);
+
+  // Handle completed taps rather than waiting for YouTube's seek animation.
+  // Sliders, controls, edge gestures, drags and multiple fingers stay native.
+  document.addEventListener('touchstart', event => {
+    tapStart = null;
+    if (!event.isTrusted || event.touches.length !== 1 || !isWatchRoute()) return;
+    const target = event.target instanceof Element ? event.target : null;
+    const video = mainVideo(), player = playerForVideo(video);
+    const point = event.touches[0];
+    if (!player || !target || !player.contains(target) || blocksPlayerGesture(target, player)) return;
+    const rect = video.getBoundingClientRect();
+    if (point.clientX <= EDGE_GESTURE_WIDTH || point.clientX >= innerWidth - EDGE_GESTURE_WIDTH
+        || point.clientY < rect.top || point.clientY > rect.bottom) return;
+    const fraction = (point.clientX - rect.left) / rect.width;
+    const side = fraction < .4 ? -1 : fraction > .6 ? 1 : 0;
+    if (side) tapStart = { video, side, x: point.clientX, y: point.clientY, at: performance.now() };
+  }, { capture: true, passive: true });
+  document.addEventListener('touchend', event => {
+    const tap = tapStart; tapStart = null;
+    const point = event.changedTouches?.[0], now = performance.now();
+    if (!event.isTrusted || !tap || !point || event.touches.length || now - tap.at > 300
+        || Math.hypot(point.clientX - tap.x, point.clientY - tap.y) > 12) { lastPlayerTap = null; return; }
+    const consecutive = lastPlayerTap?.video === tap.video && lastPlayerTap.side === tap.side
+      && now - lastPlayerTap.at < 350;
+    lastPlayerTap = { video: tap.video, side: tap.side, at: now };
+    if (consecutive && seekBy(tap.video, tap.side * 10)) {
+      suppressSeekClickUntil = now + 400;
+      event.preventDefault(); event.stopImmediatePropagation();
+    }
+  }, { capture: true, passive: false });
+  document.addEventListener('touchcancel', () => { tapStart = null; lastPlayerTap = null; }, true);
+  document.addEventListener('seeking', event => {
+    // A timeline drag supersedes the accumulated button/double-tap target.
+    if (event.target === seekBurst?.video && performance.now() - seekBurst.at >= 600) seekBurst = null;
   }, true);
 
   installStyle();
@@ -665,7 +585,7 @@
     enumerable: false,
     value: Object.freeze({
       suppressYouTubeAds, moreVideosAllowedForState, updateMoreVideosAvailability,
-      enterFullscreen, playerForVideo, isShortsRoute, isWatchRoute
+      enterFullscreen, playerForVideo, isShortsRoute, isWatchRoute, seekBy
     })
   });
 })();

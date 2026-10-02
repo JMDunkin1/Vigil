@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
-import { iosPolicyTargets } from "../src/iosProfiles.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
+import { buildIosConfigurationProfile, iosPolicyTargets } from "../src/iosProfiles.js";
+import { parsePlist } from "../src/plist.js";
 import { profileById } from "../src/policy.js";
-import { now } from "./test-helpers.mjs";
+import { now, recordValue } from "./test-helpers.mjs";
 
 function stateForMode(profileId: string) {
   const state = defaultState();
@@ -23,19 +24,33 @@ function stateForMode(profileId: string) {
 
 for (const profileId of [NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]) {
   const state = stateForMode(profileId);
-  const denied = iosPolicyTargets(state, now).deniedUrls;
+  const targets = iosPolicyTargets(state, now);
+  const denied = targets.deniedUrls;
+  const combined = [...denied, ...targets.supplementalDeniedUrls];
   assert.ok(denied.length <= 500);
-  for (const host of ["xerography14macro.com", "dxweb003.xyz", "newgrounds.com", "kinklets.com", "protonvpn.com", "croxyproxy.com", "browser.lol", "invidious.f5.si"]) {
-    assert.ok(denied.includes(`https://${host}/`), `${profileId}: ${host} must retain its priority slot`);
+  assert.ok(targets.supplementalDeniedUrls.length <= 500);
+  for (const host of [...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES]) {
+    assert.ok(combined.includes(`https://${host}/`), `${profileId}: every curated priority domain must remain blocked`);
   }
-  // Soft Block's saturated list previously delivered the first eight HTTP
-  // proxy entries; Normal has capacity for the complete HTTP overlay.
-  const retainedHttpProxies = profileId === NORMAL_PROFILE_ID
-    ? DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES
-    : DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES.slice(0, 8);
-  for (const host of retainedHttpProxies) {
-    assert.ok(denied.includes(`http://${host}/`), `${profileId}: plain-HTTP proxy protection must remain`);
+  for (const host of DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES) {
+    assert.ok(combined.includes(`http://${host}/`), `${profileId}: every plain-HTTP proxy protection must remain`);
   }
+  const profile = recordValue(parsePlist(buildIosConfigurationProfile(state, now)), "capacity profile");
+  assert.equal(profile.PayloadRemovalDisallowed, true, "expanded service policies must retain non-removable supervision enforcement");
+  assert.ok(Array.isArray(profile.PayloadContent));
+  const payloads = profile.PayloadContent.map(value => recordValue(value, "capacity payload"));
+  const filters = payloads.filter(payload => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn");
+  assert.ok(filters.length >= 1);
+  const delivered = filters.flatMap(filter => {
+    assert.ok(Array.isArray(filter.DenyListURLs));
+    assert.ok(filter.DenyListURLs.length <= 500, `${profileId}: each OS deny payload must obey Apple's capacity`);
+    assert.equal(filter.AutoFilterEnabled, true);
+    return filter.DenyListURLs as string[];
+  });
+  assert.deepEqual([...new Set(delivered)].sort(), [...new Set(combined)].sort(),
+    `${profileId}: primary and supplemental coverage must actually reach the supervised profile`);
+  assert.equal(new Set(filters.map(filter => filter.PayloadUUID)).size, filters.length,
+    "additive BuiltIn filters require distinct payload identities");
   if (profileId === SOFT_BLOCK_PROFILE_ID) {
     for (const scheme of ["http", "https"]) {
       for (const host of ["youtube.com", "m.youtube.com"]) {
@@ -79,12 +94,21 @@ try {
   for (const profileId of [NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID]) {
     const state = stateForMode(profileId);
     state.settings.adultBlocklistEnabled = true;
-    const denied = iosPolicyTargets(state, now).deniedUrls;
+    const targets = iosPolicyTargets(state, now);
+    const denied = targets.deniedUrls;
     assert.ok(denied.length <= 500);
+    assert.ok(targets.supplementalDeniedUrls.length <= 500);
+    const combined = [...denied, ...targets.supplementalDeniedUrls];
+    for (const host of [...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES]) {
+      assert.ok(combined.includes(`https://${host}/`), `${profileId}: bulk overlay must preserve all curated priority domains`);
+    }
+    for (const host of DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES) {
+      assert.ok(combined.includes(`http://${host}/`), `${profileId}: bulk overlay must preserve all plain-HTTP proxies`);
+    }
     const bulkUrls = bulkDomains.flatMap(host => [`http://${host}/`, `https://${host}/`]);
     assert.ok(denied.filter(url => bulkUrls.includes(url)).length >= 6, `${profileId}: retain the bulk-adult reserve`);
-    assert.ok(denied.includes("https://kinklets.com/"));
-    assert.ok(denied.includes("https://protonvpn.com/"), `${profileId}: retain prior guaranteed domain breadth with bulk filtering enabled`);
+    assert.ok(combined.includes("https://kinklets.com/"));
+    assert.ok(combined.includes("https://protonvpn.com/"), `${profileId}: retain prior guaranteed domain breadth with bulk filtering enabled`);
   }
 } finally {
   clearAdultBlocklistCacheForTest();

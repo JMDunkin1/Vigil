@@ -74,6 +74,14 @@ const youtubeEmbeds = createYouTubeEmbedPolicy({
   storage: browser.storage.local,
   frames: tabId => browser.webNavigation.getAllFrames({ tabId })
 });
+const youtubeNavigationPending = new Map();
+function serializeYouTubeNavigation(tabId, work) {
+  const next = (youtubeNavigationPending.get(tabId) || Promise.resolve()).catch(() => {}).then(work);
+  youtubeNavigationPending.set(tabId, next);
+  const cleanup = () => { if (youtubeNavigationPending.get(tabId) === next) youtubeNavigationPending.delete(tabId); };
+  void next.then(cleanup, cleanup);
+  return next;
+}
 browser.webNavigation.onCommitted.addListener(details => {
   void (details.frameId === 0 ? youtubeEmbeds.reset(details.tabId)
     : youtubeEmbeds.register({ tab: { id: details.tabId }, frameId: details.frameId, url: details.url, documentId: details.documentId })).catch(() => {});
@@ -100,6 +108,8 @@ browser.runtime.onMessage.addListener((message, sender) => {
   const host = new URL(sender.url || 'about:blank').hostname;
   if (!/^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(host) || ['external', 'browser-filter-health', 'browser-navigation'].includes(message.youtube?.action)) return Promise.resolve({ ok: false });
   const reply = (async () => {
+    // A document-start Play can arrive before the incoming-link grant finishes.
+    if (message.youtube?.action === 'start') await youtubeNavigationPending.get(sender.tab?.id);
     if (message.youtube?.action === 'start' && await youtubeEmbeds.eligible(sender, message.youtube.videoId)) {
       const grant = await browser.runtime.sendNativeMessage('tech.caseline.vigil', { action: 'external', videoId: message.youtube.videoId });
       if (!grant?.ok) return grant;
@@ -144,39 +154,53 @@ const youtubeVideoID = target => {
 };
 browser.webNavigation.onCommitted.addListener(details => {
   if (details.frameId !== 0) return;
-  void (async () => {
+  void serializeYouTubeNavigation(details.tabId, async () => {
     const key = `youtube-source:${details.tabId}`;
     const handoffKey = `youtube-handoff:${details.tabId}`;
     const stored = await browser.storage.local.get([key, handoffKey]);
-    const previous = stored[key];
+    let previous = stored[key];
+    // Safari omits transitionType for native-app links. A fresh top-level tab
+    // without a YouTube opener is a direct entry; reused YouTube tabs and
+    // recommendation tabs keep their discovery gate.
+    if (isYouTube(details.url) && previous === undefined && browser.tabs.get) {
+      const tab = await browser.tabs.get(details.tabId);
+      if (tab.openerTabId !== undefined) {
+        const openerSource = (await browser.storage.local.get(`youtube-source:${tab.openerTabId}`))[`youtube-source:${tab.openerTabId}`];
+        const opener = await browser.tabs.get(tab.openerTabId);
+        previous = openerSource === true && !isYouTube(opener.url || '') ? true : false;
+      }
+    }
     const id = youtubeVideoID(new URL(details.url));
     const linked = details.transitionType === 'link' && !details.transitionQualifiers?.includes('forward_back');
-    const direct = ['typed', 'auto_bookmark'].includes(details.transitionType);
-    const eligible = Boolean(id && ((linked && previous !== false) || direct
+    const direct = ['typed', 'auto_bookmark', 'start_page', 'auto_toplevel'].includes(details.transitionType)
+      && !details.transitionQualifiers?.includes('forward_back');
+    const incoming = !details.transitionType && previous !== false
+      && !details.transitionQualifiers?.includes('forward_back');
+    const eligible = Boolean(id && ((linked && previous !== false) || direct || incoming
       || (stored[handoffKey]?.id === id && stored[handoffKey]?.eligible)));
     await browser.storage.local.set({ [handoffKey]: { id, eligible } });
     await browser.storage.local.set({ [key]: /^https?:/.test(details.url) && !isYouTube(details.url) });
     if (eligible) await externalGrant(details.url, true);
-  })().catch(() => {});
+  }).catch(() => {});
 });
 browser.webNavigation.onHistoryStateUpdated?.addListener(details => {
   if (details.frameId !== 0) return;
-  void (async () => {
+  void serializeYouTubeNavigation(details.tabId, async () => {
     const key = `youtube-handoff:${details.tabId}`;
     const previous = (await browser.storage.local.get(key))[key];
     const id = youtubeVideoID(new URL(details.url));
     await browser.storage.local.set({ [key]: { id, eligible: Boolean(id && previous?.id === id && previous?.eligible) } });
-  })().catch(() => {});
+  }).catch(() => {});
 });
 // Safari does not expose this optional event on every supported release.
 browser.webNavigation.onCreatedNavigationTarget?.addListener(details => {
-  void (async () => {
+  void serializeYouTubeNavigation(details.tabId, async () => {
     const key = `youtube-source:${details.sourceTabId}`;
     const previous = details.sourceFrameId > 0 ? false : (await browser.storage.local.get(key))[key];
     // A YouTube recommendation opened in a new tab is still discovery.
     await browser.storage.local.set({ [`youtube-source:${details.tabId}`]: previous === true });
     await externalGrant(details.url, previous);
-  })().catch(() => {});
+  }).catch(() => {});
 });
 
 browser.tabs.onRemoved.addListener(tabId => {

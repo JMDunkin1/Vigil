@@ -16,6 +16,9 @@ async function readPlist(path: string): Promise<unknown> {
 const socialManifestPath = join(projectRoot, "ios", "VigilSocial", "VigilSocial", "PrivacyInfo.xcprivacy");
 assert.deepEqual(await readPlist(socialManifestPath), {
   NSPrivacyAccessedAPITypes: [{
+    NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime",
+    NSPrivacyAccessedAPITypeReasons: ["35F9.1"]
+  }, {
     NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults",
     NSPrivacyAccessedAPITypeReasons: ["CA92.1"]
   }],

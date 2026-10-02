@@ -28,7 +28,9 @@ assert.equal(shouldBlockSite(normal, "notwebcomicsapp.com"), false);
 assert.equal(shouldBlockSite(normal, "webcomicsapp.com.example.org"), false);
 const targets = iosPolicyTargets(state);
 assert.ok(targets.deniedUrls.length <= 500);
-assert.equal(targets.supplementalDeniedUrls.length, DEFAULT_MATURE_COMIC_BLOCKED_SITES.length * 2);
+assert.ok(targets.supplementalDeniedUrls.length >= DEFAULT_MATURE_COMIC_BLOCKED_SITES.length * 2,
+  "the supplemental payload retains every comic deny alongside displaced priority rules");
+assert.ok(targets.supplementalDeniedUrls.length <= 500);
 for (const domain of DEFAULT_MATURE_COMIC_BLOCKED_SITES) {
   for (const scheme of ["http", "https"]) {
     assert.ok(targets.supplementalDeniedUrls.includes(`${scheme}://${domain}/`));

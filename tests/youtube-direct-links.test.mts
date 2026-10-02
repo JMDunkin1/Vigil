@@ -239,3 +239,32 @@ test('Safari external-click handler verifies sender provenance and awaits the na
   finish({ ok: true }); await reply;
   assert.equal((values['youtube-handoff:1'] as {eligible: boolean}).eligible, true);
 });
+
+test('Safari native-app links with omitted transitions grant time before an early Play, while YouTube openers retain the save gate', async () => {
+  for (const opener of ['', 'https://www.youtube.com/']) {
+    const listeners: Record<string, (event: unknown, sender?: unknown) => unknown> = {};
+    const values: Record<string, unknown> = {};
+    const actions: string[] = [];
+    let releaseGrant: () => void = () => {};
+    const event = (name: string) => ({ addListener(callback: typeof listeners[string]) { listeners[name] = callback; } });
+    vm.runInNewContext(safari, { URL, browser: {
+      runtime: { onMessage: event('message'), async sendNativeMessage(_app: string, body: {action: string}) {
+        actions.push(body.action);
+        if (body.action === 'external') await new Promise<void>(resolve => { releaseGrant = resolve; });
+        return { ok: true };
+      } },
+      storage: { local: { async get(keys: string | string[]) { return Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, values[key]])); },
+        async set(next: Record<string, unknown>) { Object.assign(values, next); }, async remove() {} } },
+      tabs: { onRemoved: event('removed'), async get(id: number) { return id === 2 ? { url: opener } : opener ? { openerTabId: 2 } : {}; } },
+      webNavigation: { onCommitted: event('committed'), onHistoryStateUpdated: event('history'), onCreatedNavigationTarget: event('created') }
+    } });
+    listeners.committed({ frameId: 0, tabId: 1, url: `https://www.youtube.com/watch?v=${video}` });
+    const earlyStart = listeners.message({ type: 'VIGIL_YOUTUBE', youtube: { action: 'start', videoId: video } },
+      { frameId: 0, tab: { id: 1 }, url: `https://www.youtube.com/watch?v=${video}` });
+    await tick();
+    if (!opener) { assert.deepEqual(actions, ['external']); releaseGrant(); }
+    await earlyStart;
+    assert.deepEqual(actions, opener ? ['start'] : ['external', 'start']);
+    assert.equal((values['youtube-handoff:1'] as {eligible: boolean}).eligible, !opener);
+  }
+});

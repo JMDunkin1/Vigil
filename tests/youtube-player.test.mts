@@ -57,12 +57,13 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
     Object.defineProperty(window, 'ytInitialData', { configurable: true, get() { throw new Error('Page globals unavailable in Safari isolated world'); } });
     Object.defineProperty(window, 'fetch', { configurable: false, set() { throw new Error('Read-only isolated fetch'); } });
   }
+  let selectedMedia = media;
   const document = {
     documentElement: new Node(), body: new Node(), title: 'Fixture',
     createElement() { return new Node(); },
     getElementById(id: string) { return nodes.find(node => node.id === id); },
-    querySelector() { return media; },
-    querySelectorAll(selector: string) { return selector === 'video,audio' ? [media] : []; },
+    querySelector() { return selectedMedia; },
+    querySelectorAll(selector: string) { return selector === 'video,audio' ? [selectedMedia] : []; },
     addEventListener(event: string, callback: Callback) { handlers.set(event, [...handlers.get(event) || [], callback]); }
   };
   const location = Object.assign(new URL(embedHost ? `https://${embedHost}/embed/${id}` : `https://www.youtube.com/watch?v=${id}`), { assign(url: string) { location.href = url; } });
@@ -131,14 +132,15 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
   const startupControl = async () => {
     const control = Object.assign(new Node(), { isConnected: true });
     control.closest = selector => selector.includes('.ytp-large-play-button') ? control : null;
-    let initializations = 0;
+    let initializations = 0, prevented = false;
     control.click = () => { initializations++; media.readyState = 4; };
     media.readyState = 0;
-    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: control, preventDefault() {}, stopImmediatePropagation() {} });
+    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: control, preventDefault() { prevented = true; }, stopImmediatePropagation() {} });
+    if (!prevented) { control.click(); await media.play(); }
     await flush();
     return initializations;
   };
-  return { location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
+  return { replaceMedia: () => { Object.assign(media, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...media, isConnected:true, paused:true, play: async () => { selectedMedia.paused = false; for (const callback of handlers.get('play') || []) callback({target:selectedMedia,isTrusted:true}); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
 }
 test('player gates autoplay and meters the first playback seconds', async () => {
   const { state, media, click, advance } = await playerFixture();
@@ -416,7 +418,7 @@ test('a search-result card title outside its anchor uses time without a save', a
 });
 
 
-test('phone startup replays YouTube’s large Play control after authorization so the source initializes', async () => {
+test('phone startup preserves the trusted YouTube Play handler while gating media' , async () => {
   const f = await playerFixture(true);
   assert.equal(await f.startupControl(), 1);
   assert.equal(f.media.readyState, 4);
@@ -424,9 +426,9 @@ test('phone startup replays YouTube’s large Play control after authorization s
   assert.equal(f.root.getAttribute('data-vigil-playback-held'), null);
 });
 
-test('blocked startup never invokes YouTube’s Play handler', async () => {
+test('blocked startup permits source initialization but never permits playback', async () => {
   const f = await playerFixture(true, false);
-  assert.equal(await f.startupControl(), 0);
+  assert.equal(await f.startupControl(), 1);
   assert.equal(f.media.paused, true);
 });
 
@@ -520,7 +522,7 @@ test('fullscreen Play during a pending pause settlement resumes after the settle
   await f.advance(500);
   f.media.webkitDisplayingFullscreen = true;
   f.media.pause();
-  await f.advance(1100, false);
+  await f.advance(3500, false);
   await f.media.play();
   await f.flush();
   assert.equal(f.media.paused, true, 'old authorization must remain stopped while settlement is pending');
@@ -633,4 +635,62 @@ test('an embedded player without verified external provenance still requires sav
   await f.click('Play this video');
   assert.equal(f.media.paused, true);
   assert.equal(f.state.youtubeLimits!.external.length, 0);
+});
+
+
+test('a delayed Play abort cannot undo a deliberate Pause or strand the next tap', async () => {
+  const f = await playerFixture('safari');
+  await f.click('Play this video');
+  f.media.pause();
+  let rejectPlay!: (error: Error) => void;
+  const nativePlay = f.media.play.bind(f.media);
+  f.media.play = () => { f.media.paused = false; f.emit('play'); return new Promise<void>((_resolve, reject) => { rejectPlay = reject; }); };
+  await f.rawTap();
+  await f.rawTap();
+  const error = new Error('Paused while starting'); error.name = 'AbortError';
+  rejectPlay(error); await f.flush();
+  f.media.play = nativePlay;
+  f.emit('canplay'); await f.advance(500, false);
+  assert.equal(f.media.paused, true, 'late startup failure must respect Pause');
+  await f.rawTap();
+  assert.equal(f.media.paused, false, 'next Play works without refreshing');
+});
+
+test('brief pauses retain the bounded lease so the next tap needs no new allowance check', async () => {
+  const f = await playerFixture('safari');
+  await f.click('Play this video'); await f.advance(300);
+  const leaseID = f.state.youtubeLimits!.lease!.id;
+  await f.rawTap(); await f.advance(1800, false);
+  assert.equal(f.media.paused, true);
+  assert.equal(f.state.youtubeLimits!.lease!.id, leaseID);
+  await f.rawTap();
+  assert.equal(f.media.paused, false);
+  assert.equal(f.state.youtubeLimits!.lease!.id, leaseID);
+});
+
+
+test('replacing the watch player preserves only the existing same-video authorization', async () => {
+  const f = await playerFixture('safari');
+  await f.click('Play this video'); await f.advance(300);
+  const leaseID = f.state.youtubeLimits!.lease!.id;
+  const replacement = f.replaceMedia();
+  await replacement.play(); await f.flush();
+  assert.equal(replacement.paused, false);
+  assert.equal(f.state.youtubeLimits!.lease!.id, leaseID);
+  f.location.search = '?v=video000001';
+  await replacement.play(); await f.flush();
+  assert.equal(replacement.paused, true, 'a changed video cannot inherit the detached player lease');
+});
+
+
+test('repeated explicit Play taps during startup stay Play requests until Pause is selected', async () => {
+  const f = await playerFixture('safari');
+  let resolvePlay!: () => void;
+  f.media.play = () => { f.media.paused = false; f.emit('play'); f.emit('waiting'); return new Promise<void>(resolve => { resolvePlay = resolve; }); };
+  await f.rawTap('Play'); await f.rawTap('Play'); await f.rawTap('Play');
+  assert.equal(f.media.paused, false);
+  await f.rawTap('Pause');
+  assert.equal(f.media.paused, true);
+  resolvePlay(); await f.flush(); f.emit('canplay'); await f.advance(300, false);
+  assert.equal(f.media.paused, true);
 });

@@ -65,6 +65,8 @@ enum DOMAdapters {
         return authenticationDocumentGuard(for: service, body:
             (service == .snapchat ? snapchatDesktopIdentityBootstrap : "")
             + (service == .linkedin ? linkedin : "")
+            + expandedSafetyScript(for: service)
+            + expandedServiceScript(for: service)
             + documentIdentityBootstrap
             + (service == .instagram ? instagramSingleReelGuard : "")
             + safetyBootstrap
@@ -1201,10 +1203,59 @@ enum DOMAdapters {
             #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilLinkedInInstalled)"#
         case .snapchat:
             #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilSnapchatInstalled)"#
+        case .facebook, .x, .tiktok, .reddit:
+            "Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilExpandedMediaChildLockInstalled && \(service == .reddit ? "window.__vigilRedditChildLockInstalled && " : "")window.\(service.focusedRoutePolicy!.installationFlag))"
         }
     }
 
     private static func authenticationDocumentGuard(for service: SocialService, body: String) -> String {
+        if let policy = service.focusedRoutePolicy {
+            return #"""
+            (() => {
+              const policy = FOCUSED_POLICY_FACTORY(FOCUSED_POLICY_CONFIGURATION);
+              if (!policy) return;
+              let url;
+              try { url = new URL(location.href); } catch (_) { return; }
+              const captchaFrame = window.top !== window && url.protocol === 'https:'
+                && (!url.port || url.port === '443') && !url.username && !url.password
+                && ['www.google.com', 'recaptcha.google.com', 'www.recaptcha.net'].includes(url.hostname)
+                && ['/recaptcha/api2/anchor', '/recaptcha/api2/bframe',
+                    '/recaptcha/enterprise/anchor', '/recaptcha/enterprise/bframe'].includes(url.pathname);
+              if (captchaFrame) return;
+              if (policy.route(location.href) === 'authentication') {
+                // A same-document sign-in completion must reload into the
+                // document-start media and route protections before content.
+                if (window.__vigilFocusedAuthenticationWatchdog) return;
+                window.__vigilFocusedAuthenticationWatchdog = true;
+                const style = document.createElement('style');
+                style.textContent = 'html[data-vigil-focused-auth-transition] body { visibility: hidden !important; }';
+                document.documentElement.appendChild(style);
+                const completed = () => {
+                  if (policy.route(location.href) === 'authentication') return false;
+                  document.documentElement.setAttribute('data-vigil-focused-auth-transition', 'true');
+                  location.reload();
+                  return true;
+                };
+                const timer = setInterval(() => { if (completed()) clearInterval(timer); }, 100);
+                for (const method of ['pushState', 'replaceState']) {
+                  const original = history[method];
+                  history[method] = function(...args) {
+                    const result = original.apply(this, args);
+                    if (completed()) clearInterval(timer);
+                    return result;
+                  };
+                }
+                addEventListener('popstate', () => { if (completed()) clearInterval(timer); }, true);
+                addEventListener('pagehide', () => clearInterval(timer), { once: true });
+                return;
+              }
+              GUARDED_BODY
+            })();
+            """#
+                .replacingOccurrences(of: "FOCUSED_POLICY_FACTORY", with: focusedSocialPolicyFactory)
+                .replacingOccurrences(of: "FOCUSED_POLICY_CONFIGURATION", with: policy.javascriptConfiguration)
+                .replacingOccurrences(of: "GUARDED_BODY", with: body)
+        }
         if service == .linkedin {
             return #"""
             (() => {
@@ -1355,6 +1406,11 @@ enum DOMAdapters {
     }
 
     static func frameRoutePolicyGuard(for service: SocialService) -> String {
+        if service.focusedRoutePolicy != nil {
+            // Expanded adapters use the exact native allowlist for every frame,
+            // including unknown SPA destinations. They have no temporary unlock.
+            return expandedServiceScript(for: service)
+        }
         let allowedHosts: String
         let routePolicy: String
         let fallbackPath: String
@@ -1420,6 +1476,8 @@ enum DOMAdapters {
               return { feature: 'stories', mode: 'redirect', permanent: true };
             }
             """#
+        case .facebook, .x, .tiktok, .reddit:
+            return expandedServiceScript(for: service)
         }
         return #"""
         (() => {
@@ -1614,6 +1672,10 @@ enum DOMAdapters {
             featureKeys = "['spotlight', 'stories']"
             allowedHosts = "['snapchat.com', 'www.snapchat.com', 'web.snapchat.com']"
             priorityFeature = "spotlight"
+        case .facebook, .x, .tiktok, .reddit:
+            // Expanded restrictions are permanent and never depend on a
+            // successful sentinel response or a policy tier.
+            return #"window.__vigilPolicyProbeInstalled = true;"#
         }
         return #"""
         (() => {
@@ -1771,8 +1833,11 @@ enum DOMAdapters {
         } catch (_) { return null; }
       };
       let pinnedID = '';
+      let pinnedKind = '';
       let pinnedVideo = null;
       let pinnedSource = '';
+      let sharedIntent = null;
+      let modalContext = null;
       let gesture = null;
       let pointerGesture = null;
       const lockedScroll = new Map();
@@ -1780,6 +1845,11 @@ enum DOMAdapters {
       style.textContent = `
         html[data-vigil-single-reel] video:not([data-vigil-single-reel-media="allowed"]) {
           visibility: hidden !important;
+        }
+        [data-vigil-single-reel-card="blocked"],
+        [data-vigil-single-reel-card="blocked"] * {
+          visibility: hidden !important;
+          pointer-events: none !important;
         }
         html[data-vigil-single-reel] [data-vigil-single-reel-scroll] {
           overflow-y: hidden !important;
@@ -1791,28 +1861,69 @@ enum DOMAdapters {
       document.documentElement.appendChild(style);
       const reset = () => {
         pinnedID = '';
+        pinnedKind = '';
         pinnedVideo = null;
         pinnedSource = '';
+        modalContext = null;
+        sharedIntent = null;
         gesture = null;
         lockedScroll.forEach((_, node) => node.removeAttribute('data-vigil-single-reel-scroll'));
         lockedScroll.clear();
         document.querySelectorAll('[data-vigil-single-reel-media]').forEach(node => node.removeAttribute('data-vigil-single-reel-media'));
+        document.querySelectorAll('[data-vigil-single-reel-card]').forEach(node => node.removeAttribute('data-vigil-single-reel-card'));
         delete document.documentElement.dataset.vigilSingleReel;
       };
       const syncRoute = () => {
         const route = mediaRoute(location.href);
-        if (!route || (!pinnedID && route.kind !== 'reel')) {
+        // Shared videos can open as /p/{id}, or in a modal while Direct keeps
+        // its URL. Both must have the same single-item containment as /reel.
+        if (!route && location.pathname.startsWith('/direct/') && sharedIntent
+            && sharedIntent.source === location.pathname && Date.now() - sharedIntent.at < 10000) {
+          modalContext = document.querySelector('[role="dialog"]:has(video), [aria-modal="true"]:has(video)');
+          if (modalContext) {
+            pinnedID = sharedIntent.route.id;
+            pinnedKind = sharedIntent.route.kind;
+            sharedIntent = null;
+          }
+        }
+        if (!route && !pinnedID && location.pathname.startsWith('/direct/')) {
+          // Direct also opens video previews from buttons with no permalink.
+          // The foreground video modal is still a single shared item.
+          const modal = document.querySelector(
+            '[role="dialog"]:not([aria-hidden="true"]):has(video), [aria-modal="true"]:not([aria-hidden="true"]):has(video)'
+          );
+          const video = modal && [...modal.querySelectorAll('video')].find((media) => {
+            const rect = media.getBoundingClientRect();
+            return rect.width >= 220 && rect.height >= 280 && rect.bottom > 0 && rect.top < innerHeight;
+          });
+          if (video) {
+            const link = [...modal.querySelectorAll('a[href]')].map(node => mediaRoute(node.href))
+              .find(candidate => candidate && ['reel', 'p'].includes(candidate.kind));
+            modalContext = modal;
+            pinnedVideo = video;
+            pinnedID = link?.id || 'direct-modal';
+            pinnedKind = link?.kind || 'reel';
+          }
+        }
+        if (!route && modalContext?.isConnected && location.pathname.startsWith('/direct/')) {
+          document.documentElement.dataset.vigilSingleReel = pinnedID;
+          return true;
+        }
+        if (!route || (!pinnedID && route.kind !== 'reel'
+            && !(route.kind === 'p' && document.querySelector('video')))) {
           if (pinnedID) reset();
           return false;
         }
-        if (!pinnedID) pinnedID = route.id;
+        if (!pinnedID) { pinnedID = route.id; pinnedKind = route.kind; }
         document.documentElement.dataset.vigilSingleReel = pinnedID;
         return true;
       };
       const blocksDestination = (value) => {
         if (!syncRoute() || value == null || value === '') return false;
         const route = mediaRoute(value);
-        return Boolean(route && (route.id !== pinnedID || route.kind !== 'reel'));
+        let reelsDestination = false;
+        try { reelsDestination = /^\/reels(?:\/|$)/i.test(new URL(value, location.href).pathname); } catch (_) {}
+        return reelsDestination || Boolean(route && (route.id !== pinnedID || route.kind !== pinnedKind));
       };
       const cancel = event => {
         if (event.cancelable) event.preventDefault();
@@ -1827,7 +1938,7 @@ enum DOMAdapters {
       const mediaSource = video => video.getAttribute('src') || video.currentSrc || video.querySelector('source')?.src || '';
       const reconcile = () => {
         if (!syncRoute()) return;
-        const videos = [...document.querySelectorAll('video')];
+        const videos = [...(modalContext || document).querySelectorAll('video')];
         if (pinnedVideo && !pinnedVideo.isConnected && pinnedSource) {
           // A harmless React remount may replace the node, but only the exact
           // already-authorized media source may inherit playback permission.
@@ -1838,6 +1949,7 @@ enum DOMAdapters {
           // Pick the visible item rather than a prefetched neighbour. Require
           // a matching permalink when the item's article exposes one.
           const visible = videos.filter(video => {
+            if (video.closest('nav, [aria-hidden="true"], [data-vigil-instagram-feed-region]')) return false;
             const box = video.getBoundingClientRect();
             if (box.width <= 0 || box.height <= 0 || box.bottom <= 0 || box.top >= innerHeight) return false;
             const links = [...(video.closest('article')?.querySelectorAll('a[href]') || [])]
@@ -1854,9 +1966,35 @@ enum DOMAdapters {
           // React can recycle the same video node without changing history.
           // A different source must never inherit permission from that node.
           const allowed = video === pinnedVideo && (!pinnedSource || source === pinnedSource)
-            && mediaRoute(location.href)?.id === pinnedID;
+            && (modalContext?.isConnected || mediaRoute(location.href)?.id === pinnedID);
           video.dataset.vigilSingleReelMedia = allowed ? 'allowed' : 'blocked';
           if (!allowed && !video.paused) video.pause();
+          let card = video.closest('article, [role="article"]');
+          if (!card) {
+            // Instagram's newer viewer uses anonymous div cards. Include the
+            // whole item, so a hidden video cannot leave recommended captions,
+            // posters or controls visible alongside it.
+            for (let node = video.parentElement; node && node !== document.body; node = node.parentElement) {
+              if (node.querySelectorAll('video').length !== 1) break;
+              card = node;
+              const siblingsWithMedia = [...(node.parentElement?.children || [])].filter((sibling) =>
+                [...sibling.querySelectorAll('video, img')].some((media) => {
+                  const rect = media.getBoundingClientRect();
+                  return rect.width >= 220 && rect.height >= 280;
+                }));
+              if (siblingsWithMedia.length > 1) break;
+            }
+          }
+          if (card) card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
+          if (allowed && card?.parentElement) {
+            for (const sibling of card.parentElement.children) {
+              if (sibling === card || inSheet(sibling)) continue;
+              if ([...sibling.querySelectorAll('video, img')].some((media) => {
+                const rect = media.getBoundingClientRect();
+                return rect.width >= 220 && rect.height >= 280;
+              })) sibling.dataset.vigilSingleReelCard = 'blocked';
+            }
+          }
         }
         if (pinnedVideo?.isConnected) {
           for (let node = pinnedVideo.parentElement; node; node = node.parentElement) {
@@ -1911,6 +2049,11 @@ enum DOMAdapters {
       }, true);
       window.addEventListener('click', event => {
         const link = event.target?.closest?.('a[href]');
+        const shared = mediaRoute(link?.href);
+        if (!pinnedID && shared && ['reel', 'p'].includes(shared.kind)
+            && location.pathname.startsWith('/direct/')) {
+          sharedIntent = { route: shared, source: location.pathname, at: Date.now() };
+        }
         const next = event.target?.closest?.('[aria-label="Next" i], [aria-label="Next reel" i], [aria-label="Previous reel" i]');
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
       }, true);
@@ -1934,7 +2077,7 @@ enum DOMAdapters {
       window.addEventListener('popstate', reconcile, true);
       window.addEventListener('pageshow', reconcile, true);
       new MutationObserver(reconcile).observe(document.documentElement, {
-        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href']
+        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href', 'style', 'class', 'aria-hidden']
       });
       reconcile();
     })();
@@ -2073,6 +2216,11 @@ enum DOMAdapters {
         html[data-vigil-instagram-story-gate="pending"] body {
           visibility: hidden !important;
         }
+        [data-vigil-instagram-story-panel="pending"],
+        [data-vigil-instagram-story-panel="pending"] * {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
         [data-vigil-instagram-story-relationship="unavailable"] {
           display: none !important;
         }
@@ -2122,11 +2270,13 @@ enum DOMAdapters {
         [data-vigil-instagram-story-slot]:is(
           [data-vigil-instagram-story-relationship="self"],
           :has([data-vigil-instagram-story-relationship="self"]),
+          :has([data-vigil-instagram-profile-control="true"]),
           :has([aria-label="Your profile" i])
         ) { order: -1 !important; }
         [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
           display: none !important;
         }
+        [data-vigil-instagram-story-slot] img { max-width: 100% !important; }
         html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
           display: none !important;
         }
@@ -2268,6 +2418,7 @@ enum DOMAdapters {
             [...root.querySelectorAll('video, audio')]);
           const suspendedMedia = new Set();
           const audioState = new WeakMap();
+          let synchronizingAudioControl = false;
           const mediaSourceKey = (media) => String(
             media.currentSrc || media.getAttribute('src') || media.querySelector('source')?.src || ''
           );
@@ -2276,7 +2427,9 @@ enum DOMAdapters {
             for (let depth = 0; container && depth < 10; depth += 1) {
               const mediaInContainer = container.querySelectorAll?.('video, audio') || [];
               if (mediaInContainer.length === 1 && mediaInContainer[0] === media) {
-                const labelled = container.querySelector?.('[aria-label="Unmute" i]');
+                const labelled = container.querySelector?.(
+                  '[aria-label="Unmute" i], [aria-label="Unmute audio" i], [aria-label="Turn on sound" i], [aria-label="Audio is muted" i]'
+                );
                 if (labelled) return labelled.closest('button, [role="button"]') || labelled;
               }
               container = container.parentElement;
@@ -2302,7 +2455,9 @@ enum DOMAdapters {
               // Use Instagram's own control so its icon/framework state agrees
               // with the physical media element. Synthetic clicks are excluded
               // from the user-choice listener below.
+              synchronizingAudioControl = true;
               try { unmuteControl.click(); } catch (_) {}
+              finally { synchronizingAudioControl = false; }
             }
             if (!state.initialized || media.muted || media.defaultMuted) {
               state.initialized = true;
@@ -2357,21 +2512,33 @@ enum DOMAdapters {
             });
           };
           document.addEventListener('click', (event) => {
-            if (!event.isTrusted || !(event.target instanceof Element)) return;
-            const media = event.target.closest('video, audio')
-              || event.target.closest('button, [role="button"]')
-                ?.parentElement?.querySelector?.('video, audio');
+            if (synchronizingAudioControl || !(event.target instanceof Element)) return;
+            const control = event.target.closest('button, [role="button"]');
+            if (!control) return;
+            const labels = [control, ...control.querySelectorAll('[aria-label]')]
+              .map(node => String(node.getAttribute('aria-label') || '').trim().toLowerCase());
+            const choosingMute = labels.some(label => ['mute', 'mute audio', 'turn off sound', 'audio is playing'].includes(label));
+            const choosingUnmute = labels.some(label => ['unmute', 'unmute audio', 'turn on sound', 'audio is muted'].includes(label));
+            // Opening/playing a shared Reel is not a request to save the
+            // framework's temporary muted autoplay state as a user choice.
+            if (!choosingMute && !choosingUnmute) return;
+            let media = event.target.closest('video, audio');
+            for (let container = control.parentElement, depth = 0; !media && container && depth < 10;
+                container = container.parentElement, depth += 1) {
+              const candidates = [...container.querySelectorAll('video, audio')];
+              if (candidates.length === 1) media = candidates[0];
+            }
             if (!(media instanceof HTMLMediaElement)) return;
-            queueMicrotask(() => {
-              const state = audioState.get(media) || {
-                source: mediaSourceKey(media), initialized: true, userChoseMute: false
-              };
-              state.userChoseMute = media.muted;
-              state.initialized = true;
-              audioState.set(media, state);
-            });
+            const state = audioState.get(media) || {
+              source: mediaSourceKey(media), initialized: true, userChoseMute: false
+            };
+            state.userChoseMute = choosingMute;
+            state.initialized = true;
+            audioState.set(media, state);
           }, true);
-          document.addEventListener('play', (event) => applyAudioPreference(event.target), true);
+          for (const type of ['play', 'playing', 'loadedmetadata', 'canplay', 'volumechange']) {
+            document.addEventListener(type, (event) => applyAudioPreference(event.target), true);
+          }
           new MutationObserver((records) => {
             records.forEach((record) => {
               if (record.type === 'attributes') applyAudioPreference(record.target);
@@ -3117,11 +3284,16 @@ enum DOMAdapters {
             };
 
             let mediaObserver = null;
+            let pendingMediaWorkFlush = null;
+            let pendingMediaWorkFrame = 0;
             const scheduleMediaWork = () => {
               if (mediaWorkScheduled) return;
               mediaWorkScheduled = true;
-              requestAnimationFrame(() => {
+              const flush = () => {
+                if (!mediaWorkScheduled) return;
                 mediaWorkScheduled = false;
+                pendingMediaWorkFlush = null;
+                pendingMediaWorkFrame = 0;
                 while (activeMediaRequests < maximumConcurrentMedia && pendingMedia.size) {
                   let element = [...pendingMedia].find((candidate) => candidate.dataset.vigilNearViewport === 'true');
                   if (!element) element = pendingMedia.values().next().value;
@@ -3141,8 +3313,21 @@ enum DOMAdapters {
                   }
                   submitMedia(element, captureKind);
                 }
-              });
+              };
+              // Hidden WKWebView documents suspend animation frames. Continue
+              // the same bounded safety work while authorized audio plays.
+              pendingMediaWorkFlush = flush;
+              if (document.visibilityState === 'hidden') setTimeout(flush, 0);
+              else pendingMediaWorkFrame = requestAnimationFrame(flush);
             };
+            document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState !== 'hidden' || !pendingMediaWorkFrame || !pendingMediaWorkFlush) return;
+              // A frame queued while visible can become parked at backgrounding.
+              // Transfer it once so fresh classifications cannot deadlock.
+              cancelAnimationFrame(pendingMediaWorkFrame);
+              pendingMediaWorkFrame = 0;
+              setTimeout(pendingMediaWorkFlush, 0);
+            });
             const queueMedia = (element, priority = false, force = false) => {
               if (!(element instanceof HTMLImageElement || element instanceof HTMLVideoElement) || !element.isConnected) return;
               ensureMediaIdentity(element);
@@ -4016,8 +4201,283 @@ enum DOMAdapters {
         case .youtube: youtube
         case .linkedin: linkedin
         case .snapchat: snapchat + snapchatMobileLayout
+        case .facebook, .x, .tiktok, .reddit:
+            expandedSafetyScript(for: service) + expandedServiceScript(for: service)
         }
     }
+
+    private static func expandedSafetyScript(for service: SocialService) -> String {
+        guard service.focusedRoutePolicy != nil else { return "" }
+        return mediaChildLockScript + (service == .reddit ? redditChildLockScript : "")
+    }
+
+    private static let mediaChildLockScript = requiredBundledSafetyScript(
+        "media-child-lock", installationFlag: "__vigilExpandedMediaChildLockInstalled"
+    )
+    private static let redditChildLockScript = requiredBundledSafetyScript(
+        "reddit-child-lock", installationFlag: "__vigilRedditChildLockInstalled"
+    )
+
+    private static func requiredBundledSafetyScript(_ name: String, installationFlag: String) -> String {
+        guard let url = Bundle.main.url(forResource: name, withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8),
+              !source.isEmpty else {
+            return #"""
+            (() => {
+              document.documentElement.setAttribute('data-vigil-focused-safety-unavailable', 'true');
+              const style = document.createElement('style');
+              style.textContent = 'html[data-vigil-focused-safety-unavailable] body { visibility: hidden !important; }';
+              document.documentElement.appendChild(style);
+              window.__vigilBridge?.({ type: 'health', state: 'unsupported', detail: 'Required content safety controls could not be loaded.' });
+            })();
+            """#
+        }
+        // Safari's blocked.html is an extension resource. WKWebView stays on
+        // its focused inbox when Reddit's explicit-query guard rejects content.
+        let focusedSource = source.replacingOccurrences(
+            of: "catch { return 'about:blank'; }",
+            with: "catch { return 'https://www.reddit.com/message/inbox/'; }"
+        )
+        return #"""
+        (() => {
+          if (window.INSTALLATION_FLAG) return;
+          REQUIRED_SAFETY_SOURCE
+          window.INSTALLATION_FLAG = true;
+        })();
+        """#
+            .replacingOccurrences(of: "REQUIRED_SAFETY_SOURCE", with: focusedSource)
+            .replacingOccurrences(of: "INSTALLATION_FLAG", with: installationFlag)
+    }
+
+    // Shared route factory is used by both auth isolation and the service
+    // adapter. Configuration is encoded from SocialService's native policy.
+    private static let focusedSocialPolicyFactory = #"""
+    ((configuration) => {
+      if (!configuration || !Array.isArray(configuration.hosts)) return null;
+      const authentication = configuration.authentication.map(pattern => new RegExp(pattern, 'i'));
+      const allowed = configuration.allowed.map(pattern => new RegExp(pattern, 'i'));
+      const restricted = configuration.restricted.map(pattern => new RegExp(pattern, 'i'));
+      const canonical = (value, base = location.href) => {
+        try {
+          if (String(value).includes('\\') || /(?:^|\/)\.\.?(?:\/|$)/.test(String(value).split(/[?#]/)[0])) return null;
+          const url = new URL(value, base);
+          if (url.protocol !== 'https:' || (url.port && url.port !== '443')
+              || url.username || url.password || !configuration.hosts.includes(url.hostname.toLowerCase())
+              || url.pathname.includes('%')) return null;
+          return url;
+        } catch (_) { return null; }
+      };
+      const route = (value, base) => {
+        const url = canonical(value, base);
+        if (!url) return 'blocked';
+        if (authentication.some(pattern => pattern.test(url.pathname))) return 'authentication';
+        if (restricted.some(pattern => pattern.test(url.pathname))) return 'blocked';
+        return allowed.some(pattern => pattern.test(url.pathname)) ? 'content' : 'blocked';
+      };
+      return Object.freeze({ configuration, canonical, route });
+    })
+    """#
+
+    private static func expandedServiceScript(for service: SocialService) -> String {
+        guard let policy = service.focusedRoutePolicy else { return "" }
+        return focusedSocialAdapter
+            .replacingOccurrences(of: "FOCUSED_POLICY_FACTORY", with: focusedSocialPolicyFactory)
+            .replacingOccurrences(of: "FOCUSED_POLICY_CONFIGURATION", with: policy.javascriptConfiguration)
+            .replacingOccurrences(of: "FOCUSED_SERVICE", with: service.rawValue)
+            .replacingOccurrences(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory)
+    }
+
+    private static let focusedSocialAdapter = #"""
+    (() => {
+      const policy = FOCUSED_POLICY_FACTORY(FOCUSED_POLICY_CONFIGURATION);
+      if (!policy || !policy.configuration.hosts.includes(location.hostname.toLowerCase())) return;
+      const configuration = policy.configuration;
+      if (window[configuration.installationFlag]) {
+        window.__vigilFocusedReportReady?.();
+        return;
+      }
+      window[configuration.installationFlag] = true;
+      const service = 'FOCUSED_SERVICE';
+      const marker = 'data-vigil-focused-hidden';
+      const style = document.createElement('style');
+      style.id = `vigil-${service}-focused-style`;
+      style.textContent = `
+        html[data-vigil-focused-route='blocked'] body { visibility: hidden !important; }
+        [${marker}], ${configuration.concealed.join(', ')} { display: none !important; }
+        meta[name='apple-itunes-app'], a[href^='intent:'], a[href^='itms-apps:'],
+        a[href^='twitter:'], a[href^='tiktok:'], a[href^='fb:'] { display: none !important; }
+      `;
+      document.documentElement.appendChild(style);
+      const closedRoots = ROOT_REGISTRY_FACTORY([document]);
+      const inspectRoot = root => {
+        if (!root || closedRoots.has(root)) return;
+        closedRoots.add(root);
+        if (root !== document) {
+          const copy = style.cloneNode(true);
+          root.appendChild(copy);
+        }
+        observe(root);
+      };
+      const nativeAttachShadow = Element.prototype.attachShadow;
+      Element.prototype.attachShadow = function(...args) {
+        const root = nativeAttachShadow.apply(this, args);
+        inspectRoot(root);
+        return root;
+      };
+      const elements = selector => [...closedRoots].flatMap(root => [...root.querySelectorAll(selector)]);
+      const conceal = node => {
+        if (node.getAttribute(marker) !== 'true') node.setAttribute(marker, 'true');
+        node.querySelectorAll('video, audio').forEach(media => { media.pause(); media.muted = true; });
+      };
+      const blockNavigation = value => policy.route(value) === 'blocked';
+      const promotion = node => {
+        const label = String(node.getAttribute('aria-label') || node.textContent || '').replace(/\s+/g, ' ').trim();
+        return /^(?:open(?: in)?|use|get|download|try|continue (?:in|to))(?: the)? (?:facebook|messenger|x|twitter|tiktok|reddit)?\s*(?:app)[.!]?$/i.test(label)
+          || /^(?:https:\/\/(?:apps\.apple\.com|play\.google\.com)\/|intent:|itms-apps:|twitter:|tiktok:|fb:)/i.test(node.getAttribute('href') || '');
+      };
+      const blockedControl = element => {
+        const control = element?.closest?.('a[href], button, [role="button"], [role="tab"]');
+        if (!control) return null;
+        if (control.matches('a[href]') && blockNavigation(control.href)) return control;
+        if (promotion(control)) return control;
+        // Confine label checks to global navigation; a post can mention a
+        // restricted feature and a composer may upload ordinary video.
+        const label = String(control.getAttribute('aria-label') || control.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        return control.closest('nav, [role="navigation"], [role="tablist"]')
+          && configuration.controlLabels.includes(label) ? control : null;
+      };
+      let lastURL = '';
+      let redirectedURL = '';
+      const enforceRoute = () => {
+        const route = policy.route(location.href);
+        lastURL = location.href;
+        if (route !== 'content') {
+          document.documentElement.setAttribute('data-vigil-focused-route', 'blocked');
+          elements('video, audio').forEach(media => { media.pause(); media.muted = true; });
+          if (redirectedURL !== location.href) {
+            redirectedURL = location.href;
+            location.replace(route === 'authentication' ? location.href : configuration.homeURL);
+          }
+          return true;
+        }
+        redirectedURL = '';
+        if (document.documentElement.getAttribute('data-vigil-focused-route') !== 'content') {
+          document.documentElement.setAttribute('data-vigil-focused-route', 'content');
+        }
+        return false;
+      };
+      const itemRoute = value => {
+        const url = policy.canonical(value);
+        const match = url?.pathname.match(/^\/@[^/]+\/(?:video|photo)\/([0-9]+)\/?$/i);
+        return service === 'tiktok' && match ? match[1] : null;
+      };
+      const mediaBelongsToDirectItem = media => {
+        const currentDirectItem = itemRoute(location.href);
+        if (!currentDirectItem) return true;
+        const card = media.closest('[data-e2e="browse-video"], [data-e2e="browse-video-container"], [data-e2e="video-detail"], [data-video-id]');
+        if (!card) return false;
+        if (card.getAttribute('data-video-id') === currentDirectItem) return true;
+        const linkedItems = [...card.querySelectorAll('a[href]')].map(link => itemRoute(link.href)).filter(Boolean);
+        if (linkedItems.length) return linkedItems.every(id => id === currentDirectItem);
+        return card.matches('[data-e2e="browse-video"], [data-e2e="video-detail"]')
+          && !card.hasAttribute('data-video-id')
+          && card.querySelectorAll('video').length === 1;
+      };
+      const nextDirectItem = value => {
+        const currentDirectItem = itemRoute(location.href);
+        const id = itemRoute(value);
+        return currentDirectItem && id && currentDirectItem !== id;
+      };
+      const cardSelector = service === 'facebook' ? '[role="article"]'
+        : service === 'x' ? 'article[data-testid="tweet"]'
+        : service === 'reddit' ? 'shreddit-post, .thing.link'
+        : '[data-e2e="user-post-item"], [data-e2e="search-common-link"]';
+      const sponsoredOrSuggested = card => {
+        if (card.matches(configuration.concealed.join(', '))) return true;
+        if (card.querySelector(configuration.concealed.join(', '))) return true;
+        // Use service-owned chrome, never the body of a post/comment.
+        return [...card.querySelectorAll('[aria-label], [data-testid], [data-e2e], [slot="credit-bar"]')]
+          .some(node => /^(sponsored|promoted|suggested for you|recommended for you|because you visited|related posts|similar to this post)$/i
+            .test(String(node.getAttribute('aria-label') || (node.matches('[slot="credit-bar"]') ? node.textContent : '') || '').trim()));
+      };
+      const reconcile = () => {
+        if (enforceRoute()) return;
+        for (const root of [...closedRoots]) {
+          if (root !== document && !root.host?.isConnected) continue;
+          if (!root.querySelector(`#${style.id}`)) {
+            (root === document ? document.documentElement : root).appendChild(style.cloneNode(true));
+          }
+          root.querySelectorAll('*').forEach(node => { if (node.shadowRoot) inspectRoot(node.shadowRoot); });
+          root.querySelectorAll('meta[name="apple-itunes-app"]').forEach(node => node.remove());
+          root.querySelectorAll('a[href], button, [role="button"], [role="tab"]').forEach(node => {
+            const control = blockedControl(node);
+            if (control) conceal(promotion(control) ? control.closest('[role="dialog"], [aria-modal="true"]') || control : control);
+          });
+          root.querySelectorAll(cardSelector).forEach(card => { if (sponsoredOrSuggested(card)) conceal(card); });
+          // Media in a hidden recommendation must never continue audibly.
+          root.querySelectorAll('video, audio').forEach(media => {
+            if (!mediaBelongsToDirectItem(media) || media.closest(`[${marker}], ${configuration.concealed.join(', ')}`)) { media.pause(); media.muted = true; }
+          });
+        }
+        reportReady();
+      };
+      let pending = false;
+      const schedule = () => {
+        if (pending) return;
+        pending = true;
+        requestAnimationFrame(() => { pending = false; reconcile(); });
+      };
+      const observe = root => new MutationObserver(schedule).observe(root, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['href', 'aria-label', 'data-testid', 'data-e2e', 'nsfw', 'is-promoted', 'class']
+      });
+      let lastHealth = '';
+      const reportReady = () => {
+        if (window !== window.top || document.readyState === 'loading' || !document.body
+            || !window.__vigilCommonInstalled || !window.__vigilPolicyProbeInstalled
+            || typeof window.__vigilBridge !== 'function' || policy.route(location.href) !== 'content') return;
+        const usable = elements('main, [role="main"], form, input, textarea, [contenteditable="true"], button, [role="button"], article, shreddit-post')
+          .some(node => !node.closest(`[${marker}], ${configuration.concealed.join(', ')}`) && node.getClientRects().length);
+        const health = usable ? 'ready' : 'loading';
+        if (health === lastHealth) return;
+        lastHealth = health;
+        if (document.documentElement.hasAttribute('data-vigil-focused-safety-unavailable')) {
+          window.__vigilBridge({ type: 'health', state: 'unsupported', detail: 'Required content safety controls could not be loaded.' });
+        } else if (usable) window.__vigilBridge({ type: 'health', state: 'ready', detail: '' });
+      };
+      window.__vigilFocusedReportReady = () => { reconcile(); };
+      for (const method of ['pushState', 'replaceState']) {
+        const original = history[method];
+        history[method] = function(...args) {
+          if (args[2] && nextDirectItem(args[2])) return;
+          const result = original.apply(this, args);
+          if (!enforceRoute()) schedule();
+          return result;
+        };
+      }
+      document.addEventListener('click', event => {
+        const link = event.target?.closest?.('a[href]');
+        if (!blockedControl(event.target) && !(link && nextDirectItem(link.href))) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      }, true);
+      document.addEventListener('play', event => {
+        const media = event.target;
+        if (!media.matches?.('video, audio')) return;
+        if (blockNavigation(location.href) || !mediaBelongsToDirectItem(media) || media.closest(`[${marker}], ${configuration.concealed.join(', ')}`)) {
+          media.pause(); media.muted = true;
+        }
+      }, true);
+      for (const name of ['popstate', 'hashchange', 'pageshow', '__vigilRouteChanged']) addEventListener(name, () => { if (!enforceRoute()) schedule(); }, true);
+      document.addEventListener('__vigilPageVerdictChanged', reportReady);
+      observe(document);
+      reconcile();
+      addEventListener('DOMContentLoaded', schedule, { once: true });
+      // Detect routers that saved History functions before injection. Native
+      // navigation remains a second gate; conceal an unknown SPA route promptly.
+      setInterval(() => { if (location.href !== lastURL && !enforceRoute()) schedule(); }, 250);
+    })();
+    """#
 
     private static let linkedin = #"""
     (() => {
@@ -5578,6 +6038,11 @@ enum DOMAdapters {
           html[data-vigil-instagram-story-gate="pending"] body {
             visibility: hidden !important;
           }
+          [data-vigil-instagram-story-panel="pending"],
+          [data-vigil-instagram-story-panel="pending"] * {
+            visibility: hidden !important;
+            pointer-events: none !important;
+          }
           [data-vigil-instagram-story-relationship="unavailable"] {
             display: none !important;
           }
@@ -5627,11 +6092,13 @@ enum DOMAdapters {
           [data-vigil-instagram-story-slot]:is(
             [data-vigil-instagram-story-relationship="self"],
             :has([data-vigil-instagram-story-relationship="self"]),
+            :has([data-vigil-instagram-profile-control="true"]),
             :has([aria-label="Your profile" i])
           ) { order: -1 !important; }
           [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
             display: none !important;
           }
+          [data-vigil-instagram-story-slot] img { max-width: 100% !important; }
           html[data-vigil-instagram-home-filter="true"] main [role="progressbar"] {
             display: none !important;
           }
@@ -6039,6 +6506,11 @@ enum DOMAdapters {
           const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
           const sourcePath = source.pathname.toLowerCase().replace(/\/+$/, '') || '/';
           const sourceIsStory = sourcePath === '/stories' || sourcePath.startsWith('/stories/');
+          if (sourceIsStory && path !== sourcePath) {
+            document.querySelectorAll('[data-vigil-instagram-story-panel]').forEach((panel) => {
+              panel.dataset.vigilInstagramStoryPanel = 'pending';
+            });
+          }
           if (path === '/' && committing) {
             // Set the fail-closed Home marker before Instagram synchronously
             // swaps its SPA tree, not one mutation callback afterward.
@@ -6249,7 +6721,7 @@ enum DOMAdapters {
       }, { capture: true, passive: false });
       document.addEventListener('click', (event) => {
         const suppressed = suppressedStoryForwardClick;
-        if (!deliveringStoryForwardClick && suppressed && performance.now() < suppressed.until
+        if (!deliveringStoryForwardClick && !storySkipActivation && suppressed && performance.now() < suppressed.until
             && Math.hypot(event.clientX - suppressed.x, event.clientY - suppressed.y) <= 24) {
           if (event.cancelable) event.preventDefault();
           event.stopImmediatePropagation();
@@ -6336,13 +6808,13 @@ enum DOMAdapters {
       const markFilteredCards = (root) => {
         const scope = root instanceof Element ? root : document;
         const candidates = [
-          ...(scope.matches?.('article, [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') ? [scope] : []),
-          ...scope.querySelectorAll?.('article, [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') || []
+          ...(scope.matches?.('article, [role="article"], [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') ? [scope] : []),
+          ...scope.querySelectorAll?.('article, [role="article"], [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') || []
         ];
         let inspected = 0;
         for (const candidate of candidates) {
           inspected += 1;
-          const card = candidate.closest('article') || candidate;
+          const card = candidate.closest('article, [role="article"]') || candidate;
           if (featureState('suggested') !== 'available'
               && (candidate.matches('[data-testid*="suggested" i]')
                 || card.querySelector('a[href*="/explore/people/suggested"]')
@@ -6427,9 +6899,11 @@ enum DOMAdapters {
           friendshipStorage.setItem(friendshipCacheKey, JSON.stringify(fresh));
         } catch (_) {}
       };
-      const homeCardAuthor = (article, preferred = '') => {
-        const links = article.querySelectorAll?.('a[href]') || [];
-        let first = '';
+      const homeCardAuthor = (article) => {
+        // A mention of the previous friend in a recycled card's caption is
+        // not its author. Prefer the actual header, even while it is empty.
+        const header = article.querySelector('header');
+        const links = (header || article).querySelectorAll?.('a[href]') || [];
         for (const link of links) {
           let path = '';
           try { path = new URL(link.href, location.href).pathname; } catch (_) { continue; }
@@ -6439,10 +6913,9 @@ enum DOMAdapters {
           if (!username || [
             'accounts', 'direct', 'explore', 'reel', 'reels', 'stories'
           ].includes(username)) continue;
-          if (preferred && username === preferred) return username;
-          if (!first) first = username;
+          return username;
         }
-        return first;
+        return '';
       };
       const relationshipBoolean = (...values) => {
         for (const value of values) {
@@ -6904,7 +7377,9 @@ enum DOMAdapters {
             .map((node) => node.getAttribute('aria-label'))
         ].map((value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase());
         const author = storyAuthor(control);
-        return Boolean(author && author === discoverViewerUsername())
+        const viewer = discoverViewerUsername();
+        if (author && viewer && author !== viewer) return false;
+        return Boolean(author && author === viewer)
           || labels.some((label) => label === 'your story'
           || label.startsWith('your story, ')
           || label === 'add to your story'
@@ -6959,6 +7434,10 @@ enum DOMAdapters {
       let storyRelationshipFlushTimer = 0;
       const storyRailClampFrames = new WeakMap();
       const boundStoryRails = new WeakSet();
+      const movingStoryRails = new WeakSet();
+      const touchingStoryRails = new WeakSet();
+      const storyRailIdleTimers = new WeakMap();
+      const storyRailLayouts = new WeakMap();
       const storyRailViewportStates = new WeakMap();
       let lastStoryRailViewportState = null;
       const rememberStoryRailViewport = (rail, controls = homeStoryControls()) => {
@@ -7018,6 +7497,8 @@ enum DOMAdapters {
         });
       });
       const storyRailFor = (controls) => {
+        const existing = document.querySelector('[data-vigil-instagram-story-rail="true"]');
+        if (existing && controls.every((control) => existing.contains(control))) return existing;
         if (controls.length === 0) {
           return document.querySelector('[data-vigil-instagram-story-rail="true"]');
         }
@@ -7039,7 +7520,7 @@ enum DOMAdapters {
       };
       const clampStoryRail = (rail) => {
         if (!(rail instanceof HTMLElement) || !rail.isConnected
-            || rail.dataset.vigilInstagramStoryRail !== 'true') return;
+            || rail.dataset.vigilInstagramStoryRail !== 'true' || movingStoryRails.has(rail)) return;
         const distance = Math.max(0, rail.scrollWidth - rail.clientWidth);
         const rightToLeft = getComputedStyle(rail).direction === 'rtl';
         const minimum = rightToLeft ? -distance : 0;
@@ -7057,7 +7538,9 @@ enum DOMAdapters {
       };
       const normalizeHomeStoryRail = (controls = homeStoryControls()) => {
         const isFeed = instagramRoute() === 'feed';
-        if (!isFeed) lastStoryRailViewportState = null;
+        // Home commonly survives behind Stories; keep its compact layout and
+        // leading profile slot throughout the viewer's lifetime.
+        if (!isFeed) return;
         const rail = isFeed ? storyRailFor(controls) : null;
         const viewportState = rail instanceof HTMLElement
           ? (Math.abs(rail.scrollLeft) <= 1 ? { atStart: true, scrollLeft: rail.scrollLeft }
@@ -7089,6 +7572,7 @@ enum DOMAdapters {
           for (const control of track.querySelectorAll('a[href], button, [role="button"]')) {
             if (controls.some((story) => story === control || story.contains(control) || control.contains(story))) continue;
             if (!isProfileControl(control)) { track = null; break; }
+            control.dataset.vigilInstagramProfileControl = 'true';
             let slot = control;
             while (slot.parentElement && slot.parentElement !== track) slot = slot.parentElement;
             slots.set(slot, 'visible');
@@ -7128,12 +7612,40 @@ enum DOMAdapters {
         rail.dataset.vigilInstagramStoryRail = 'true';
         if (!boundStoryRails.has(rail)) {
           boundStoryRails.add(rail);
+          const settle = () => {
+            clearTimeout(storyRailIdleTimers.get(rail));
+            storyRailIdleTimers.set(rail, setTimeout(() => {
+              if (touchingStoryRails.has(rail)) return;
+              movingStoryRails.delete(rail);
+              rememberStoryRailViewport(rail);
+              flushHomeStoryRelationships(true);
+              scheduleStoryRailClamp(rail);
+            }, 180));
+          };
+          rail.addEventListener('touchstart', () => {
+            clearTimeout(storyRailIdleTimers.get(rail));
+            touchingStoryRails.add(rail);
+            movingStoryRails.add(rail);
+          }, { passive: true });
+          const release = () => { touchingStoryRails.delete(rail); settle(); };
+          rail.addEventListener('touchend', release, { passive: true });
+          rail.addEventListener('touchcancel', release, { passive: true });
           rail.addEventListener('scroll', () => {
             rememberStoryRailViewport(rail);
-            scheduleStoryRailClamp(rail);
+            // WebKit owns momentum and bounds. Writing scrollLeft from every
+            // scroll event fights its compositor at the leading edge.
+            movingStoryRails.add(rail);
+            settle();
           }, { passive: true });
         }
         storyRailResizeObserver.observe(rail);
+        const layout = [...slots].map(([slot, state]) => ({ slot, state, width: slot.getBoundingClientRect().width }));
+        const previousLayout = storyRailLayouts.get(rail);
+        const changed = !previousLayout || previousLayout.length !== layout.length
+          || layout.some((entry, index) => entry.slot !== previousLayout[index].slot
+            || entry.state !== previousLayout[index].state || entry.width !== previousLayout[index].width);
+        storyRailLayouts.set(rail, layout);
+        if (movingStoryRails.has(rail) || !changed) return;
         // Keep the same account at the same viewport edge when Instagram
         // prepends or recycles slots, then trim only genuinely blank overflow.
         if (!restoreStoryRailViewport(rail, controls, viewportState)) {
@@ -7151,6 +7663,8 @@ enum DOMAdapters {
           return !stagedHomeStoryRelationships.has(control);
         });
         const hasStaged = controls.some((control) => stagedHomeStoryRelationships.has(control));
+        const rail = storyRailFor(controls);
+        if (rail && movingStoryRails.has(rail) && hasStaged) return false;
         if (unresolved && !allowPartial) {
           if (hasStaged && !storyRelationshipFlushTimer) {
             // One slow or stalled account must not hold every already-verified
@@ -7231,6 +7745,99 @@ enum DOMAdapters {
         return Boolean(username) && (username === discoverViewerUsername()
           || isInformationalAccount(username) || friendshipCache.get(username) === true);
       };
+      let storySkipTimer = 0;
+      let storySkipActivation = false;
+      const navigateVerifiedStory = (path, sequence = readStoryOrder(), deferHome = true) => {
+        clearTimeout(storySkipTimer);
+        const source = location.pathname;
+        const username = validInstagramUsername(path.split('/').filter(Boolean)[1]);
+        const backwards = sequence && sequence.order.indexOf(username) < sequence.order.indexOf(sequence.active);
+        // Use the site's mounted SPA handler, including its exact story ID.
+        // Bare /stories/user/ document reloads can bounce back to Home.
+        let control = username ? [...document.querySelectorAll(
+          'a[href^="/stories/"], [data-vigil-instagram-story-author]'
+        )].find((node) => storyAuthor(node) === username && !node.closest('nav')) : null;
+        if (!control && instagramRoute() === 'story') {
+          const labels = backwards ? ['previous', 'previous story', 'previous photo'] : ['next', 'next story', 'next photo'];
+          control = [...document.querySelectorAll('button, [role="button"]')].find((node) => {
+            if (node.closest('nav, [aria-hidden="true"], [data-vigil-instagram-feed-region], [data-vigil-instagram-story-rail]')
+                || node.matches(':disabled, [aria-disabled="true"]')) return false;
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0 && [node, ...node.querySelectorAll('[aria-label]')]
+              .some((label) => labels.includes(String(label.getAttribute('aria-label') || '').trim().toLowerCase()));
+          });
+        }
+        if (control instanceof HTMLElement) {
+          const rect = control.getBoundingClientRect();
+          storySkipActivation = true;
+          try {
+            control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window,
+              clientX: rect.left + rect.width * (backwards ? 0.25 : 0.75), clientY: rect.top + rect.height / 2 }));
+          } finally { storySkipActivation = false; }
+          // Give asynchronous router effects a chance to acknowledge the
+          // activation. The pending gate continues concealing rejected media.
+          storySkipTimer = setTimeout(() => {
+            if (location.pathname !== source) return;
+            try { location.replace(path); } catch (_) {}
+          }, 600);
+          return;
+        }
+        if (instagramRoute() === 'feed' && deferHome && username) {
+          // Home's virtual tray can mount after the route changes. Wait for
+          // its native controls before falling back to a document navigation.
+          document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
+          storySkipTimer = setTimeout(() => {
+            if (location.pathname === source) navigateVerifiedStory(path, sequence, false);
+          }, 600);
+          return;
+        }
+        try { location.replace(path); } catch (_) {}
+      };
+      const reconcileStoryPanels = () => {
+        const active = instagramRoute() === 'story'
+          ? validInstagramUsername(location.pathname.split('/').filter(Boolean)[1]) : '';
+        if (!active) {
+          document.querySelectorAll('[data-vigil-instagram-story-panel]').forEach((panel) => {
+            if (instagramRoute() === 'feed' && panel.querySelector(
+              'article, [role="article"], [data-vigil-instagram-story-rail]'
+            )) {
+              // A reused viewer now contains Home content. Its individual
+              // cards have the Home prepaint filter; release only that tree.
+              delete panel.dataset.vigilInstagramStoryPanel;
+              return;
+            }
+            panel.dataset.vigilInstagramStoryPanel = 'pending';
+          });
+          return;
+        }
+        const panels = new Map();
+        // URL verification can finish before React replaces the old viewer.
+        // Bind visible media to its rendered header as well as the route.
+        for (const link of document.querySelectorAll('a[href]')) {
+          if (link.closest('article, [role="article"], nav, [data-vigil-instagram-feed-region], [data-vigil-instagram-story-rail]')) continue;
+          let username = '';
+          try {
+            const parts = new URL(link.href, location.href).pathname.split('/').filter(Boolean);
+            if (parts.length === 1) username = validInstagramUsername(parts[0]);
+          } catch (_) {}
+          if (!username || !link.querySelector('img[alt*="profile picture" i]')) continue;
+          for (let panel = link.parentElement, depth = 0; panel && panel !== document.body && depth < 10;
+              panel = panel.parentElement, depth += 1) {
+            if (panel.matches('nav, article, [role="article"], [data-vigil-instagram-story-rail]')) break;
+            const media = [...panel.querySelectorAll('video, img')].find((node) => {
+              const rect = node.getBoundingClientRect();
+              return rect.width >= 220 && rect.height >= 280;
+            });
+            if (!media) continue;
+            panels.set(panel, username === active && hasKnownStoryAccess(new URL(location.href)) ? 'allowed' : 'pending');
+            break;
+          }
+        }
+        document.querySelectorAll('[data-vigil-instagram-story-panel]').forEach((panel) => {
+          if (!panels.has(panel)) panel.dataset.vigilInstagramStoryPanel = 'pending';
+        });
+        panels.forEach((state, panel) => { panel.dataset.vigilInstagramStoryPanel = state; });
+      };
       // Capture Next before Instagram's router can discard the viewer. The
       // compact friend tray and Instagram's original sequence are different.
       const storyContinuationKey = `${friendshipCacheKey}:story-continuation`;
@@ -7264,7 +7871,7 @@ enum DOMAdapters {
         // snapshot across the full-document hop to the next verified account.
         saveStoryOrder({ viewer: pending.viewer, order: pending.order,
           active: pending.active, savedAt: Date.now() });
-        try { location.replace(next); } catch (_) {}
+        navigateVerifiedStory(next, pending);
       };
       const armStoryContinuation = () => {
         if (instagramRoute() !== 'story' || !hasKnownStoryAccess(new URL(location.href))) return;
@@ -7281,6 +7888,7 @@ enum DOMAdapters {
         storyContinuationTimer = setTimeout(() => { void resumeStoryContinuation(); }, 500);
       };
       document.addEventListener('click', event => {
+        if (storySkipActivation) return;
         if (instagramRoute() !== 'story' || !(event.target instanceof Element)) return;
         const control = event.target.closest('button, [role="button"], a[href]') || event.target;
         const labels = [control, ...control.querySelectorAll('[aria-label]')]
@@ -7288,6 +7896,7 @@ enum DOMAdapters {
         if (labels.some(label => ['next', 'next story', 'next photo'].includes(label))) {
           armStoryContinuation();
         } else {
+          clearTimeout(storySkipTimer);
           // Closing, navigating away, and other explicit controls supersede a
           // previous Next. A stale intent must never reopen a closed viewer.
           cancelStoryContinuation();
@@ -7368,7 +7977,13 @@ enum DOMAdapters {
           previous.forEach((region) => {
             clearTimeout(homeFeedRegionRefreshTimers.get(region));
             homeFeedRegionRefreshTimers.delete(region);
-            region.removeAttribute('data-vigil-instagram-feed-region');
+            // Retained Home streams must stay fail-closed behind Stories and
+            // Direct, even when recycled children lose article semantics.
+            if (instagramRoute() === 'profile' && !region.querySelector('[data-vigil-instagram-home-relationship]')) {
+              region.removeAttribute('data-vigil-instagram-feed-region');
+            } else if (region.dataset.vigilInstagramFeedRegion !== 'closed') {
+              region.dataset.vigilInstagramFeedRegion = 'refreshing';
+            }
           });
           return;
         }
@@ -7465,6 +8080,7 @@ enum DOMAdapters {
           redirectedStoryPath = '';
           verifiedStoryPath = path;
           rememberVerifiedStory(path);
+          reconcileStoryPanels();
           delete document.documentElement.dataset.vigilInstagramStoryGate;
           return;
         }
@@ -7483,13 +8099,14 @@ enum DOMAdapters {
           redirectedStoryPath = '';
           verifiedStoryPath = path;
           rememberVerifiedStory(path);
+          reconcileStoryPanels();
           delete document.documentElement.dataset.vigilInstagramStoryGate;
           return;
         }
         const nextPath = await nextVerifiedStoryPath(username);
         if (generation !== storyAccessGeneration || location.pathname.toLowerCase() !== path) return;
         redirectedStoryPath = path;
-        try { location.replace(nextPath || '/'); } catch (_) {}
+        navigateVerifiedStory(nextPath || '/');
       };
       const reconcileFriendsFeed = () => {
         const isFeed = instagramRoute() === 'feed';
@@ -7694,6 +8311,7 @@ enum DOMAdapters {
           });
           normalizeCommentSheets();
           reconcileFriendsFeed();
+          reconcileStoryPanels();
         });
       };
       new MutationObserver((records) => {
@@ -7708,7 +8326,7 @@ enum DOMAdapters {
         if (location.href !== lastURL) scheduleRouteCheck();
       }).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, characterData: true,
-        attributeFilter: ['href', 'aria-label', 'alt', 'role']
+        attributeFilter: ['href', 'aria-label', 'alt', 'role', 'src', 'aria-hidden']
       });
       document.addEventListener('__vigilPolicyFeaturesChanged', () => {
         document.querySelectorAll('[data-vigil-hidden-feature]').forEach((card) => {

@@ -100,7 +100,11 @@ assert.match(
 );
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
 assert.throws(() => parseArguments(["update", "--wat"]), /Unknown option/);
-assert.throws(() => parseArguments(["update", "--app", "tiktok"]), /Unknown social app/);
+for (const service of ["facebook", "x", "tiktok", "reddit"]) {
+  assert.equal(parseArguments(["update", "--app", service]).options.app, "instagram",
+    "Expanded service aliases must use the combined installation and its retained Instagram bundle identity");
+}
+assert.throws(() => parseArguments(["update", "--app", "unknown-service"]), /Unknown social app/);
 assert.throws(() => parseArguments(["bump", "wat"]), /Unknown release bump/);
 assert.throws(() => parseArguments(["update", "--edition", "enterprise"]), /Unknown phone edition/);
 
@@ -332,8 +336,8 @@ assert.match(
 );
 assert.match(
   phoneSuiteSource,
-  /verifyBundledYouTubeParityScript[\s\S]*?YOUTUBE_INTERACTION_EXTENSION\.scriptName[\s\S]*?sourceBytes\.equals\(bundledBytes\)[\s\S]*?sha256: sha256\(bundledBytes\)/u,
-  "the app-root YouTube parity resource must be byte-identical to the shared source and hashed"
+  /verifyBundledYouTubeParityScript[\s\S]*?YOUTUBE_INTERACTION_EXTENSION\.scriptName[\s\S]*?sourceBytes\.equals\(bundledBytes\)[\s\S]*?responseBytes\.equals\([\s\S]*?const bytes = Buffer\.concat\(\[bundledBytes, responseBytes\]\)[\s\S]*?sha256: sha256\(bytes\)/u,
+  "both app-root YouTube player resources must be byte-identical to their shared sources and covered by the deployment hash"
 );
 assert.match(phoneSuiteSource, /youtubeParityScriptSha256: app\.youtubeParityScript\?\.sha256 \|\| null/u,
   "the deployment receipt must retain proof of the bundled YouTube parity script");
@@ -613,11 +617,15 @@ assert.equal(isSocialAppImplementationFile(
 // are locked. Real migration changes must still use the protected endpoint.
 const activeContainer = {
   enabled: true, blockApps: true, blockWeb: true, socialContainer: true,
-  blockedAppBundleIds: ["com.linkedin.LinkedIn", "example.blocked"],
-  allowedAppBundleIds: ["tech.caseline.vigil.linkedin", "example.allowed"],
+  blockedAppBundleIds: ["com.linkedin.LinkedIn", "example.blocked", "com.facebook.Facebook", "com.atebits.Tweetie2", "com.zhiliaoapp.musically", "com.reddit.Reddit"],
+  allowedAppBundleIds: ["tech.caseline.vigil.linkedin", "example.allowed", "tech.caseline.vigil.facebook", "tech.caseline.vigil.x", "tech.caseline.vigil.tiktok", "tech.caseline.vigil.reddit"],
   focusedSocial: {
     snapchat: { enabled: true, spotlight: true },
-    linkedin: { enabled: true, shorts: true, suggested: false }
+    linkedin: { enabled: true, shorts: true, suggested: false },
+    facebook: { enabled: true, shorts: true, explore: true, suggested: true, ads: true },
+    x: { enabled: true, shorts: true, explore: true, suggested: true, ads: true },
+    tiktok: { enabled: true, shorts: true, explore: true, suggested: true, ads: true },
+    reddit: { enabled: true, shorts: true, explore: true, suggested: true, ads: true }
   }
 };
 const originalFetch = globalThis.fetch;

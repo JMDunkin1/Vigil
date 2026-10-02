@@ -14,6 +14,7 @@ import {
   STRICT_UNSUPPORTED_BROWSERS
 } from "./defaults.js";
 import { matchExplicitPersonSearchUrl } from "./explicitPersonSearch.js";
+import { MULTILINGUAL_EXPLICIT_TERMS, containsMultilingualExplicitText } from "./explicitMediaContext.js";
 import { matchContextualExplicitSearchUrl, matchExplicitXxxSearchUrl } from "./contextualExplicitSearch.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
@@ -766,6 +767,10 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   for (let index = 0; index < patterns.length; index += 1) {
     const pattern = patterns[index];
     if (!pattern) continue;
+    // Translated labels use their shared word/phrase matcher. An incidental
+    // substring in an ordinary name is not a translated explicit label.
+    if (MULTILINGUAL_EXPLICIT_TERMS.some(term => normalizeUrlPattern(term) === pattern)
+      && !candidates.some(containsMultilingualExplicitText)) continue;
     const explicitXxx = pattern === "xxx" && (normalizeHost(parsed.hostname).endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
     if (pattern === "xxx" && !explicitXxx) continue;
     // Vigil's Reddit child lock adds nsfw=0 to turn adult results OFF. Only

@@ -103,6 +103,7 @@ const REQUIRED_SOCIAL_APPS = [
 // Legacy targets remain available for source compatibility and simulator tests.
 const DEFAULT_SOCIAL_APPS = REQUIRED_SOCIAL_APPS.filter((app) => app.id === "instagram");
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
+export const COMBINED_SOCIAL_SERVICE_IDS = ["instagram", "youtube", "snapchat", "linkedin", "facebook", "x", "tiktok", "reddit"];
 const PERSONAL_TEAM_RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
@@ -235,7 +236,7 @@ export function parseArguments(args) {
     else throw new Error(`Unknown option: ${value}`);
   }
   if (!/^(patch|minor|major)$/.test(options.bump)) throw new Error(`Unknown release bump: ${options.bump}`);
-  if (options.app === "all") options.app = "instagram";
+  if (options.app === "all" || ["facebook", "x", "tiktok", "reddit"].includes(options.app)) options.app = "instagram";
   if (options.app && !SOCIAL_APP_IDS.has(options.app)) throw new Error(`Unknown social app: ${options.app}`);
   if (options.edition && !PHONE_EDITIONS.has(options.edition)) throw new Error(`Unknown phone edition: ${options.edition}`);
   return { command, options };
@@ -1614,7 +1615,7 @@ async function expectedYouTubeParityScript() {
     "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources",
     YOUTUBE_INTERACTION_EXTENSION.scriptName
   );
-  const bytes = await readFile(path);
+  const bytes = Buffer.concat([await readFile(path), await readFile(join(dirname(path), "youtube-player-response.js"))]);
   return { sha256: sha256(bytes), bytes: bytes.byteLength };
 }
 
@@ -1663,7 +1664,12 @@ async function verifyBundledYouTubeParityScript(appPath) {
   if (!sourceBytes.equals(bundledBytes)) {
     throw new Error(`${basename(appPath)} contains a stale or substituted app-root ${YOUTUBE_INTERACTION_EXTENSION.scriptName}.`);
   }
-  return { sha256: sha256(bundledBytes), bytes: bundledBytes.byteLength };
+  const responseBytes = await readFile(join(appPath, "youtube-player-response.js"));
+  if (!responseBytes.equals(await readFile(join(dirname(sourcePath), "youtube-player-response.js")))) {
+    throw new Error(`${basename(appPath)} contains a stale or substituted app-root YouTube player-response guard.`);
+  }
+  const bytes = Buffer.concat([bundledBytes, responseBytes]);
+  return { sha256: sha256(bytes), bytes: bytes.byteLength };
 }
 
 export async function verifyBundledYouTubeInteractionExtension(appPath, parentBundleIdentifier) {
@@ -1689,6 +1695,10 @@ export async function verifyBundledYouTubeInteractionExtension(appPath, parentBu
   const redditSource = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"));
   if (!redditBytes.equals(redditSource)) throw new Error("Stale Reddit child-lock resource; refusing companion update.");
   const redditReviewResources = {};
+  const playerResponseBytes = await readFile(join(extensionPath, "youtube-player-response.js"));
+  if (!playerResponseBytes.equals(await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-player-response.js")))) {
+    throw new Error("Stale or substituted YouTube player-response guard; refusing companion update.");
+  }
   const redditReviewBytes = [];
   for (const name of ["reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html"]) {
     const [bundled, iosSource, generated] = await Promise.all([
@@ -1742,7 +1752,7 @@ export async function verifyBundledYouTubeInteractionExtension(appPath, parentBu
   }
   return {
     bundleIdentifier: expectedIdentifier,
-    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, redditBytes, mediaBytes, searchBytes, ...blockedPageBytes, ...redditReviewBytes])),
+    sha256: sha256(Buffer.concat([manifestBytes, scriptBytes, playerResponseBytes, redditBytes, mediaBytes, searchBytes, ...blockedPageBytes, ...redditReviewBytes])),
     redditReviewResources,
     manifestVersion: manifest.manifest_version,
     hostPermissions: [...manifest.host_permissions],
@@ -1771,8 +1781,11 @@ export function validYouTubeInteractionManifest(manifest) {
     && JSON.stringify(manifest.permissions) === JSON.stringify(["nativeMessaging", "webNavigation", "storage"])
     && JSON.stringify(manifest.background) === JSON.stringify({ scripts: ["reddit-review-background.js", "youtube-background.js"] })
     && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html"], matches: ["http://*/*", "https://*/*"] }])
-    && scripts.length === 5
-    && scripts.every((script) => script?.run_at === "document_start" && script.world === undefined)
+    && scripts.length === 6
+    && scripts.every((script, index) => script?.run_at === "document_start" && (index === 5 ? script.world === "MAIN" : script.world === undefined))
+    && JSON.stringify(scripts[5]?.matches) === JSON.stringify([...expectedHosts.slice(0, 3), "https://youtube-nocookie.com/*", "https://www.youtube-nocookie.com/*"])
+    && JSON.stringify(scripts[5]?.js) === JSON.stringify(["youtube-player-response.js"])
+    && scripts[5]?.all_frames === true
     && JSON.stringify(scripts[4]?.matches) === JSON.stringify(["http://*/*", "https://*/*"])
     && JSON.stringify(scripts[4]?.js) === JSON.stringify(["reddit-review-guard.js"])
     && scripts[4]?.all_frames === true
@@ -2130,7 +2143,20 @@ export function linkedInReplacementSettings(ios) {
 
 export function socialContainerSettings(ios) {
   if (ios?.blockWeb !== true) throw new Error("Vigil needs the supervised web filter to retain independent service restrictions.");
-  return { ...linkedInReplacementSettings(ios), socialContainer: true };
+  const patch = { ...linkedInReplacementSettings(ios), socialContainer: true };
+  for (const [service, nativeId] of [
+    ["facebook", "com.facebook.Facebook"], ["x", "com.atebits.Tweetie2"],
+    ["tiktok", "com.zhiliaoapp.musically"], ["reddit", "com.reddit.Reddit"]
+  ]) {
+    const companionId = `tech.caseline.vigil.${service}`;
+    if ((ios.blockedAppBundleIds || []).some((id) => String(id).toLowerCase() === companionId)) {
+      throw new Error(`The ${service} service is explicitly blocked; the combined update will not remove that restriction.`);
+    }
+    patch.blockedAppBundleIds = [...patch.blockedAppBundleIds.filter((id) => String(id).toLowerCase() !== nativeId.toLowerCase()), nativeId];
+    patch.allowedAppBundleIds = [...patch.allowedAppBundleIds.filter((id) => ![nativeId.toLowerCase(), companionId].includes(String(id).toLowerCase())), companionId];
+    patch.focusedSocial[service] = { ...ios.focusedSocial?.[service], enabled: true, shorts: true, explore: true, suggested: true, ads: true };
+  }
+  return patch;
 }
 
 async function backupSocialContainers(deviceIdentifier, installedApps, toolEnvironment) {
@@ -2213,7 +2239,7 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
   const directory = await mkdtemp(join(tmpdir(), "vigil-social-launch-"));
   const launches = [];
   try {
-    for (const service of ["instagram", "youtube", "snapchat", "linkedin"]) {
+    for (const service of COMBINED_SOCIAL_SERVICE_IDS) {
       const started = Date.now();
       await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--payload-url", `vigilsocial://${service}`, REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
       let verified = false;
@@ -2675,7 +2701,7 @@ Commands:
   fingerprint  Print the current phone implementation fingerprint
 
 Options:
-  --app NAME   Limit status/update to instagram, youtube, snapchat, or linkedin
+  --app NAME   Any social service alias updates the same combined Vigil Social app
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})

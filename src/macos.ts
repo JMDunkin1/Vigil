@@ -64,6 +64,25 @@ interface HumanActivitySample {
   bundleId: string;
 }
 
+export function safariContentBlockerEvidenceMatches(observation: unknown, observedUrl: string): boolean {
+  if (!observation || typeof observation !== "object") return false;
+  const value = observation as { contentBlockerError?: boolean; url?: string };
+  if (value.contentBlockerError !== true || typeof value.url !== "string") return false;
+  try {
+    const observed = new URL(observedUrl);
+    const address = new URL(value.url);
+    return ["http:", "https:"].includes(observed.protocol) && observed.href === address.href;
+  } catch { return false; }
+}
+
+export async function safariHasContentBlockerError(observedUrl: string): Promise<boolean> {
+  if (process.platform !== "darwin") return false;
+  try {
+    const result = await execFileAsync(HUMAN_IDLE_HELPER, ["--safari-content-blocker-error"], { timeout: 1500, maxBuffer: 8192 });
+    return safariContentBlockerEvidenceMatches(JSON.parse(result.stdout), observedUrl);
+  } catch { return false; }
+}
+
 interface BrowserUrlResult {
   ok: boolean;
   url: string;

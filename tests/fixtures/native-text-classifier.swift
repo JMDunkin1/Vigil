@@ -6,6 +6,32 @@ struct NativeTextClassifierRegression {
         let data = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1]))
         let policy = try JSONDecoder().decode(ExplicitContentTextPolicy.self, from: data)
         let classifier = ConservativePageTextClassifier(policy: policy)
+        // Mirror the shared helper's blocked/allowed corpus in the actual
+        // Foundation classifier, including labels without token boundaries.
+        let multilingualBlocked = [
+            "فيديو إباحي وجنسي للممثلة Jane Example",
+            "إباحية", "اباحي", "والإباحية", "إِبَاحِيّ", "إبـاحي", "إبا\u{200b}حي",
+            "فيديو جنسي", "فيديوهات جنسية", "أفلام جنسية", "الفيديو الجنسي",
+            "最新色情视频", "色情視頻合集", "色情電影", "ポルノ動画", "ﾎﾟﾙﾉ",
+            "포르노를", "음란물", "порно", "порнофильмы", "порнография", "порнографии",
+            "pornographie", "pornographiques", "pornografía", "pornograficas", "pornográfico",
+            "pornografia", "pornografie", "pornografischen",
+            "إبا\u{200c}حي", "إبا\u{200d}حي", "إبا\u{2060}حي", "إبا\u{feff}حي",
+            "للإباحية", "والفيديو الجنسي الإباحية", "الفيلم الجنسي", "الأفلام الجنسية",
+            "观看色情影片合集", "ポルノを見る", "음란물을", "ПОРНОВИДЕО", "порноролики"
+        ]
+        let multilingualAllowed = [
+            "Jane Example", "أبيلا دينجر", "Jane Example أخبار الممثلة", "فيديو تعليمي",
+            "الصحة الجنسية", "sexual health", "性教育", "成人教育", "調色情報",
+            "ポルトガル", "영화 교육", "Иван Порнов", "порнозавр", "biography",
+            "ボルノ州", "ボルノ州の地理", "ホルノ", "ﾎﾙﾉ", "پروژه"
+        ]
+        for (expected, texts) in [(ContentSafetyVerdict.sensitive, multilingualBlocked), (.safe, multilingualAllowed)] {
+            for text in texts {
+                let verdict = await classifier.classify(pageText: text, wasTruncated: false)
+                precondition(verdict == expected, "Unexpected multilingual verdict for \(text): \(verdict)")
+            }
+        }
         for term in policy.terms {
             let verdict = await classifier.classify(pageText: "before \(term) after", wasTruncated: false)
             precondition(verdict == .sensitive, "Missed policy term: \(term)")
@@ -34,6 +60,38 @@ struct NativeTextClassifierRegression {
             contextualRules: [.init(id: "proximity", contexts: ["alpha", "same"], markers: ["omega", "same"], maximumDistanceCharacters: 12)]
         )
         let contextual = ConservativePageTextClassifier(policy: contextualPolicy)
+        for text in multilingualBlocked + multilingualAllowed {
+            let verdict = await contextual.classify(pageText: text, wasTruncated: false)
+            precondition(verdict == .safe, "A custom policy without multilingual labels must not block \(text)")
+        }
+        // Each grammatical rule also works without the bundled English
+        // porn-prefix terms, and activates only for its own policy family.
+        for (label, variants) in [
+            ("إباحي", ["إِبَاحِيّ", "والإباحية", "إبـاحي", "إبا\u{200b}حي"]),
+            ("فيديو جنسي", ["الفيديو الجنسي", "فيديوهات جنسية"]),
+            ("فيلم جنسي", ["الفيلم الجنسي"]),
+            ("أفلام جنسية", ["الأفلام الجنسية"]),
+            ("ポルノ", ["ﾎﾟﾙﾉ", "ポルノを見る"]),
+            ("порно", ["порнофильмы", "ПОРНОВИДЕО"]),
+            ("порнография", ["порнографии"]),
+            ("pornografía", ["pornograficas", "pornográfico"]),
+            ("pornographie", ["pornographiques"]),
+            ("pornografie", ["pornografie"]),
+            ("pornografisch", ["pornografischen"])
+        ] {
+            let labelPolicy = ExplicitContentTextPolicy(
+                schemaVersion: 1, terms: contextualPolicy.terms + [label], phrases: contextualPolicy.phrases, contextualRules: []
+            )
+            let labelClassifier = ConservativePageTextClassifier(policy: labelPolicy)
+            for text in variants {
+                let verdict = await labelClassifier.classify(pageText: text, wasTruncated: false)
+                precondition(verdict == .sensitive, "Missed equivalent form of \(label): \(text)")
+            }
+            for text in multilingualAllowed {
+                let verdict = await labelClassifier.classify(pageText: text, wasTruncated: false)
+                precondition(verdict == .safe, "Policy label \(label) must preserve benign text: \(text)")
+            }
+        }
         for (text, expected) in [
             ("alpha omega", ContentSafetyVerdict.sensitive),
             ("omega alpha", .sensitive),

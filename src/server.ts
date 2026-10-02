@@ -1,3 +1,5 @@
+import { completeSketchySiteLookup, lookupDomainRegistration } from "./sketchySites.js";
+import type { RegistrationLookup } from "./sketchySites.js";
 import { ensureYouTubeConnection, youtubeTokenMatches } from "./youtubeConnection.js";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
@@ -1480,6 +1482,11 @@ function durableEffect(kind: string, payload: UnknownRecord): DurableEffectDescr
 
 async function reconcileDurableEffect(entry: RuntimeOutboxEntry): Promise<unknown> {
   const reason = String(entry.payload.reason || "recovered-runtime-effect");
+  if (entry.kind === "sketchy-site-registration") {
+    const domain = String(entry.payload.domain || "");
+    if (!state.sketchySites.some(value => value.domain === domain)) throw new Error("No trusted content-blocker evidence for registration lookup");
+    return await lookupDomainRegistration(domain);
+  }
   if (entry.kind === "mdm-push") {
     return await scheduleIosMdmPush(reason, entry.payload);
   }
@@ -1561,7 +1568,8 @@ function completeFailedIosMdmPush(error: Error, committedState: VigilState): voi
 }
 
 function completeRecoveredDurableEffect(entry: RuntimeOutboxEntry, result: unknown, committedState: VigilState): void {
-  if (entry.kind === "mdm-push") completeIosMdmPush(result as IosMdmPushEffect, committedState);
+  if (entry.kind === "sketchy-site-registration") completeSketchySiteLookup(committedState, String(entry.payload.domain || ""), result as RegistrationLookup);
+  else if (entry.kind === "mdm-push") completeIosMdmPush(result as IosMdmPushEffect, committedState);
   else if (entry.kind === "manageengine-export") completeManageEnginePolicyExport(result as ManageEnginePolicyExportEffect, committedState);
   else if (entry.kind === "session-enforcement") addEvent(committedState, "session_immediate_enforcement", { sessionId: String(entry.payload.sessionId || ""), ok: true, result });
   else if (entry.kind === "policy-enforcement") addEvent(committedState, "policy_immediate_enforcement", { reason: String(entry.payload.reason || "recovered-runtime-effect"), ok: true, result });

@@ -8,14 +8,50 @@ function vigilBlockedSearchURL() {
 }
 // Shared by navigation/search guards and media-card inspection. Ambiguous
 // markers contribute evidence only within a short local phrase.
+// Keep the list limited to pornography labels and specific sexual-media
+// phrases. Bare translations of "sexual", "adult", or "nude" are too broad.
+const MULTILINGUAL_EXPLICIT_TERMS = [
+    "إباحي", "إباحية", "اباحي", "اباحية",
+    "فيديو جنسي", "فيديوهات جنسية", "فيلم جنسي", "أفلام جنسية",
+    "色情片", "色情视频", "色情視頻", "色情影片", "色情电影", "色情電影",
+    "ポルノ", "포르노", "음란물", "порно", "порнография",
+    "pornographie", "pornographique", "pornografía", "pornográfico", "pornográfica",
+    "pornografia", "pornografie", "pornografisch"
+];
+const MULTILINGUAL_UNSPACED_LABELS = MULTILINGUAL_EXPLICIT_TERMS.filter(term => /[\p{Script=Han}\p{Script=Katakana}\p{Script=Hangul}]/u.test(term));
+function containsMultilingualExplicitText(value) {
+    const text = String(value || "").normalize("NFKC")
+        .replace(/[\u200b-\u200d\u2060\ufeff\u0640]/gu, "")
+        .replace(/[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]/gu, "")
+        .replace(/[أإآٱ]/gu, "ا")
+        // Fold Latin accents without removing Japanese voicing marks or
+        // decomposing Korean syllables. Both are meaningful letters here.
+        .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""))
+        .toLowerCase();
+    if (/(?:^|[^\p{L}\p{N}])(?:(?:[وف]?ال|[بك]ال|لل|[وف]))?اباحي(?:ة|ا|ات|ون|ين)?(?=$|[^\p{L}\p{N}])/u.test(text))
+        return true;
+    if (/(?:^|[^\p{L}\p{N}])(?:ال)?(?:فيديو(?:هات)?|فيلم|افلام)[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])/u.test(text))
+        return true;
+    if (/(?:^|[^\p{L}\p{N}])(?:pornografi(?:a|co|ca)s?|pornographi(?:e|ques?)|pornografie|pornografisch(?:e[rmns]?)?|порно(?:видео|фильм(?:ы|ов)?|ролик(?:и|ов)?)?|порнографи\p{Script=Cyrillic}*)(?=$|[^\p{L}\p{N}])/u.test(text))
+        return true;
+    // Chinese/Japanese text and Korean grammatical suffixes do not reliably
+    // delimit these labels with spaces. Use specific, unambiguous media terms.
+    return MULTILINGUAL_UNSPACED_LABELS.some(term => text.includes(term));
+}
 function containsContextualExplicitMedia(value) {
-    const text = value.normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase();
+    if (containsMultilingualExplicitText(value))
+        return true;
+    const text = String(value || "").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase();
     if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
         return true;
     const tokens = text.replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
-    const marker = /^(?:adults?|spicy|creampies?|x+)$/u;
+    const marker = /^(?:adults?|spicy|creampies?|nudes?|naked|nudity|erotic|erotica|lewd|x+)$/u;
+    // Marketing adjectives need a stronger nearby clue; "mature film" and
+    // "uncensored interview" alone do not establish explicit content.
+    const contributor = /^(?:mature|steamy|uncensored)$/u;
     const media = /^(?:videos?|vids?|movies?|films?|clips?|photos?|pics?|pictures?|documentar(?:y|ies)|compilations?)$/u;
     const ordinary = /^(?:recipes?|cooking|baking|food|desserts?|kitchen|chicken|sauce|peppers?|banana|chocolate|coconut|vanilla|pastry|education|educational|learning|classes|training|tutorials?|fitness)$/u;
+    const bodyContext = /^(?:art|arts|drawing|paintings?|sculptures?|museum|exhibitions?|anatomy|medical|medicine|health|makeup|lipstick|palettes?|manicures?|nails?|skincare|cakes?)$/u;
     for (let index = 0; index < tokens.length; index += 1) {
         if (!marker.test(tokens[index]))
             continue;
@@ -27,14 +63,21 @@ function containsContextualExplicitMedia(value) {
             continue;
         if (nearby.some(token => ordinary.test(token)))
             continue;
+        if (/^(?:nudes?|naked|nudity|erotic|erotica|lewd)$/u.test(tokens[index]) && nearby.some(token => bodyContext.test(token)))
+            continue;
+        if (tokens[index] === "naked" && nearby.some(token => /^(?:eye|mole|rats?)$/u.test(token)))
+            continue;
         if (nearby.some(token => media.test(token)))
             return true;
-        if (nearby.some(token => token !== tokens[index] && marker.test(token)))
+        if (nearby.some(token => token !== tokens[index] && (marker.test(token) || contributor.test(token))))
             return true;
     }
     return false;
 }
 
+function containsExplicitMediaLabel(value) {
+    return containsContextualExplicitMedia(value);
+}
 // Mixed-use platforms supply context only for search/tag/community navigation.
 // Ordinary page prose, unrelated hosts, and generic searches retain their own
 // policy. Existing explicit terms and permanently denied sites still apply.
@@ -92,7 +135,16 @@ function containsContextualExplicitSearch(query, hostname = "", includeRedditSho
     return (platform || CONTEXTUAL_SEARCH_NAMES.test(decoded)) && CONTEXTUAL_SEARCH_MARKERS.test(normalized);
 }
 function matchContextualExplicitSearchUrl(value) {
-    return searchQueries(value).some(({ query, hostname }) => containsContextualExplicitSearch(query, hostname));
+    if (searchQueries(value).some(({ query, hostname }) => containsContextualExplicitSearch(query, hostname)))
+        return true;
+    try {
+        const url = new URL(String(value || ""));
+        return ["http:", "https:"].includes(url.protocol)
+            && [url.pathname, url.hash].some(path => containsMultilingualExplicitText(contextualSearchDecode(path)));
+    }
+    catch {
+        return false;
+    }
 }
 // XXX occurs in document IDs, tracking values and Roman numerals. It is only
 // an explicit URL signal in actual search text, never an arbitrary URL substring.
@@ -212,6 +264,8 @@ function containsExplicitPersonSearchText(rawValue) {
         : PERSON_NUDE_CONTEXT;
     if (normalized.some((token, index) => index !== markerIndex && PERSON_INTIMATE_CONTEXT.has(token)))
         return true;
+    if (marker === "naked" && /(?:^|[^\p{L}\p{N}])naked[\s_-]+(?:eye|cakes?)(?=$|[^\p{L}\p{N}])/iu.test(query))
+        return false;
     const possibleNameTokens = tokens.filter((_token, index) => (index !== markerIndex
         && !PERSON_NAME_FILLER_WORDS.has(normalized[index])
         && !ordinaryContext.has(normalized[index])));
@@ -280,6 +334,13 @@ function enforceGoogleSafeSearchForLink(event) {
     const anchor = target.closest("a[href]");
     if (!anchor)
         return;
+    const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
+    if (containsExplicitMediaLabel(label)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        location.assign(vigilBlockedSearchURL());
+        return;
+    }
     const redirect = alwaysOnSearchRedirect(anchor.href);
     if (!redirect || redirect === anchor.href)
         return;
@@ -424,10 +485,18 @@ function scanExistingSearchControls(root) {
 function installDynamicSearchGuard() {
     if (typeof document === "undefined")
         return;
+    if (containsExplicitMediaLabel(document.title)) {
+        location.replace(vigilBlockedSearchURL());
+        return;
+    }
     scanExistingSearchControls(document);
     if (typeof MutationObserver !== "function" || !document.documentElement)
         return;
     new MutationObserver((records) => {
+        if (containsExplicitMediaLabel(document.title)) {
+            location.replace(vigilBlockedSearchURL());
+            return;
+        }
         for (const record of records) {
             for (const node of record.addedNodes) {
                 if (node instanceof Element) {
@@ -439,7 +508,7 @@ function installDynamicSearchGuard() {
                 }
             }
         }
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 }
 function checkForSearchUrlChange() {
     if (lastInspectedSearchUrl === location.href)

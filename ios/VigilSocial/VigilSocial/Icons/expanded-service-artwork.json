@@ -1,0 +1,26 @@
+[
+  {
+    "service": "facebook",
+    "appStoreID": "284882215",
+    "source": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/83/71/5e/83715e23-3e26-c24e-a948-47a168921d0b/Icon-Production-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+    "sha256": "7f3e87c8c1c157fd4eee507275165b55b8520bd295bb23c90ce83cb9d7a7e005"
+  },
+  {
+    "service": "x",
+    "appStoreID": "333903271",
+    "source": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/51/05/fb/5105fb11-10b0-2224-89f9-84101236bf89/ProductionAppIcon-0-0-1x_U007emarketing-0-8-0-0-0-85-220.png/512x512bb.jpg",
+    "sha256": "40493fbd46127201a409e26445fa180ded0172144838dd416df16df854e5fa12"
+  },
+  {
+    "service": "tiktok",
+    "appStoreID": "835599320",
+    "source": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b0/7c/88/b07c88d8-0314-7b8b-7ab0-788e7059074b/TikTok_AppIcon26-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "sha256": "4bb25e1db72db5ae333bd10d8663396991b3cca0cc9b1e6a46ee989e4ed85493"
+  },
+  {
+    "service": "reddit",
+    "appStoreID": "1064216828",
+    "source": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/d4/ea/a5/d4eaa5bf-752c-c993-d8a3-e8c7e66a9f34/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "sha256": "26d46471c662293b753112a5cb15d44dada294dd59097cc1748313170553e5fd"
+  }
+]

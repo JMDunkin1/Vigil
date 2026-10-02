@@ -4,6 +4,7 @@ import { buildBlockedPageUrl } from "../src/blockedPageUrl.js";
 import { defaultState } from "../src/defaults.js";
 import { Monitor } from "../src/monitor.js";
 import { policyForSample } from "../src/monitor/policy.js";
+import { safariFilterDenyMatch, safariFilterDenyUrls } from "../src/safariFilter.js";
 
 resetBrowserProtectionHealthForTest();
 const state = defaultState();
@@ -42,6 +43,21 @@ const monitor = new Monitor({ state, usage: {}, browserRedirect: async (_app, ur
   redirects.push(url);
   return { ok: true, matched: true, redirectedTabCount: 1 };
 } });
+// A native content-blocker error page offers an override. This destination
+// must instead be enforced by the Mac monitor with no extension heartbeat.
+for (const protocol of ["https:", "http:"]) {
+  for (const hostname of ["go2offer-1.com", "r.go2offer-1.com"]) {
+    const url = `${protocol}//${hostname}/offer?source=redirect`;
+    const decision = monitor.browserBlockDecision({ app: "Safari", url, hostname });
+    assert.ok(decision, "the reported redirect remains blocked without Safari content blockers");
+    const target = new URL(monitor.blockedPageTarget(decision.front, decision.policy, decision.options));
+    assert.equal(target.hostname, "127.0.0.1");
+    assert.equal(target.pathname, "/blocked", "the monitor replaces Safari's overridable error page");
+    assert.ok(safariFilterDenyUrls(state).includes(`${protocol}//${hostname}/`), "the redirect also has an Apple system-filter deny entry");
+    assert.equal(safariFilterDenyMatch(state, url), `${protocol}//${hostname}/`);
+  }
+}
+assert.equal(monitor.browserBlockDecision({ app: "Safari", url: "https://go2offer-1.com.example.org/", hostname: "go2offer-1.com.example.org" }), null, "lookalike suffixes must not acquire the domain restriction");
 const oldHealthTarget = buildBlockedPageUrl({ site: "Browser protection connection interrupted", kind: "browser-protection", policyId: "baseline:computer" });
 const staleEffect = { app: "Safari", currentUrl: allowed.url, hostname: allowed.hostname, url: oldHealthTarget, policyId: "baseline:computer" };
 assert.equal(monitor.durableEffectApplicable("redirect-browser", staleEffect), false);

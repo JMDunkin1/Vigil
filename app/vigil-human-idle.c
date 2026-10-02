@@ -231,8 +231,62 @@ static int runHelper(int argc, const char *argv[]) {
   return 0;
 }
 
+// Read only Safari's focused window. Ordinary web pages cannot supply the
+// safari-resource: error-document URL. No page text or history leaves this helper.
+static id safariAXAttribute(AXUIElementRef element, CFStringRef attribute) {
+  CFTypeRef value = NULL;
+  if (AXUIElementCopyAttributeValue(element, attribute, &value) != kAXErrorSuccess || !value) return nil;
+  return [(id)value autorelease];
+}
+
+static void scanSafariError(AXUIElementRef element, int depth, int *remaining,
+                           bool inNativeError, bool *errorText, bool *reloadButton,
+                           NSString **address) {
+  if (depth > 18 || (*remaining)-- <= 0) return;
+  NSString *role = safariAXAttribute(element, kAXRoleAttribute);
+  if ([role isEqualToString:@"AXWebArea"]) {
+    id rawURL = safariAXAttribute(element, kAXURLAttribute);
+    NSString *url = [rawURL isKindOfClass:NSURL.class] ? [rawURL absoluteString] : rawURL;
+    if (![url isKindOfClass:NSString.class] || ![url isEqualToString:@"safari-resource:/ErrorPage.html"]) return;
+    inNativeError = true;
+  }
+  if (inNativeError) {
+    id value = safariAXAttribute(element, kAXValueAttribute);
+    id title = safariAXAttribute(element, kAXTitleAttribute);
+    if ([value isKindOfClass:NSString.class] && [value containsString:@"blocked by a content blocker"]) *errorText = true;
+    if ([role isEqualToString:@"AXButton"] && [title isEqualToString:@"Reload Without Content Blockers"]) *reloadButton = true;
+  } else if ([safariAXAttribute(element, CFSTR("AXIdentifier")) isEqualToString:@"WEB_BROWSER_ADDRESS_AND_SEARCH_FIELD"]) {
+    id value = safariAXAttribute(element, kAXValueAttribute);
+    if ([value isKindOfClass:NSString.class]) *address = value;
+  }
+  NSArray *children = safariAXAttribute(element, kAXChildrenAttribute);
+  if (![children isKindOfClass:NSArray.class]) return;
+  for (id child in children) scanSafariError((AXUIElementRef)child, depth + 1, remaining, inNativeError, errorText, reloadButton, address);
+}
+
+static int printSafariContentBlockerError(void) {
+  NSRunningApplication *app = currentFrontmostApplication();
+  if (![app.bundleIdentifier isEqualToString:@"com.apple.Safari"] || !AXIsProcessTrusted()) {
+    puts("{\"contentBlockerError\":false}"); return 0;
+  }
+  AXUIElementRef application = AXUIElementCreateApplication(app.processIdentifier);
+  AXUIElementSetMessagingTimeout(application, 0.1);
+  id window = safariAXAttribute(application, kAXFocusedWindowAttribute);
+  bool errorText = false, reloadButton = false;
+  NSString *address = @"";
+  int remaining = 600;
+  if (window) scanSafariError((AXUIElementRef)window, 0, &remaining, false, &errorText, &reloadButton, &address);
+  const bool stillSafari = currentFrontmostApplication().processIdentifier == app.processIdentifier;
+  NSDictionary *result = @{ @"contentBlockerError": @(stillSafari && errorText && reloadButton), @"url": address };
+  NSData *json = [NSJSONSerialization dataWithJSONObject:result options:0 error:nil];
+  if (json) printf("%.*s\n", (int)json.length, (const char *)json.bytes);
+  CFRelease(application);
+  return 0;
+}
+
 int main(int argc, const char *argv[]) {
   @autoreleasepool {
+    if (argc == 2 && strcmp(argv[1], "--safari-content-blocker-error") == 0) return printSafariContentBlockerError();
     if (argc == 5 && strcmp(argv[1], "--quit-application-instance") == 0) {
       NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:atoi(argv[2])];
       NSString *bundleId = [NSString stringWithUTF8String:argv[3]];

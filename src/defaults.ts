@@ -1,6 +1,7 @@
 import type { DeviceTarget, VigilState } from "./types.js";
 import { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./socialFeatureFilters.js";
+import { MULTILINGUAL_EXPLICIT_TERMS } from "./explicitMediaContext.js";
 
 export { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 
@@ -326,7 +327,8 @@ export const DEFAULT_EXPLICIT_SEARCH_TERMS = [
   "18+",
   "18%2b",
   "18plus",
-  "18-plus"
+  "18-plus",
+  ...MULTILINGUAL_EXPLICIT_TERMS
 ];
 
 export const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
@@ -475,7 +477,7 @@ export const BRICK_ALLOWED_SITES = [
   "stackoverflow.com"
 ];
 
-export const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS = [
+export const IOS_UNGUARDED_BROWSER_BUNDLE_IDS = [
   "com.google.chrome.ios",
   "org.mozilla.ios.Firefox",
   "org.mozilla.ios.Focus",
@@ -489,10 +491,10 @@ export const IOS_SYSTEM_FILTERED_BROWSER_BUNDLE_IDS = [
 ];
 
 export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
-  // Apple's managed built-in WebContentFilter applies to Safari and third-party
-  // apps, so browsers stay available and share the same device policy. Native
-  // social apps remain hidden because iOS cannot remove individual feeds inside
-  // another developer's signed binary; the fixed Vigil companions are used.
+  // The BuiltIn web filter alone does not provide Vigil's Safari page and
+  // navigation guards. Browsers without those guards must remain unavailable.
+  ...IOS_UNGUARDED_BROWSER_BUNDLE_IDS,
+  // Native social apps cannot run the companion's content guards either.
   "com.google.ios.youtube",
   "com.atebits.Tweetie2",
   "com.burbn.instagram",
@@ -570,6 +572,7 @@ export function defaultState(): VigilState {
       appQuitEscalationSeconds: 10,
       siteRedirectEnabled: true,
       contentFilterEnabled: true,
+      sketchySiteMaxAgeDays: 14,
       adultBlocklistEnabled: true,
       adultBlocklistSourceId: DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
       adultBlocklistCustomUrl: "",
@@ -597,6 +600,7 @@ export function defaultState(): VigilState {
       runtimeGapLockdownSeconds: 120,
       clockTamperLockdownSeconds: 90
     },
+    sketchySites: [],
     adultBlocklist: {
       allowlist: [],
       domainCount: 0,

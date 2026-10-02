@@ -1286,12 +1286,16 @@ function renderLimitsConfigurationStatus(limits: DashboardItem[], appLocks: Dash
 }
 
 function bindSettingActions(): void {
-  for (const id of ["enforcementTimingForm", "accessTimingForm", "focusShortcutForm", "keyholderForm"]) {
+  for (const id of ["sketchySiteForm", "enforcementTimingForm", "accessTimingForm", "focusShortcutForm", "keyholderForm"]) {
     trackFormChanges($("#" + id) as unknown as HTMLFormElement);
   }
   for (const input of $$<HTMLInputElement>("[data-setting]")) {
     input.addEventListener("change", () => void saveBooleanSetting(input));
   }
+  $("#sketchySiteForm").addEventListener("submit", (event: Event) => {
+    event.preventDefault();
+    void saveSettings({ sketchySiteMaxAgeDays: Number($("#sketchySiteMaxAgeDays").value) }, "Registration age limit saved", "#sketchySiteForm");
+  });
   $("#enforcementTimingForm").addEventListener("submit", (event: Event) => {
     event.preventDefault();
     void saveSettings({
@@ -1386,6 +1390,9 @@ function renderSettings(data: DashboardData): void {
   for (const input of $$<HTMLInputElement>("[data-setting]")) {
     if (document.activeElement !== input) input.checked = settings[input.dataset.setting || ""] !== false;
   }
+  setInputValue("#sketchySiteMaxAgeDays", settings.sketchySiteMaxAgeDays);
+  const sketchySites = data.state.sketchySites || [];
+  $("#sketchySiteStatus").textContent = `${sketchySites.length} domains observed; ${sketchySites.filter(entry => entry.lookupStatus !== "verified").length} without a verified registration age.`;
   setInputValue("#appQuitEscalationSeconds", settings.appQuitEscalationSeconds);
   setInputValue("#processSweepIntervalSeconds", settings.processSweepIntervalSeconds);
   setInputValue("#systemSleepLockIntervalSeconds", settings.systemSleepLockIntervalSeconds);

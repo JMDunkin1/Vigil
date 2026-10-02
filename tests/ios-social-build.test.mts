@@ -112,8 +112,8 @@ assert.doesNotMatch(
 );
 assert.match(
   socialRootViewSource,
-  /\.preferredColorScheme\(reportedIsDark\.map \{ \$0 \? \.dark : \.light \}\)/u,
-  "reported page appearance must drive host/status-bar contrast"
+  /let isDark = \(service == \.instagram \? nil : store\.reportedChromeIsDark\(for: service\)\)\s*\?\? \(colorScheme == \.dark\)/u,
+  "Instagram keeps its stable system-matched canvas while other services may report their page appearance"
 );
 assert.match(
   socialRootViewSource,
@@ -132,8 +132,8 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram\s*\? \[\]\s*: \.bottom/u,
-  "Instagram must retain its native safe-area frame and YouTube must retain its original top inset"
+  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram \|\| service == \.snapchat \|\| service == \.linkedin\s*\? \[\]\s*: \.bottom/u,
+  "Instagram, Snapchat, and LinkedIn retain their established safe-area frames and YouTube retains its top inset"
 );
 assert.doesNotMatch(
   socialRootViewSource,
@@ -142,7 +142,7 @@ assert.doesNotMatch(
 );
 assert.match(
   socialWebViewStoreSource,
-  /contentInsetAdjustmentBehavior = service == \.instagram\s*\? \.never\s*: \.automatic[\s\S]*?webView\.load/u,
+  /contentInsetAdjustmentBehavior = service == \.instagram \|\| service == \.snapchat \|\| service == \.linkedin\s*\? \.never\s*: \.automatic[\s\S]*?webView\.load/u,
   "Instagram must establish its invariant scroll-inset policy before its first load"
 );
 assert.doesNotMatch(
@@ -161,14 +161,19 @@ assert.doesNotMatch(
   "Instagram must not resize or hide recycled Reel video nodes"
 );
 assert.doesNotMatch(
-  socialDOMAdaptersSource,
+  instagramStableAdapterSource,
   /viewport-fit=cover|data-vigil-instagram-(?:bottom-chrome|direct-header|direct-back|fit-ready)/u,
   "Instagram safe areas must be owned by the native host rather than private DOM heuristics"
 );
 assert.match(
   socialRootViewSource,
-  /phase == \.active && isServiceVisible \{\s*store\.resumeSuspendedMedia\(\)\s*\} else \{\s*store\.suspendAllMedia\(relinquishExternalPlayback: phase != \.active\)/u,
-  "Instagram must suspend media whenever its scene leaves the foreground"
+  /onChange\(of: scenePhase\)[\s\S]*?store\.handleSceneActivity\(phase == \.active, isServiceVisible: isServiceVisible\)/u,
+  "Scene changes must pass service visibility to the media policy before background playback is considered"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /func handleSceneActivity[\s\S]*?guard isServiceVisible, fixedService == \.youtube,[\s\S]*?else \{[\s\S]*?suspendAllMedia\(\)/u,
+  "Instagram and every non-YouTube service must remain suspended outside the foreground"
 );
 assert.match(
   socialWebViewStoreSource,
@@ -224,7 +229,7 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /let reportedIsDark = service == \.instagram\s*\? nil\s*: store\.reportedChromeIsDark/u,
+  /service == \.instagram \? nil : store\.reportedChromeIsDark/u,
   "transient Instagram DOM backgrounds must not drive the native app appearance"
 );
 assert.doesNotMatch(
@@ -249,7 +254,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /new MutationObserver\([\s\S]*?attributeFilter: \['href', 'aria-label', 'alt', 'role'\]/u,
+  /new MutationObserver\([\s\S]*?attributeFilter: \['href', 'aria-label', 'alt', 'role', 'src', 'aria-hidden'\]/u,
   "the production Instagram adapter must observe recycled identities without watching style and class churn"
 );
 assert.match(
@@ -386,7 +391,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /vigilInstagramStoryGate = 'pending'[\s\S]*?const reconcileStoryRoute[\s\S]*?canViewAccount\(username\)[\s\S]*?location\.replace\(nextPath \|\| '\/'\)/u,
+  /const reconcileStoryRoute[\s\S]*?vigilInstagramStoryGate = 'pending'[\s\S]*?canViewAccount\(username\)[\s\S]*?generation !== storyAccessGeneration[\s\S]*?navigateVerifiedStory\(nextPath \|\| '\/'\)/u,
   "Stories must remain concealed until the route author is self, a confirmed mutual friend, or an explicitly allowed informational account"
 );
 assert.match(instagramStableAdapterSource,
@@ -452,8 +457,8 @@ assert.match(
 );
 assert.match(
   socialWebViewStoreSource,
-  /if service == \.instagram \{[\s\S]*?webView\.isOpaque = true[\s\S]*?webView\.backgroundColor = \.black[\s\S]*?webView\.scrollView\.backgroundColor = \.black/u,
-  "Instagram must keep a black opaque native backing surface before WebKit's first document"
+  /if service == \.instagram \{[\s\S]*?webView\.isOpaque = true[\s\S]*?webView\.backgroundColor = \.systemBackground[\s\S]*?webView\.scrollView\.backgroundColor = \.systemBackground/u,
+  "Instagram must retain its opaque system-matched native backing surface before WebKit's first document"
 );
 assert.match(
   socialDOMAdaptersSource,

@@ -8,7 +8,11 @@ const ICON_FILES: Record<FocusedSocialPlatformId, string> = {
   linkedin: "linkedin.png",
   instagram: "instagram.png",
   youtube: "youtube.png",
-  snapchat: "snapchat.png"
+  snapchat: "snapchat.png",
+  facebook: "facebook.png",
+  x: "x.png",
+  tiktok: "tiktok.png",
+  reddit: "reddit.png"
 };
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_ICON_BYTES = 512 * 1024;

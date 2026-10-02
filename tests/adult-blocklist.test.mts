@@ -321,8 +321,26 @@ bad_domain
   assert.equal(explained.match?.domain, "exampleadult.test");
 
   const snapshot = extensionRuleSnapshot(state, now);
-  assert.equal(snapshot.rules.some((rule) => rule.domain === "exampleadult.test" && rule.kind === "adult-blocklist"), true);
+  assert.ok(snapshot.rules.some(rule => rule.domain === "exampleadult.test" && rule.kind === "adult-blocklist"),
+    "bulk-source domains use spare capacity even when the preload begins with already-blocked domains");
   assert.equal(snapshot.rules.length <= 300, true);
+  const fullCapacityState = structuredClone(state);
+  fullCapacityState.profiles.find(profile => profile.id === fullCapacityState.settings.baselineProfileId)!.blockedSites
+    .push(...Array.from({ length: 300 }, (_, index) => `priority-fixture-${index}.test`));
+  const fullCapacitySnapshot = extensionRuleSnapshot(fullCapacityState, now);
+  assert.equal(fullCapacitySnapshot.rules.length, 300, "priority rules fill the browser's site-rule capacity");
+  for (const domain of ["go2offer-1.com", "archive.org", "honeytoon.com", "pornhub.com"]) {
+    assert.ok(fullCapacitySnapshot.rules.some(rule => rule.domain === domain && rule.reason === "baseline"),
+      `${domain} must retain baseline priority at capacity`);
+  }
+  assert.equal(fullCapacitySnapshot.rules.some(rule => rule.domain === "exampleadult.test"), false,
+    "a bulk-source rule cannot evict priority baseline protection; live checks still enforce it");
+  const availableCapacityState = structuredClone(state);
+  availableCapacityState.profiles.find(profile => profile.id === availableCapacityState.settings.baselineProfileId)!.blockedSites = [];
+  const availableCapacitySnapshot = extensionRuleSnapshot(availableCapacityState, now);
+  assert.ok(availableCapacitySnapshot.rules.some(rule => rule.domain === "exampleadult.test" && rule.kind === "adult-blocklist"),
+    "bulk-source domains are preloaded when priority rules leave capacity");
+  assert.equal(availableCapacitySnapshot.rules.length <= 300, true);
 
   const hosts = buildHostsBlock(state, now);
   assert.match(hosts, /0\.0\.0\.0 exampleadult\.test/);

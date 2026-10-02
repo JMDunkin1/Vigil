@@ -91,6 +91,9 @@ export function matchExplicitPersonSearchText(value: unknown): ExplicitPersonSea
   if (normalized.some((token, index) => index !== markerIndex && INTIMATE_CONTEXT.has(token))) {
     return { marker, query, ruleId: EXPLICIT_PERSON_SEARCH_RULE_ID };
   }
+  // These established phrases describe vision and baking. Another intimate
+  // marker above still takes precedence over the ordinary phrase.
+  if (marker === "naked" && /(?:^|[^\p{L}\p{N}])naked[\s_-]+(?:eye|cakes?)(?=$|[^\p{L}\p{N}])/iu.test(query)) return null;
 
   const possibleNameTokens = tokens.filter((_token, index) => (
     index !== markerIndex

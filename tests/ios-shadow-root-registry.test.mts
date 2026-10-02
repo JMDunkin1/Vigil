@@ -68,11 +68,25 @@ const strong = fallback([alive]);
 strong.add(alive);
 assert.deepEqual([...strong], [alive], "engines without WeakRef must preserve strong enforcement registration");
 
-// Exercise every actual registry declaration, rather than only the helper.
-const declarations = [...source.matchAll(/const (protectedRoots|mediaRoots|inspectionRoots) = ROOT_REGISTRY_FACTORY\(([^;]*)\);/gu)];
-assert.equal(declarations.length, 4, "all four root registries must stop owning detached DOM trees");
-assert.equal((source.match(/\.replacingOccurrences\(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory\)/gu) || []).length, 4);
-for (const [declaration, name] of declarations) {
+// Every shipped protection script must use the weak registry, including the
+// expanded-services adapter. Resolve owners so an added declaration cannot be
+// missed merely because its registry variable has a new name.
+const scriptOwners = [...source.matchAll(/(?:private )?static (?:func|let) ([A-Za-z][A-Za-z0-9]*)/gu)];
+const ownerAt = (index: number) => scriptOwners.filter(owner => owner.index! < index).at(-1)?.[1];
+const declarations = [...source.matchAll(/const ([A-Za-z][A-Za-z0-9]*) = ROOT_REGISTRY_FACTORY\(([^;]*)\);/gu)];
+assert.deepEqual(declarations.map(declaration => [ownerAt(declaration.index!), declaration[1]]), [
+  ["contentFilterBootstrap", "protectedRoots"],
+  ["earlyMediaGate", "mediaRoots"],
+  ["instagramCompatibilityScript", "mediaRoots"],
+  ["common", "inspectionRoots"],
+  ["focusedSocialAdapter", "closedRoots"]
+], "every named safety/compatibility adapter must retain its live shadow roots without owning dead trees");
+const installations = [...source.matchAll(/\.replacingOccurrences\(of: "ROOT_REGISTRY_FACTORY", with: rootRegistryFactory\)/gu)];
+assert.deepEqual(installations.map(installation => ownerAt(installation.index!)), [
+  "contentFilterBootstrap", "earlyMediaGate", "instagramCompatibilityScript", "common", "expandedServiceScript"
+], "each registry declaration must be expanded into its actual shipped script");
+assert.equal(installations.length, declarations.length);
+for (const [declaration, name, initializer] of declarations) {
   const document = {};
   const instance = runInNewContext(`${declaration}\n${name}`, {
     ROOT_REGISTRY_FACTORY: createRegistry, document
@@ -80,7 +94,8 @@ for (const [declaration, name] of declarations) {
   instance.add(alive);
   assert.equal(instance.has(alive), true);
   assert.ok([...instance].includes(alive));
-  if (name === "inspectionRoots") assert.ok([...instance].includes(document));
+  assert.equal([...instance].includes(document), initializer === "[document]",
+    `${name}: preserve each adapter's actual document registration`);
 }
 
 // Run the bootstrap's unchanged protection and registration logic against the

@@ -1,3 +1,4 @@
+import { normalizeSketchySiteEvidence } from "./sketchySites.js";
 import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -1121,6 +1122,7 @@ function migrateState(state: RawState): VigilState {
     ...fresh,
     ...state,
     settings,
+    sketchySites: normalizeSketchySiteEvidence(state.sketchySites),
     adultBlocklist: normalizeAdultBlocklistState(state.adultBlocklist, fresh.adultBlocklist),
     profiles,
     schedules: normalizeSchedules(Array.isArray(state.schedules) ? state.schedules : fresh.schedules),
@@ -1229,6 +1231,7 @@ function migrateSettings(settings: AppSettings): AppSettings {
   if (next.externalNetworkBlockProvider !== "manual") {
     next.externalNetworkBlockProvider = "manual";
   }
+  next.sketchySiteMaxAgeDays = clampInteger(next.sketchySiteMaxAgeDays, 1, 90, 14);
   next.adultBlocklistEnabled = next.adultBlocklistEnabled !== false;
   const adultBlocklistSourceId = String(next.adultBlocklistSourceId || "");
   next.adultBlocklistSourceId = adultBlocklistSourceId || DEFAULT_ADULT_BLOCKLIST_SOURCE_ID;
@@ -1630,7 +1633,11 @@ function normalizeLimitRules(existingRules: VigilState["limitRules"], builtinRul
     ["com.burbn.instagram", "tech.caseline.vigil.instagram"],
     ["com.google.ios.youtube", "tech.caseline.vigil.youtube"],
     ["com.linkedin.linkedin", "tech.caseline.vigil.linkedin"],
-    ["com.toyopagroup.picaboo", "tech.caseline.vigil.snapchat"]
+    ["com.toyopagroup.picaboo", "tech.caseline.vigil.snapchat"],
+    ["com.facebook.facebook", "tech.caseline.vigil.facebook"],
+    ["com.atebits.tweetie2", "tech.caseline.vigil.x"],
+    ["com.zhiliaoapp.musically", "tech.caseline.vigil.tiktok"],
+    ["com.reddit.reddit", "tech.caseline.vigil.reddit"]
   ]);
   const mergedExisting = existingRules.map((rule) => {
     const builtin = builtinById.get(rule.id);

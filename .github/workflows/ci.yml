@@ -41,7 +41,11 @@ jobs:
         run: node dist/runtime/scripts/build-ios-social-app.mjs instagram --unsigned --destination "generic/platform=iOS" --derived-data /tmp/VigilSocialCIDerivedData
 
       - name: Compile VigilSocial Swift tests
-        run: xcodebuild -project ios/VigilSocial/VigilSocial.xcodeproj -scheme VigilSocial -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/VigilSocialTestsCIDerivedData CODE_SIGNING_ALLOWED=NO build-for-testing
+        env:
+          VIGIL_DATA_DIR: ${{ runner.temp }}/vigil-social-ci
+        run: |
+          vigil_ci_connection=$(node --input-type=module -e 'import { youtubeBuildConfiguration } from "./dist/runtime/scripts/youtube-build-connection.mjs"; console.log(await youtubeBuildConfiguration());')
+          xcodebuild -project ios/VigilSocial/VigilSocial.xcodeproj -scheme VigilSocial -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath /tmp/VigilSocialTestsCIDerivedData "VIGIL_YOUTUBE_CONNECTION_FILE=$vigil_ci_connection" CODE_SIGNING_ALLOWED=NO build-for-testing
 
       - name: Build Safari extension host and compile Swift tests
         # A generic simulator destination compiles the app, embedded Safari web

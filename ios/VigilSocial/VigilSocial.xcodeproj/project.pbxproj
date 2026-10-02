@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ABCF00000000000000000001 /* youtube-player-response.js in App Resources */ = {isa = PBXBuildFile; fileRef = ABCF00000000000000000003 /* youtube-player-response.js */; };
+		ABCF00000000000000000002 /* youtube-player-response.js in Extension Resources */ = {isa = PBXBuildFile; fileRef = ABCF00000000000000000003 /* youtube-player-response.js */; };
 		ABCE00000000000000000007 = {isa = PBXBuildFile; fileRef = ABCE00000000000000000008; };
 		ABCE00000000000000000005 = {isa = PBXBuildFile; fileRef = ABCE00000000000000000006; };
 		ABCE00000000000000000003 = {isa = PBXBuildFile; fileRef = ABCE00000000000000000004; };
@@ -97,6 +99,61 @@
 		AABC00000000000000000001 = {isa = PBXBuildFile; fileRef = AABB00000000000000000001; };
 		AABC00000000000000000002 = {isa = PBXBuildFile; fileRef = AABB00000000000000000002; };
 		AABC00000000000000000004 = {isa = PBXBuildFile; fileRef = AABB00000000000000000004; };
+		1B754932D1EA4C88E274AD39 /* SocialNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = C53CCC4DCDB61EB4DD750735; };
+		683865E507EBD77647F92A23 /* SocialNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = C53CCC4DCDB61EB4DD750735; };
+		6A0578B75C349DE218D974AB /* SocialNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = C53CCC4DCDB61EB4DD750735; };
+		926B96E0E74B5FFBE1990329 /* SocialNotifications.swift in Sources */ = {isa = PBXBuildFile; fileRef = C53CCC4DCDB61EB4DD750735; };
+		114D210FFE463D36F52003AF /* SocialPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DD766DE940632CF99B2CAF; };
+		6076260C36B3646C8E9FD142 /* SocialPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DD766DE940632CF99B2CAF; };
+		EEDA6DB3E9418C9567F51DD1 /* SocialPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DD766DE940632CF99B2CAF; };
+		6F5EE1FA67A82B158D62C2F9 /* SocialPreferences.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86DD766DE940632CF99B2CAF; };
+		6700B98498ABFA81BD8E3CB7 /* SocialSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6252C30459B557E39EE4D514; };
+		1CDAA12F8D49CBD36D67474A /* SocialSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6252C30459B557E39EE4D514; };
+		F8EFEA03EC6DE5585E9C758C /* SocialSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6252C30459B557E39EE4D514; };
+		5DAA07E383DD6D44FFFF8DFD /* SocialSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6252C30459B557E39EE4D514; };
+		09AE4797FE5432953E69C12B /* YouTubeExternalPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23D7861F1F778A772C23636; };
+		E4C945198E583D32EF467EE1 /* YouTubeExternalPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23D7861F1F778A772C23636; };
+		60A51550DC19D583DAA64D7E /* YouTubeExternalPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23D7861F1F778A772C23636; };
+		BD3A797D173B974DB7B33501 /* YouTubeExternalPlayback.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23D7861F1F778A772C23636; };
+		4911B77E0D4A92FEFE1A2200 /* SocialActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08B43B0C10FEDBBF5CFB29E; };
+		380847B0D2107A75C83198D9 /* SocialActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08B43B0C10FEDBBF5CFB29E; };
+		618E3A9B6B3124DB99AABD55 /* SocialActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08B43B0C10FEDBBF5CFB29E; };
+		5F705F1D53AE7357D24DFAB3 /* SocialActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D08B43B0C10FEDBBF5CFB29E; };
+		86E1C8F9050FCB4039540B5D /* SocialLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A7F7540E5AFAEA26555782; };
+		BD2595C838E04769EF6BEB09 /* SocialLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A7F7540E5AFAEA26555782; };
+		86FC9228C735ADBE8CD60BAB /* SocialLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A7F7540E5AFAEA26555782; };
+		FC18A269D0B4690201229A92 /* SocialLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6A7F7540E5AFAEA26555782; };
+		426A5BE2C91A4895DE1E8DA4 /* SocialPreferencesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3C038DC469B21F470CD5D69; };
+		223D54CCA4814918C42A9A8B /* YouTubeExternalPlaybackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BC2B2EF5910D30A91B2D3B93; };
+		3418F4B5127701AE82726F70 /* facebook.png in Resources */ = {isa = PBXBuildFile; fileRef = 3692015582E0C0A4FE40585B; };
+		07BAD55D6C9EF498D5A9671F /* facebook.png in Resources */ = {isa = PBXBuildFile; fileRef = 3692015582E0C0A4FE40585B; };
+		1EAC7407206B7921C169586A /* facebook.png in Resources */ = {isa = PBXBuildFile; fileRef = 3692015582E0C0A4FE40585B; };
+		75E9A09955AAB660D778ECC2 /* facebook.png in Resources */ = {isa = PBXBuildFile; fileRef = 3692015582E0C0A4FE40585B; };
+		FA9BF2D4A1CF4CE575C9733B /* x.png in Resources */ = {isa = PBXBuildFile; fileRef = 9216DFEE269A9F19DF4DB4A6; };
+		6D5183A4139085A3A7E699AD /* x.png in Resources */ = {isa = PBXBuildFile; fileRef = 9216DFEE269A9F19DF4DB4A6; };
+		5516AA77F2C39ACCCFA4A193 /* x.png in Resources */ = {isa = PBXBuildFile; fileRef = 9216DFEE269A9F19DF4DB4A6; };
+		B96DA43EBE4787063DABA1CB /* x.png in Resources */ = {isa = PBXBuildFile; fileRef = 9216DFEE269A9F19DF4DB4A6; };
+		2DBC73AFAA64E54084783CE7 /* tiktok.png in Resources */ = {isa = PBXBuildFile; fileRef = C7970AB570C8F0CC9BD27D16; };
+		18C95A8F584F047DBB61F7F7 /* tiktok.png in Resources */ = {isa = PBXBuildFile; fileRef = C7970AB570C8F0CC9BD27D16; };
+		62B936F027B1DA390AEEB8EB /* tiktok.png in Resources */ = {isa = PBXBuildFile; fileRef = C7970AB570C8F0CC9BD27D16; };
+		832EAE2CE2C71A5C65552925 /* tiktok.png in Resources */ = {isa = PBXBuildFile; fileRef = C7970AB570C8F0CC9BD27D16; };
+		BE494CFA2AD8619D8240C975 /* reddit.png in Resources */ = {isa = PBXBuildFile; fileRef = 4E5F2D9EF4560B1B5231278F; };
+		01FEDBC059EEA5A158429C16 /* reddit.png in Resources */ = {isa = PBXBuildFile; fileRef = 4E5F2D9EF4560B1B5231278F; };
+		960482136AC6596945F44E5E /* reddit.png in Resources */ = {isa = PBXBuildFile; fileRef = 4E5F2D9EF4560B1B5231278F; };
+		50E93F31839F5029BDECD44B /* reddit.png in Resources */ = {isa = PBXBuildFile; fileRef = 4E5F2D9EF4560B1B5231278F; };
+		8E182C38A39F4F5D098411AC /* reddit-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = E83056DB20FFCDECC194DBD3; };
+		57379A349CC6747494D5B883 /* reddit-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = E83056DB20FFCDECC194DBD3; };
+		6289D0A0D97B5D32ADAA38AA /* reddit-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = E83056DB20FFCDECC194DBD3; };
+		9380C466C5C6452B587B9361 /* reddit-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = E83056DB20FFCDECC194DBD3; };
+		D8DADF556626425371352CEB /* VigilSocialActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62591D49ACC312257CF67B6E; };
+		FA30690065BA2A1A67A57C74 /* SocialActivityAttributes.swift in Widget Sources */ = {isa = PBXBuildFile; fileRef = D08B43B0C10FEDBBF5CFB29E; };
+		FBB9571FEBB83C962576448D /* VigilSocialActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = DC18D66841C6FF60FA9B5FE9; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F5F461721AA2C780005432BA /* VigilSocialActivity.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = DC18D66841C6FF60FA9B5FE9; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		935F87325103C20013E129F6 /* media-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = 2E5646847AEDDDA8CD346268; };
+		5365FC4A9303538E0FFC69C0 /* media-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = 2E5646847AEDDDA8CD346268; };
+		4ED31C21E62A60905682F406 /* media-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = 2E5646847AEDDDA8CD346268; };
+		EA22D4B5103C6AF8CAE61F95 /* media-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = 2E5646847AEDDDA8CD346268; };
+		F452DB5D09062F2D7716FEBC /* SocialNotificationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB7D65CA565CF7D1200B556; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -128,6 +185,7 @@
 			remoteGlobalIDString = E60000000000000000000001;
 			remoteInfo = VigilYouTubeInteractionExtension;
 		};
+		4BEC0DD77A440415A95BB51A = {isa = PBXContainerItemProxy; containerPortal = A90000000000000000000001; proxyType = 1; remoteGlobalIDString = 24A908B80CDCAB1D6D0120C7; remoteInfo = VigilSocialActivity; };
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -148,6 +206,7 @@
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
+				F5F461721AA2C780005432BA /* VigilSocialActivity.appex in Embed App Extensions */,
 				D1000000000000000000000F /* VigilYouTubeShortsBlocker.appex in Embed App Extensions */,
 				E10000000000000000000004 /* VigilYouTubeInteractionExtension.appex in Embed App Extensions */,
 			);
@@ -157,6 +216,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		ABCF00000000000000000003 /* youtube-player-response.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "youtube-player-response.js"; sourceTree = "<group>"; };
 		ABCE00000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/blocked-navigation.js"; sourceTree = SOURCE_ROOT; };
 		ABCE00000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.html; path = "VigilYouTubeInteractionExtension/Resources/reddit-review-blocked.html"; sourceTree = SOURCE_ROOT; };
 		ABCE00000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/reddit-review-guard.js"; sourceTree = SOURCE_ROOT; };
@@ -207,6 +267,23 @@
 		AABB00000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.html; path = "VigilYouTubeInteractionExtension/Resources/status.html"; sourceTree = SOURCE_ROOT; };
 		AABB00000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/status.js"; sourceTree = SOURCE_ROOT; };
 		AABB00000000000000000004 = {isa = PBXFileReference; lastKnownFileType = folder; path = "VigilYouTubeInteractionExtension/Resources/icons"; sourceTree = SOURCE_ROOT; };
+		C53CCC4DCDB61EB4DD750735 /* SocialNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialNotifications.swift; sourceTree = "<group>"; };
+		86DD766DE940632CF99B2CAF /* SocialPreferences.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialPreferences.swift; sourceTree = "<group>"; };
+		6252C30459B557E39EE4D514 /* SocialSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialSettingsView.swift; sourceTree = "<group>"; };
+		E23D7861F1F778A772C23636 /* YouTubeExternalPlayback.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExternalPlayback.swift; sourceTree = "<group>"; };
+		D08B43B0C10FEDBBF5CFB29E /* SocialActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialActivityAttributes.swift; sourceTree = "<group>"; };
+		E6A7F7540E5AFAEA26555782 /* SocialLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialLiveActivity.swift; sourceTree = "<group>"; };
+		E3C038DC469B21F470CD5D69 /* SocialPreferencesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialPreferencesTests.swift; sourceTree = "<group>"; };
+		BC2B2EF5910D30A91B2D3B93 /* YouTubeExternalPlaybackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = YouTubeExternalPlaybackTests.swift; sourceTree = "<group>"; };
+		3692015582E0C0A4FE40585B /* facebook.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "VigilSocial/Icons/facebook.png"; sourceTree = SOURCE_ROOT; };
+		9216DFEE269A9F19DF4DB4A6 /* x.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "VigilSocial/Icons/x.png"; sourceTree = SOURCE_ROOT; };
+		C7970AB570C8F0CC9BD27D16 /* tiktok.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "VigilSocial/Icons/tiktok.png"; sourceTree = SOURCE_ROOT; };
+		4E5F2D9EF4560B1B5231278F /* reddit.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "VigilSocial/Icons/reddit.png"; sourceTree = SOURCE_ROOT; };
+		E83056DB20FFCDECC194DBD3 /* reddit-child-lock.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"; sourceTree = SOURCE_ROOT; };
+		DC18D66841C6FF60FA9B5FE9 /* VigilSocialActivity.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; path = VigilSocialActivity.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		62591D49ACC312257CF67B6E /* VigilSocialActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VigilSocialActivity.swift; sourceTree = "<group>"; };
+		2E5646847AEDDDA8CD346268 /* media-child-lock.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/media-child-lock.js"; sourceTree = SOURCE_ROOT; };
+		4AB7D65CA565CF7D1200B556 /* SocialNotificationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialNotificationsTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -259,12 +336,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		97804089EE4587CC8FB1EFF3 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		A50000000000000000000001 = {
 			isa = PBXGroup;
 			children = (
+				7CC0D57FB0CF210DB0D3BE06 /* VigilSocialActivity */,
 				A50000000000000000000002 /* VigilSocial */,
 				A50000000000000000000003 /* VigilSocialTests */,
 				C50000000000000000000001 /* VigilYouTubeShortsBlocker */,
@@ -276,6 +355,12 @@
 		A50000000000000000000002 /* VigilSocial */ = {
 			isa = PBXGroup;
 			children = (
+				E6A7F7540E5AFAEA26555782 /* SocialLiveActivity.swift */,
+				D08B43B0C10FEDBBF5CFB29E /* SocialActivityAttributes.swift */,
+				E23D7861F1F778A772C23636 /* YouTubeExternalPlayback.swift */,
+				6252C30459B557E39EE4D514 /* SocialSettingsView.swift */,
+				86DD766DE940632CF99B2CAF /* SocialPreferences.swift */,
+				C53CCC4DCDB61EB4DD750735 /* SocialNotifications.swift */,
 				A20000000000000000000001 /* VigilSocialApp.swift */,
 				A20000000000000000000002 /* SocialService.swift */,
 				A20000000000000000000003 /* DOMAdapters.swift */,
@@ -322,6 +407,7 @@
 			children = (
 				E20000000000000000000003 /* manifest.json */,
 				E20000000000000000000004 /* youtube-parity.js */,
+				ABCF00000000000000000003 /* youtube-player-response.js */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -329,6 +415,9 @@
 		A50000000000000000000003 /* VigilSocialTests */ = {
 			isa = PBXGroup;
 			children = (
+				4AB7D65CA565CF7D1200B556 /* SocialNotificationsTests.swift */,
+				BC2B2EF5910D30A91B2D3B93 /* YouTubeExternalPlaybackTests.swift */,
+				E3C038DC469B21F470CD5D69 /* SocialPreferencesTests.swift */,
 				A20000000000000000000007 /* VigilSocialTests.swift */,
 			);
 			path = VigilSocialTests;
@@ -337,6 +426,7 @@
 		A50000000000000000000004 /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				DC18D66841C6FF60FA9B5FE9 /* VigilSocialActivity.appex */,
 				A20000000000000000000008 /* VigilSocial.app */,
 				A20000000000000000000009 /* VigilSocialTests.xctest */,
 				C20000000000000000000005 /* VigilYouTubeShortsBlocker.appex */,
@@ -348,6 +438,7 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		7CC0D57FB0CF210DB0D3BE06 /* VigilSocialActivity */ = {isa = PBXGroup; children = (62591D49ACC312257CF67B6E /* VigilSocialActivity.swift */,); path = VigilSocialActivity; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -434,6 +525,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				136816FC94CD08A0D82F6558 /* Widget dependency */,
 				D70000000000000000000001 /* PBXTargetDependency */,
 				E70000000000000000000001 /* PBXTargetDependency */,
 			);
@@ -476,6 +568,7 @@
 			productReference = H20000000000000000000001 /* VigilLinkedIn.app */;
 			productType = "com.apple.product-type.application";
 		};
+		24A908B80CDCAB1D6D0120C7 /* VigilSocialActivity */ = {isa = PBXNativeTarget; buildConfigurationList = 7E1D72C49CE47D79E5C37220; buildPhases = (9E133D400D52B74763BDD91F, 97804089EE4587CC8FB1EFF3, EAA0C5C1907609ADF0E91C8D,); buildRules = (); dependencies = (); name = VigilSocialActivity; productName = VigilSocialActivity; productReference = DC18D66841C6FF60FA9B5FE9; productType = "com.apple.product-type.app-extension"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -508,6 +601,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
+				24A908B80CDCAB1D6D0120C7 /* VigilSocialActivity */,
 				A60000000000000000000001 /* VigilSocial */,
 				A60000000000000000000002 /* VigilSocialTests */,
 				C60000000000000000000001 /* VigilYouTubeShortsBlocker */,
@@ -520,13 +614,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (910000000000000000000009, 910000000000000000000006, A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, A1000000000000000000000D /* Assets.xcassets in Resources */, A1000000000000000000000F /* ExplicitContentPolicy.json in Resources */, A10000000000000000000010 /* youtube-parity.js in YouTube App Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		A40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (935F87325103C20013E129F6 /* media-child-lock.js in Resources */, 8E182C38A39F4F5D098411AC /* reddit-child-lock.js in Resources */, BE494CFA2AD8619D8240C975 /* reddit.png in Resources */, 2DBC73AFAA64E54084783CE7 /* tiktok.png in Resources */, FA9BF2D4A1CF4CE575C9733B /* x.png in Resources */, 3418F4B5127701AE82726F70 /* facebook.png in Resources */, 910000000000000000000009, 910000000000000000000006, A10000000000000000000007 /* icon.png in Resources */, A10000000000000000000008 /* instagram.png in Resources */, A10000000000000000000009 /* youtube.png in Resources */, A1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, A1000000000000000000000D /* Assets.xcassets in Resources */, A1000000000000000000000F /* ExplicitContentPolicy.json in Resources */, A10000000000000000000010 /* youtube-parity.js in YouTube App Resources */, ABCF00000000000000000001 /* youtube-player-response.js in App Resources */,); runOnlyForDeploymentPostprocessing = 0; };
 		A40000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		C40000000000000000000004 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (C10000000000000000000003 /* blockerList.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (ABCE00000000000000000001, ABCE00000000000000000007, ABCE00000000000000000005, ABCE00000000000000000003, ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001, AABC00000000000000000004, AABC00000000000000000002, AABC00000000000000000001, 91000000000000000000000B, 91000000000000000000000A, 910000000000000000000008, 910000000000000000000007, E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (CC0000000000000000000001, CC0000000000000000000002, CC0000000000000000000003, CC0000000000000000000004, CC0000000000000000000005, D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		G40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (G10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, G1000000000000000000000A /* Assets.xcassets in Resources */, G1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, G1000000000000000000000C /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
-		H40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (H10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, H1000000000000000000000A /* Assets.xcassets in Resources */, H1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, H1000000000000000000000C /* linkedin.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		E40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (ABCE00000000000000000001, ABCE00000000000000000007, ABCE00000000000000000005, ABCE00000000000000000003, ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001, AABC00000000000000000004, AABC00000000000000000002, AABC00000000000000000001, 91000000000000000000000B, 91000000000000000000000A, 910000000000000000000008, 910000000000000000000007, E10000000000000000000002 /* manifest.json in Resources */, E10000000000000000000003 /* youtube-parity.js in Resources */, ABCF00000000000000000002 /* youtube-player-response.js in Extension Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		D40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (5365FC4A9303538E0FFC69C0 /* media-child-lock.js in Resources */, 57379A349CC6747494D5B883 /* reddit-child-lock.js in Resources */, 01FEDBC059EEA5A158429C16 /* reddit.png in Resources */, 18C95A8F584F047DBB61F7F7 /* tiktok.png in Resources */, 6D5183A4139085A3A7E699AD /* x.png in Resources */, 07BAD55D6C9EF498D5A9671F /* facebook.png in Resources */, CC0000000000000000000001, CC0000000000000000000002, CC0000000000000000000003, CC0000000000000000000004, CC0000000000000000000005, D10000000000000000000009 /* icon.png in Resources */, D1000000000000000000000A /* instagram.png in Resources */, D1000000000000000000000B /* youtube.png in Resources */, D1000000000000000000000C /* PrivacyInfo.xcprivacy in Resources */, D1000000000000000000000D /* Assets.xcassets in Resources */, D1000000000000000000000E /* ExplicitContentPolicy.json in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		G40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (4ED31C21E62A60905682F406 /* media-child-lock.js in Resources */, 6289D0A0D97B5D32ADAA38AA /* reddit-child-lock.js in Resources */, 960482136AC6596945F44E5E /* reddit.png in Resources */, 62B936F027B1DA390AEEB8EB /* tiktok.png in Resources */, 5516AA77F2C39ACCCFA4A193 /* x.png in Resources */, 1EAC7407206B7921C169586A /* facebook.png in Resources */, G10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, G1000000000000000000000A /* Assets.xcassets in Resources */, G1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, G1000000000000000000000C /* snapchat.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		H40000000000000000000003 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (EA22D4B5103C6AF8CAE61F95 /* media-child-lock.js in Resources */, 9380C466C5C6452B587B9361 /* reddit-child-lock.js in Resources */, 50E93F31839F5029BDECD44B /* reddit.png in Resources */, 832EAE2CE2C71A5C65552925 /* tiktok.png in Resources */, B96DA43EBE4787063DABA1CB /* x.png in Resources */, 75E9A09955AAB660D778ECC2 /* facebook.png in Resources */, H10000000000000000000009 /* PrivacyInfo.xcprivacy in Resources */, H1000000000000000000000A /* Assets.xcassets in Resources */, H1000000000000000000000B /* ExplicitContentPolicy.json in Resources */, H1000000000000000000000C /* linkedin.png in Resources */,); runOnlyForDeploymentPostprocessing = 0; };
+		EAA0C5C1907609ADF0E91C8D = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -534,6 +629,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				86E1C8F9050FCB4039540B5D /* SocialLiveActivity.swift in Sources */,
+				4911B77E0D4A92FEFE1A2200 /* SocialActivityAttributes.swift in Sources */,
+				09AE4797FE5432953E69C12B /* YouTubeExternalPlayback.swift in Sources */,
+				6700B98498ABFA81BD8E3CB7 /* SocialSettingsView.swift in Sources */,
+				114D210FFE463D36F52003AF /* SocialPreferences.swift in Sources */,
+				1B754932D1EA4C88E274AD39 /* SocialNotifications.swift in Sources */,
                 910000000000000000000001,
 				A10000000000000000000001 /* VigilSocialApp.swift in Sources */,
 				A10000000000000000000002 /* SocialService.swift in Sources */,
@@ -550,6 +651,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F452DB5D09062F2D7716FEBC /* SocialNotificationsTests.swift in Sources */,
+				223D54CCA4814918C42A9A8B /* YouTubeExternalPlaybackTests.swift in Sources */,
+				426A5BE2C91A4895DE1E8DA4 /* SocialPreferencesTests.swift in Sources */,
 				A10000000000000000000006 /* VigilSocialTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -575,6 +679,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BD2595C838E04769EF6BEB09 /* SocialLiveActivity.swift in Sources */,
+				380847B0D2107A75C83198D9 /* SocialActivityAttributes.swift in Sources */,
+				E4C945198E583D32EF467EE1 /* YouTubeExternalPlayback.swift in Sources */,
+				1CDAA12F8D49CBD36D67474A /* SocialSettingsView.swift in Sources */,
+				6076260C36B3646C8E9FD142 /* SocialPreferences.swift in Sources */,
+				683865E507EBD77647F92A23 /* SocialNotifications.swift in Sources */,
                 910000000000000000000002,
 				D10000000000000000000001 /* VigilSocialApp.swift in Sources */,
 				D10000000000000000000002 /* SocialService.swift in Sources */,
@@ -591,6 +701,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				86FC9228C735ADBE8CD60BAB /* SocialLiveActivity.swift in Sources */,
+				618E3A9B6B3124DB99AABD55 /* SocialActivityAttributes.swift in Sources */,
+				60A51550DC19D583DAA64D7E /* YouTubeExternalPlayback.swift in Sources */,
+				F8EFEA03EC6DE5585E9C758C /* SocialSettingsView.swift in Sources */,
+				EEDA6DB3E9418C9567F51DD1 /* SocialPreferences.swift in Sources */,
+				6A0578B75C349DE218D974AB /* SocialNotifications.swift in Sources */,
                 910000000000000000000003,
 				G10000000000000000000001 /* VigilSocialApp.swift in Sources */,
 				G10000000000000000000002 /* SocialService.swift in Sources */,
@@ -607,6 +723,12 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				FC18A269D0B4690201229A92 /* SocialLiveActivity.swift in Sources */,
+				5F705F1D53AE7357D24DFAB3 /* SocialActivityAttributes.swift in Sources */,
+				BD3A797D173B974DB7B33501 /* YouTubeExternalPlayback.swift in Sources */,
+				5DAA07E383DD6D44FFFF8DFD /* SocialSettingsView.swift in Sources */,
+				6F5EE1FA67A82B158D62C2F9 /* SocialPreferences.swift in Sources */,
+				926B96E0E74B5FFBE1990329 /* SocialNotifications.swift in Sources */,
                 910000000000000000000004,
 				H10000000000000000000001 /* VigilSocialApp.swift in Sources */,
 				H10000000000000000000002 /* SocialService.swift in Sources */,
@@ -619,6 +741,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9E133D400D52B74763BDD91F /* Widget Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (D8DADF556626425371352CEB, FA30690065BA2A1A67A57C74,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -642,6 +765,7 @@
 			target = E60000000000000000000001 /* VigilYouTubeInteractionExtension */;
 			targetProxy = E30000000000000000000001 /* PBXContainerItemProxy */;
 		};
+		136816FC94CD08A0D82F6558 = {isa = PBXTargetDependency; target = 24A908B80CDCAB1D6D0120C7; targetProxy = 4BEC0DD77A440415A95BB51A; };
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
@@ -1057,6 +1181,8 @@
 			};
 			name = Release;
 		};
+		06FBDE00BAE864010421E58C /* Widget Debug */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 3RY7A22U4L; INFOPLIST_FILE = VigilSocialActivity/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER).activity"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.instagram; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";}; name = Debug; };
+		46F6FF319292D715E61E39CA /* Widget Release */ = {isa = XCBuildConfiguration; buildSettings = {APPLICATION_EXTENSION_API_ONLY = YES; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = 3RY7A22U4L; INFOPLIST_FILE = VigilSocialActivity/Info.plist; IPHONEOS_DEPLOYMENT_TARGET = 17.0; MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = "$(VIGIL_APP_BUNDLE_IDENTIFIER).activity"; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SKIP_INSTALL = YES; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; VIGIL_APP_BUNDLE_IDENTIFIER = tech.caseline.vigil.instagram; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";}; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1108,6 +1234,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		7E1D72C49CE47D79E5C37220 = {isa = XCConfigurationList; buildConfigurations = (06FBDE00BAE864010421E58C, 46F6FF319292D715E61E39CA,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = A90000000000000000000001 /* Project object */;

@@ -242,6 +242,15 @@
             </div>
           </div>
           <div class="settings-surface">
+            <h3>New suspicious domains</h3>
+            <p>Block a domain when Safari rejects it with a content-blocker error and its registration is younger than this limit. Unknown ages stay blocked. Always on.</p>
+            <form id="sketchySiteForm" class="form-grid">
+              <label>Maximum registration age (days)<input id="sketchySiteMaxAgeDays" type="number" min="1" max="90" step="1" required></label>
+              <button type="submit">Save age limit</button>
+            </form>
+            <p id="sketchySiteStatus"></p>
+          </div>
+          <div class="settings-surface">
             <h3>Background enforcement</h3>
             <div class="switch-list">
               <label class="switch-row"><span><strong>Close blocked apps</strong><small>Force-close apps that stay open after a block.</small></span><input id="appQuitEnabled" data-setting="appQuitEnabled" type="checkbox"><i></i></label>

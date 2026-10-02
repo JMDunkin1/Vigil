@@ -14,14 +14,18 @@ final class SocialContainerStore: ObservableObject {
     @Published private(set) var selectedService: SocialService?
     @Published private(set) var stores: [SocialService: SocialWebViewStore] = [:]
     @Published private(set) var migrationReady = false
+    let preferences: SocialPreferences
+    private var didApplyStartupPreference = false
     private let bundle: Bundle
     private let defaults: UserDefaults
     private let loadInitialPages: Bool
+    private var accountStores: [SocialService: [String: SocialWebViewStore]] = [:]
 
     init(bundle: Bundle = .main, defaults: UserDefaults = .standard,
          combined: Bool? = nil, loadInitialPages: Bool = true) {
         self.bundle = bundle
         self.defaults = defaults
+        self.preferences = SocialPreferences(defaults: defaults)
         self.loadInitialPages = loadInitialPages
         let configured = bundle.object(forInfoDictionaryKey: "VigilService") as? String
         isCombined = combined ?? (configured == "all")
@@ -29,12 +33,12 @@ final class SocialContainerStore: ObservableObject {
         selectedService = isCombined ? nil : initialService
         refreshMigrationReadiness()
         if !isCombined {
-            stores[initialService] = SocialWebViewStore(defaults: defaults, fixedService: initialService,
-                                                       bundle: bundle, loadInitialPages: loadInitialPages)
+            _ = store(for: initialService)
         }
     }
 
     func refreshMigrationReadiness() {
+        defer { applyStartupPreferenceIfReady() }
         #if targetEnvironment(simulator)
         migrationReady = true
         #else
@@ -57,28 +61,109 @@ final class SocialContainerStore: ObservableObject {
 
     func store(for service: SocialService) -> SocialWebViewStore {
         if let existing = stores[service] { return existing }
+        let sessionKey = preferences.selectedAccountID(for: service)?.uuidString ?? "existing"
+        if let existing = accountStores[service]?[sessionKey] {
+            stores[service] = existing
+            return existing
+        }
         let store = SocialWebViewStore(defaults: defaults, fixedService: service,
                                       bundle: bundle, loadInitialPages: loadInitialPages,
-                                      websiteDataStore: isCombined ? Self.websiteDataStore(for: service) : nil)
+                                      websiteDataStore: isCombined
+                                        ? Self.websiteDataStore(for: service, accountID: preferences.selectedAccountID(for: service)) : nil)
+        store.accessRestriction = { [weak preferences] in preferences?.isBlocked(for: service) ?? true }
         stores[service] = store
+        accountStores[service, default: [:]][sessionKey] = store
         if isCombined { store.openSocialLink = { [weak self] url in self?.open(url) } }
         return store
     }
 
-    static func websiteDataStore(for service: SocialService) -> WKWebsiteDataStore {
+    static func websiteDataStore(for service: SocialService, accountID: UUID? = nil) -> WKWebsiteDataStore {
         // Instagram keeps its existing store; other services get persistent,
         // isolated stores, including their third-party authentication cookies.
+        if service != .instagram, let accountID { return WKWebsiteDataStore(forIdentifier: accountID) }
         switch service {
         case .instagram: return .default()
         case .youtube: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000002")!)
         case .snapchat: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000003")!)
         case .linkedin: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000004")!)
+        case .facebook: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000005")!)
+        case .x: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000006")!)
+        case .tiktok: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000007")!)
+        case .reddit: return WKWebsiteDataStore(forIdentifier: UUID(uuidString: "B1853428-14D1-4532-8F11-000000000008")!)
         }
+    }
+
+    func accounts(for service: SocialService) -> [SocialAccount] { preferences.accounts(for: service) }
+
+    func selectedAccountID(for service: SocialService) -> UUID? { preferences.selectedAccountID(for: service) }
+
+    @discardableResult
+    func addAccount(for service: SocialService, name: String) -> Bool {
+        guard migrationReady, service != .instagram, !preferences.isBlocked(for: service),
+              let id = preferences.addAccount(for: service, name: name) else { return false }
+        selectAccount(id, for: service)
+        return true
+    }
+
+    func selectAccount(_ id: UUID?, for service: SocialService) {
+        guard migrationReady, service != .instagram, !preferences.isBlocked(for: service),
+              id == nil || accounts(for: service).contains(where: { $0.id == id }),
+              id != selectedAccountID(for: service) else { return }
+        stores[service]?.suspendAllMedia(relinquishExternalPlayback: true)
+        preferences.selectAccount(id, for: service)
+        stores.removeValue(forKey: service)
+        // Cookie containers change; the single YouTube ledger remains shared.
+        if selectedService == service {
+            let replacement = store(for: service)
+            replacement.requestFreshServiceAccessReceipt()
+            replacement.suspendAllMedia(relinquishExternalPlayback: false)
+        }
+    }
+
+    func renameAccount(_ id: UUID, for service: SocialService, name: String) {
+        preferences.renameAccount(id, for: service, name: name)
+    }
+
+    var youtubeBackgroundPlaybackEnabled: Bool {
+        defaults.object(forKey: "VigilSocial.youtube.backgroundPlayback") == nil
+            || defaults.bool(forKey: "VigilSocial.youtube.backgroundPlayback")
+    }
+
+    var youtubePictureInPictureEnabled: Bool {
+        defaults.object(forKey: "VigilSocial.youtube.pictureInPicture") == nil
+            || defaults.bool(forKey: "VigilSocial.youtube.pictureInPicture")
+    }
+
+    func setYouTubeBackgroundPlaybackEnabled(_ enabled: Bool) {
+        objectWillChange.send()
+        defaults.set(enabled, forKey: "VigilSocial.youtube.backgroundPlayback")
+        accountStores[.youtube]?.values.forEach { $0.setYouTubeBackgroundPlaybackEnabled(enabled) }
+    }
+
+    func setYouTubePictureInPictureEnabled(_ enabled: Bool) {
+        objectWillChange.send()
+        defaults.set(enabled, forKey: "VigilSocial.youtube.pictureInPicture")
+        accountStores[.youtube]?.values.forEach { $0.setYouTubePictureInPictureEnabled(enabled) }
+    }
+
+    func enforceRestrictions(at date: Date = Date()) {
+        for (service, sessions) in accountStores where preferences.isBlocked(for: service, at: date) {
+            for store in sessions.values {
+                store.suspendAllMedia(relinquishExternalPlayback: selectedService == service)
+            }
+        }
+    }
+
+    private func applyStartupPreferenceIfReady() {
+        guard isCombined, migrationReady, !didApplyStartupPreference else { return }
+        didApplyStartupPreference = true
+        if let service = preferences.startupService, !preferences.isBlocked(for: service) { select(service) }
     }
 
     func select(_ service: SocialService) {
         guard migrationReady else { return }
         guard isCombined || service == initialService else { return }
+        guard !preferences.isBlocked(for: service) else { enforceRestrictions(); return }
         if let previous = selectedService, previous != service { stores[previous]?.suspendAllMedia(relinquishExternalPlayback: false) }
         let next = store(for: service)
         next.requestFreshServiceAccessReceipt()
@@ -115,6 +200,7 @@ final class SocialContainerStore: ObservableObject {
             return
         }
         if let link = SocialIncomingLink(url), isCombined || link.service == initialService {
+            guard !preferences.isBlocked(for: link.service) else { enforceRestrictions(); return }
             select(link.service)
             store(for: link.service).open(link)
             return
@@ -199,6 +285,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var snapchatChromeColor: UIColor?
     @Published private(set) var youtubeAllowsLandscape = false
     @Published private(set) var youtubeSafariRequest: YouTubeSafariRequest
+    @Published private(set) var youtubeBackgroundPlaybackEnabled = true
+    @Published private(set) var youtubePictureInPictureEnabled = true
+    @Published private(set) var youtubeExternalPlaybackAvailable = false
 
     @Published private(set) var instagramInformationalAccounts: [String] = []
     private var instagramControlsUserScript: WKUserScript?
@@ -236,7 +325,19 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
     private(set) var linkedInApplePopup: LinkedInApplePopupController?
     var openSocialLink: ((URL) -> Void)?
+    var accessRestriction: (() -> Bool)?
     private let mediaClassificationDeadlineNanoseconds: UInt64
+    private var externalPlaybackAuthorization = YouTubeExternalPlaybackAuthorization()
+    private var externalPlaybackMonitor: Task<Void, Never>?
+    private var externalPlaybackMonitorGeneration: UInt64 = 0
+    private var externalPlaybackPolicyProbe: Task<Void, Never>?
+    private var externalPlaybackCreditDeadline: Task<Void, Never>?
+    private var lastConfirmedServiceAccess: TimeInterval?
+    private var playbackIsBackgrounded = false
+    private var playbackServiceIsVisible = false
+    private var sceneActivityGeneration: UInt64 = 0
+    private var youtubeAudioSessionIsActive = false
+    private var permittedYouTubeVideoFrameCheckTimes: [String: TimeInterval] = [:]
 
     private var managedWebViews: [WKWebView] {
         Array(webViews.values)
@@ -272,6 +373,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
         self.mediaClassificationDeadlineNanoseconds = max(1, mediaClassificationDeadlineNanoseconds)
         super.init()
+        youtubeBackgroundPlaybackEnabled = defaults.object(forKey: "VigilSocial.youtube.backgroundPlayback") == nil
+            || defaults.bool(forKey: "VigilSocial.youtube.backgroundPlayback")
+        youtubePictureInPictureEnabled = defaults.object(forKey: "VigilSocial.youtube.pictureInPicture") == nil
+            || defaults.bool(forKey: "VigilSocial.youtube.pictureInPicture")
         instagramInformationalAccounts = Array(Set(
             (defaults.stringArray(forKey: InstagramInformationalAccounts.storageKey)
                 ?? InstagramInformationalAccounts.initialAccounts)
@@ -305,16 +410,20 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func requestFreshServiceAccessReceipt() {
         serviceAccessReceipt.invalidate()
+        lastConfirmedServiceAccess = nil
     }
 
     func confirmServiceAccess() async -> Bool {
         var confirmed = false
         defer {
+            lastConfirmedServiceAccess = confirmed ? ProcessInfo.processInfo.systemUptime : nil
+            if !confirmed, playbackIsBackgrounded { suspendAllMedia() }
             if bundle.object(forInfoDictionaryKey: "VigilService") as? String == "all",
                let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
                 try? serviceAccessReceipt.write(confirmed: confirmed, service: fixedService, directory: directory)
             }
         }
+        guard accessRestriction?() != true else { return false }
         let view = webView(for: fixedService)
         guard let url = view.url, fixedService.allowsNavigation(to: url), !view.isLoading else { return false }
         do {
@@ -345,7 +454,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func open(_ link: SocialIncomingLink) {
-        guard link.service == fixedService else { return }
+        guard link.service == fixedService, accessRestriction?() != true else { return }
         let destination = link.destination
         if link.service == .youtube, link.grantsExternalPlayback,
            let id = SocialIncomingLink.youtubeVideoID(destination) {
@@ -414,7 +523,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
 
         if service == .youtube {
-            controller.addScriptMessageHandler(YouTubeLimitsMessageBridge(bundle: bundle), contentWorld: .page, name: "vigilYouTube")
+            controller.addScriptMessageHandler(YouTubeLimitsMessageBridge(bundle: bundle) { [weak self] body, reply in
+                await self?.receivedYouTubePlaybackAuthorization(body: body, reply: reply)
+            }, contentWorld: .page, name: "vigilYouTube")
+            controller.addUserScript(WKUserScript(source: YouTubeExternalPlaybackScript.source,
+                injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient))
             if let resource = bundle.url(forResource: "youtube-limits", withExtension: "js"),
                let source = try? String(contentsOf: resource, encoding: .utf8) {
                 controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false))
@@ -466,7 +579,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         configuration.userContentController = controller
         configuration.websiteDataStore = websiteDataStore ?? .default()
         configuration.allowsAirPlayForMediaPlayback = false
-        configuration.allowsPictureInPictureMediaPlayback = false
+        // Every other service keeps the previous no-external-video behavior.
+        // The isolated YouTube script exposes PiP only for classified watch
+        // media with a persisted ledger reservation.
+        configuration.allowsPictureInPictureMediaPlayback = service == .youtube
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
@@ -516,6 +632,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webViews[service] = webView
         serviceByWebView[ObjectIdentifier(webView)] = service
         messageBridges[service] = bridge
+        SocialMessageNotificationBridge.install(on: webView, service: service) { [weak self] in
+            guard let self else { return false }
+            return !self.mediaPlaybackIsSuspended && self.hasRecentConfirmedAccess
+                && self.accessRestriction?() != true
+        }
         if service == .youtube, youtubeParitySource == nil {
             health[service] = .unsupported(
                 "This YouTube build is missing its ordinary-watch gesture policy."
@@ -623,19 +744,22 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func pauseAllMedia() {
+        stopYouTubeExternalPlayback()
         managedWebViews.forEach { $0.evaluateJavaScript("window.__vigilPauseAllMedia?.();") }
     }
 
     func suspendAllMedia(relinquishExternalPlayback: Bool = true) {
-        externalPlaybackMayRelinquish = relinquishExternalPlayback
+        stopYouTubeExternalPlayback()
+        externalPlaybackMayRelinquish = SocialMediaSuspensionPolicy.relinquishesGlobalAudio(
+            requested: relinquishExternalPlayback, serviceIsVisible: playbackServiceIsVisible)
         externalPlaybackRelinquishTask?.cancel()
         guard !mediaPlaybackIsSuspended else {
-            if relinquishExternalPlayback { InstagramExternalPlaybackPolicy.relinquish() }
+            if externalPlaybackMayRelinquish { InstagramExternalPlaybackPolicy.relinquish() }
             return
         }
         mediaPlaybackIsSuspended = true
         externalPlaybackRelinquishTask?.cancel()
-        if relinquishExternalPlayback { InstagramExternalPlaybackPolicy.relinquish() }
+        if externalPlaybackMayRelinquish { InstagramExternalPlaybackPolicy.relinquish() }
 
         managedWebViews.forEach { webView in
             webView.evaluateJavaScript(
@@ -650,7 +774,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             }
         }
 
-        guard relinquishExternalPlayback else { return }
+        guard externalPlaybackMayRelinquish else { return }
         externalPlaybackRelinquishTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard !Task.isCancelled,
@@ -662,6 +786,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func resumeSuspendedMedia() {
+        guard accessRestriction?() != true else { suspendAllMedia(); return }
         guard mediaPlaybackIsSuspended else { return }
         mediaPlaybackIsSuspended = false
         externalPlaybackRelinquishTask?.cancel()
@@ -672,6 +797,249 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 webView.evaluateJavaScript("window.__vigilResumeSuspendedMedia?.();")
             }
         }
+    }
+
+    func setYouTubeBackgroundPlaybackEnabled(_ enabled: Bool) {
+        guard fixedService == .youtube else { return }
+        youtubeBackgroundPlaybackEnabled = enabled
+        defaults.set(enabled, forKey: "VigilSocial.youtube.backgroundPlayback")
+        if !enabled && playbackIsBackgrounded { suspendAllMedia() }
+    }
+
+    func setYouTubePictureInPictureEnabled(_ enabled: Bool) {
+        guard fixedService == .youtube else { return }
+        youtubePictureInPictureEnabled = enabled
+        defaults.set(enabled, forKey: "VigilSocial.youtube.pictureInPicture")
+        updateYouTubePictureInPicturePermission()
+    }
+
+    func requestYouTubePictureInPicture() async -> Bool {
+        guard fixedService == .youtube, youtubePictureInPictureEnabled,
+              accessRestriction?() != true,
+              let snapshot = await youtubePlaybackSnapshot(),
+              hasFreshPermittedVideoFrameCheck(snapshot),
+              externalPlaybackAuthorization.permits(snapshot, accessConfirmed: hasRecentConfirmedAccess,
+                                                     restricted: false), snapshot.playing,
+              let webView = webViews[.youtube] else { return false }
+        youtubeExternalPlaybackAvailable = true
+        updateYouTubePictureInPicturePermission()
+        let result = try? await webView.callAsyncJavaScript(
+            "return window.__vigilRequestExternalPictureInPicture?.() === true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        let requested = result as? Bool == true
+        if !requested { health[.youtube] = .advisory("Picture-in-picture is unavailable for this video on this device.") }
+        return requested
+    }
+
+    // A scene can become inactive for PiP or for the lock screen. Continue only
+    // the already-playing YouTube watch player permitted by the install policy;
+    // never resume a paused player or hidden companion to stay alive.
+    func handleSceneActivity(_ active: Bool, isServiceVisible: Bool) async {
+        sceneActivityGeneration &+= 1
+        let generation = sceneActivityGeneration
+        playbackServiceIsVisible = isServiceVisible
+        playbackIsBackgrounded = !active
+        if active {
+            externalPlaybackPolicyProbe?.cancel()
+            externalPlaybackPolicyProbe = nil
+            if !isServiceVisible || accessRestriction?() == true {
+                suspendAllMedia(relinquishExternalPlayback: isServiceVisible)
+            }
+            return
+        }
+        guard isServiceVisible, fixedService == .youtube,
+              accessRestriction?() != true,
+              !mediaPlaybackIsSuspended,
+              let snapshot = await youtubePlaybackSnapshot(),
+              generation == sceneActivityGeneration else {
+            if generation == sceneActivityGeneration {
+                suspendAllMedia(relinquishExternalPlayback: isServiceVisible)
+            }
+            return
+        }
+        externalPlaybackAuthorization.sample(snapshot)
+        guard snapshot.playing,
+              hasFreshPermittedVideoFrameCheck(snapshot),
+              youtubeBackgroundPlaybackEnabled || (youtubePictureInPictureEnabled && snapshot.pictureInPicture),
+              externalPlaybackAuthorization.permits(snapshot, accessConfirmed: hasRecentConfirmedAccess,
+                                                     restricted: false) else { suspendAllMedia(); return }
+        guard activateYouTubeAudioSession() else { suspendAllMedia(); return }
+        scheduleYouTubeCreditDeadline(snapshot)
+        ensureYouTubeExternalPlaybackMonitor()
+        externalPlaybackPolicyProbe?.cancel()
+        externalPlaybackPolicyProbe = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.playbackIsBackgrounded,
+                      self.playbackServiceIsVisible, !self.mediaPlaybackIsSuspended else { return }
+                guard await self.confirmServiceAccess() else { return }
+                try? await Task.sleep(nanoseconds: 4_000_000_000)
+            }
+        }
+    }
+
+    private var hasRecentConfirmedAccess: Bool {
+        guard let lastConfirmedServiceAccess else { return false }
+        let age = ProcessInfo.processInfo.systemUptime - lastConfirmedServiceAccess
+        return age >= 0 && age < 10
+    }
+
+    private func receivedYouTubePlaybackAuthorization(body: [String: Any], reply: [String: Any]) async {
+        guard fixedService == .youtube else { return }
+        if let lease = reply["lease"] as? [String: Any], let id = lease["videoId"] as? String {
+            guard let url = webViews[.youtube]?.url,
+                  ["/watch", "/watch/"].contains(url.path),
+                  SocialIncomingLink.youtubeVideoID(url) == id else { return }
+        }
+        externalPlaybackAuthorization.receive(request: body, reply: reply)
+        if let snapshot = await youtubePlaybackSnapshot() {
+            // Capture a paused baseline before a new ledger reply reaches the
+            // page and starts playback. Renewals retain accumulated progress.
+            externalPlaybackAuthorization.sample(snapshot)
+            youtubeExternalPlaybackAvailable = externalPlaybackAuthorization.permits(
+                snapshot, accessConfirmed: hasRecentConfirmedAccess, restricted: accessRestriction?() == true)
+                && hasFreshPermittedVideoFrameCheck(snapshot)
+            if youtubeExternalPlaybackAvailable { scheduleYouTubeCreditDeadline(snapshot) }
+        } else { youtubeExternalPlaybackAvailable = false }
+        updateYouTubePictureInPicturePermission()
+        ensureYouTubeExternalPlaybackMonitor()
+    }
+
+    private func ensureYouTubeExternalPlaybackMonitor() {
+        guard fixedService == .youtube, externalPlaybackAuthorization.hasLease,
+              externalPlaybackMonitor == nil else { return }
+        externalPlaybackMonitorGeneration &+= 1
+        let generation = externalPlaybackMonitorGeneration
+        externalPlaybackMonitor = Task { @MainActor [weak self] in
+            defer {
+                if self?.externalPlaybackMonitorGeneration == generation { self?.externalPlaybackMonitor = nil }
+            }
+            while !Task.isCancelled {
+                guard let self, self.externalPlaybackAuthorization.hasLease else { return }
+                guard let snapshot = await self.youtubePlaybackSnapshot() else {
+                    if !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation { self.suspendAllMedia() }
+                    return
+                }
+                guard !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation else { return }
+                self.externalPlaybackAuthorization.sample(snapshot)
+                let allowed = self.externalPlaybackAuthorization.permits(
+                    snapshot, accessConfirmed: self.hasRecentConfirmedAccess,
+                    restricted: self.accessRestriction?() == true) && self.hasFreshPermittedVideoFrameCheck(snapshot)
+                self.youtubeExternalPlaybackAvailable = allowed
+                self.updateYouTubePictureInPicturePermission()
+                if allowed { self.scheduleYouTubeCreditDeadline(snapshot) }
+                if allowed, snapshot.playing,
+                   self.youtubeBackgroundPlaybackEnabled || snapshot.pictureInPicture,
+                   !self.activateYouTubeAudioSession() {
+                    self.suspendAllMedia()
+                    return
+                }
+                if self.accessRestriction?() == true
+                    || ((self.playbackIsBackgrounded || snapshot.pictureInPicture) && !allowed)
+                    || (self.playbackIsBackgrounded && !snapshot.playing) {
+                    self.suspendAllMedia()
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
+        }
+    }
+
+    private func youtubePlaybackSnapshot() async -> YouTubeExternalPlaybackSnapshot? {
+        guard let webView = webViews[.youtube] else { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<YouTubeExternalPlaybackSnapshot?, Never>) in
+            var completed = false
+            let timeout = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 750_000_000)
+                guard !Task.isCancelled, !completed else { return }
+                completed = true
+                continuation.resume(returning: nil)
+            }
+            webView.callAsyncJavaScript("return window.__vigilExternalPlaybackSnapshot?.();",
+                                       arguments: [:], in: nil, in: .defaultClient) { result in
+                Task { @MainActor in
+                    guard !completed else { return }
+                    completed = true
+                    timeout.cancel()
+                    switch result {
+                    case .success(let value): continuation.resume(returning: YouTubeExternalPlaybackSnapshot(result: value))
+                    case .failure: continuation.resume(returning: nil)
+                    }
+                }
+            }
+        }
+    }
+
+    private func updateYouTubePictureInPicturePermission() {
+        guard fixedService == .youtube, let webView = webViews[.youtube] else { return }
+        let id = youtubeExternalPlaybackAvailable ? externalPlaybackAuthorization.videoID : nil
+        webView.callAsyncJavaScript("window.__vigilExternalPlaybackPermission?.(videoID, enabled);",
+            arguments: ["videoID": id as Any? ?? NSNull(), "enabled": youtubePictureInPictureEnabled],
+            in: nil, in: .defaultClient, completionHandler: nil)
+    }
+
+    private func stopYouTubeExternalPlayback() {
+        guard fixedService == .youtube else { return }
+        externalPlaybackAuthorization.reset()
+        youtubeExternalPlaybackAvailable = false
+        externalPlaybackMonitor?.cancel()
+        externalPlaybackMonitor = nil
+        externalPlaybackMonitorGeneration &+= 1
+        externalPlaybackPolicyProbe?.cancel()
+        externalPlaybackPolicyProbe = nil
+        externalPlaybackCreditDeadline?.cancel()
+        externalPlaybackCreditDeadline = nil
+        if youtubeAudioSessionIsActive {
+            youtubeAudioSessionIsActive = false
+            InstagramExternalPlaybackPolicy.relinquish()
+        }
+        webViews[.youtube]?.callAsyncJavaScript("window.__vigilStopExternalPlayback?.();",
+            arguments: [:], in: nil, in: .defaultClient, completionHandler: nil)
+    }
+
+    private func activateYouTubeAudioSession() -> Bool {
+        guard !youtubeAudioSessionIsActive else { return true }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback)
+            try session.setActive(true)
+            youtubeAudioSessionIsActive = true
+            return true
+        } catch { return false }
+    }
+
+    private func scheduleYouTubeCreditDeadline(_ snapshot: YouTubeExternalPlaybackSnapshot) {
+        externalPlaybackCreditDeadline?.cancel()
+        externalPlaybackCreditDeadline = nil
+        guard snapshot.playing, playbackIsBackgrounded || snapshot.pictureInPicture else { return }
+        let milliseconds = min(5_000, externalPlaybackAuthorization.remainingPlaybackMilliseconds)
+        guard milliseconds > 0 else { suspendAllMedia(); return }
+        let lease = externalPlaybackAuthorization.leaseID
+        externalPlaybackCreditDeadline = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(milliseconds * 1_000_000))
+            guard !Task.isCancelled, let self, self.externalPlaybackAuthorization.leaseID == lease else { return }
+            // A wedged WebKit sample must not keep playing past the persisted
+            // reservation. Successful progress samples and renewals re-arm it.
+            self.suspendAllMedia()
+        }
+    }
+
+    private func hasFreshPermittedVideoFrameCheck(_ snapshot: YouTubeExternalPlaybackSnapshot) -> Bool {
+        guard let id = snapshot.mediaID else { return false }
+        return YouTubeExternalPlaybackFramePolicy.isFresh(
+            completedAt: permittedYouTubeVideoFrameCheckTimes[id],
+            uptime: ProcessInfo.processInfo.systemUptime)
+    }
+
+    private func recordYouTubeVideoFrameCheck(_ request: MediaClassificationRequest,
+                                             verdict: ContentSafetyVerdict,
+                                             completedValidFrameCheck: Bool) {
+        guard request.key.service == .youtube, request.frame.isMainFrame,
+              request.kind == "videoFrame",
+              request.key.documentID == mainDocumentIDs[.youtube] else { return }
+        let permitted = YouTubeExternalPlaybackFramePolicy.permitsCompletedFrameCheck(
+            verdict: verdict, policy: unclassifiedMediaPolicy,
+            completedValidFrameCheck: completedValidFrameCheck)
+        permittedYouTubeVideoFrameCheckTimes[request.key.id] = permitted ? ProcessInfo.processInfo.systemUptime : nil
     }
 
     @objc private func refreshWebView(_ sender: UIRefreshControl) {
@@ -857,6 +1225,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             requestID: UUID(),
             key: requestKey,
             token: token,
+            kind: body["kind"] as? String,
             dataURL: body["dataURL"] as? String,
             frame: frame
         )
@@ -917,19 +1286,21 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             let classifier = resolvedMediaClassifier()
             let requestID = request.requestID
             let dataURL = request.dataURL
+            let isYouTubeVideoFrame = key.service == .youtube && request.frame.isMainFrame && request.kind == "videoFrame"
             let task = Task { [weak self] in
                 guard !Task.isCancelled else {
                     self?.retireNativeMediaClassification(requestID)
                     return
                 }
-                let inlineData = await Task.detached(priority: .userInitiated) {
-                    Self.decodeInlineMedia(dataURL)
+                let captured = await Task.detached(priority: .userInitiated) {
+                    let data = Self.decodeInlineMedia(dataURL)
+                    return (data: data, validFrame: isYouTubeVideoFrame && YouTubeExternalPlaybackFramePolicy.isValidCapturedFrame(data))
                 }.value
                 guard !Task.isCancelled else {
                     self?.retireNativeMediaClassification(requestID)
                     return
                 }
-                let verdict = if let inlineData {
+                let verdict = if let inlineData = captured.data {
                     await classifier.classify(imageData: inlineData)
                 } else {
                     ContentSafetyVerdict.unknown
@@ -939,6 +1310,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                     for: key,
                     requestID: requestID,
                     verdict: verdict,
+                    completedValidFrameCheck: captured.validFrame,
                     wasCancelled: wasCancelled
                 )
             }
@@ -960,6 +1332,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         for key: MediaRequestKey,
         requestID: UUID,
         verdict: ContentSafetyVerdict,
+        completedValidFrameCheck: Bool,
         wasCancelled: Bool
     ) async {
         nativeMediaClassificationExecutions.remove(requestID)
@@ -969,7 +1342,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             pumpMediaClassifications()
             return
         }
-        await finishMediaClassification(request, verdict: verdict)
+        await finishMediaClassification(request, verdict: verdict,
+                                        completedValidFrameCheck: completedValidFrameCheck)
     }
 
     private func retireNativeMediaClassification(_ requestID: UUID) {
@@ -979,7 +1353,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     private func finishMediaClassification(
         _ request: MediaClassificationRequest,
-        verdict: ContentSafetyVerdict
+        verdict: ContentSafetyVerdict,
+        completedValidFrameCheck: Bool
     ) async {
         guard activeMediaRequests[request.key]?.requestID == request.requestID else { return }
         activeMediaRequests.removeValue(forKey: request.key)
@@ -990,6 +1365,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         pumpMediaClassifications()
 
         guard shouldResolve else { return }
+        recordYouTubeVideoFrameCheck(request, verdict: verdict,
+                                    completedValidFrameCheck: completedValidFrameCheck)
         await resolveMedia(
             documentID: request.key.documentID,
             id: request.key.id,
@@ -1014,6 +1391,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         pumpMediaClassifications()
 
         guard shouldResolve else { return }
+        recordYouTubeVideoFrameCheck(request, verdict: .unknown, completedValidFrameCheck: false)
         await resolveMedia(
             documentID: request.key.documentID,
             id: request.key.id,
@@ -1026,6 +1404,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     private func resolveCurrentMediaWithoutClassification(_ request: MediaClassificationRequest) {
         guard retireLatestMediaRequestIfCurrent(request) else { return }
+        recordYouTubeVideoFrameCheck(request, verdict: .unknown, completedValidFrameCheck: false)
         resolveMediaWithoutWaiting(request, verdict: .unknown)
     }
 
@@ -1054,6 +1433,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard let self, !Task.isCancelled else { return }
             self.mediaRetryTasks.removeValue(forKey: request.key)
             guard self.retireLatestMediaRequestIfCurrent(request) else { return }
+            self.recordYouTubeVideoFrameCheck(request, verdict: .unknown, completedValidFrameCheck: false)
             await self.resolveMedia(
                 documentID: request.key.documentID,
                 id: request.key.id,
@@ -1067,6 +1447,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     private func cancelDocumentWork(for service: SocialService) {
+        if service == .youtube { permittedYouTubeVideoFrameCheckTimes.removeAll() }
         let activeKeys = Set(
             mediaClassificationTasks.keys.filter { $0.service == service }
                 + mediaClassificationDeadlineTasks.keys.filter { $0.service == service }
@@ -1221,10 +1602,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     static func bundledYouTubeParityScript(in bundle: Bundle) -> String? {
-        guard let url = bundle.url(forResource: "youtube-parity", withExtension: "js") else {
-            return nil
-        }
-        return try? String(contentsOf: url, encoding: .utf8)
+        guard let url = bundle.url(forResource: "youtube-parity", withExtension: "js"),
+              let responseURL = bundle.url(forResource: "youtube-player-response", withExtension: "js"),
+              let controls = try? String(contentsOf: url, encoding: .utf8),
+              let responseGuard = try? String(contentsOf: responseURL, encoding: .utf8) else { return nil }
+        return responseGuard + "\n" + controls
     }
 
     static func isCurrentMainDocumentMessage(
@@ -1475,6 +1857,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               let array = String(data: data, encoding: .utf8) else { return "\"\"" }
         return String(array.dropFirst().dropLast())
     }
+
+    static func shouldHandoffContentLink(from service: SocialService, to url: URL) -> Bool {
+        // Existing first-party authentication exceptions stay in their original
+        // session even when that authentication host is also a new service.
+        guard !service.allowsNavigation(to: url), let link = SocialIncomingLink(url) else { return false }
+        return link.service != service
+    }
 }
 
 private struct TextInspection {
@@ -1499,6 +1888,7 @@ private struct MediaClassificationRequest {
     let requestID: UUID
     let key: MediaRequestKey
     let token: String
+    let kind: String?
     let dataURL: String?
     let frame: WKFrameInfo
 }
@@ -1575,7 +1965,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
             }
         } else {
             if navigationAction.navigationType == .linkActivated,
-               let link = SocialIncomingLink(url), link.service != service,
+               Self.shouldHandoffContentLink(from: service, to: url),
                let openSocialLink {
                 decisionHandler(.cancel, preferences)
                 openSocialLink(url)
@@ -1587,6 +1977,11 @@ extension SocialWebViewStore: WKNavigationDelegate {
             }
             if service == .instagram,
                InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url) {
+                decisionHandler(.cancel, preferences)
+                return
+            }
+            if service == .tiktok,
+               TikTokSingleItemPolicy.blocksNavigation(from: webView.url, to: url) {
                 decisionHandler(.cancel, preferences)
                 return
             }
@@ -1613,6 +2008,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         youtubeAllowsLandscape = false
         guard let service = service(for: webView) else { return }
+        if service == .youtube { stopYouTubeExternalPlayback(); lastConfirmedServiceAccess = nil }
         mainDocumentGenerations[service, default: 0] &+= 1
         let generation = mainDocumentGenerations[service, default: 0]
         cancelDocumentWork(for: service)
@@ -1738,8 +2134,8 @@ extension SocialWebViewStore: WKUIDelegate {
             return makeLinkedInApplePopup(configuration: configuration, opener: webView, url: url)
         }
         if navigationAction.navigationType == .linkActivated,
-           let url = navigationAction.request.url, let link = SocialIncomingLink(url),
-           link.service != service(for: webView), let openSocialLink {
+           let url = navigationAction.request.url, let currentService = service(for: webView),
+           Self.shouldHandoffContentLink(from: currentService, to: url), let openSocialLink {
             openSocialLink(url)
             return nil
         }
@@ -1863,7 +2259,11 @@ private final class ScriptMessageBridge: NSObject, WKScriptMessageHandler {
 @MainActor
 private final class YouTubeLimitsMessageBridge: NSObject, WKScriptMessageHandlerWithReply {
     private let bundle: Bundle
-    init(bundle: Bundle) { self.bundle = bundle }
+    private let observeReply: @MainActor ([String: Any], [String: Any]) async -> Void
+    init(bundle: Bundle, observeReply: @escaping @MainActor ([String: Any], [String: Any]) async -> Void) {
+        self.bundle = bundle
+        self.observeReply = observeReply
+    }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
@@ -1877,7 +2277,9 @@ private final class YouTubeLimitsMessageBridge: NSObject, WKScriptMessageHandler
         }
         body["client"] = "ios:" + (body["client"] as? String ?? "").prefix(100)
         Task { @MainActor in
-            replyHandler(await YouTubeLimitsConnection.send(body, bundle: bundle), nil)
+            let reply = await YouTubeLimitsConnection.send(body, bundle: bundle)
+            await observeReply(body, reply)
+            replyHandler(reply, nil)
         }
     }
 }

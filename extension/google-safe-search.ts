@@ -1,4 +1,4 @@
-import { containsContextualExplicitSearch, containsExplicitXxxSearchText, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
+import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
 const EXPLICIT_SEARCH_PARAMETER_NAMES = new Set([
@@ -84,6 +84,7 @@ function containsExplicitPersonSearchText(rawValue: string): boolean {
     ? PERSON_LEAK_CONTEXT
     : PERSON_NUDE_CONTEXT;
   if (normalized.some((token, index) => index !== markerIndex && PERSON_INTIMATE_CONTEXT.has(token))) return true;
+  if (marker === "naked" && /(?:^|[^\p{L}\p{N}])naked[\s_-]+(?:eye|cakes?)(?=$|[^\p{L}\p{N}])/iu.test(query)) return false;
   const possibleNameTokens = tokens.filter((_token, index) => (
     index !== markerIndex
       && !PERSON_NAME_FILLER_WORDS.has(normalized[index])
@@ -153,6 +154,13 @@ function enforceGoogleSafeSearchForLink(event: MouseEvent): void {
   if (!target) return;
   const anchor = target.closest<HTMLAnchorElement>("a[href]");
   if (!anchor) return;
+  const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
+  if (containsExplicitMediaLabel(label)) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    location.assign(chrome.runtime.getURL("blocked.html"));
+    return;
+  }
   const redirect = alwaysOnSearchRedirect(anchor.href);
   if (!redirect || redirect === anchor.href) return;
   event.preventDefault();
@@ -300,9 +308,17 @@ function scanExistingSearchControls(root: ParentNode): void {
 
 function installDynamicSearchGuard(): void {
   if (typeof document === "undefined") return;
+  if (containsExplicitMediaLabel(document.title)) {
+    location.replace(chrome.runtime.getURL("blocked.html"));
+    return;
+  }
   scanExistingSearchControls(document);
   if (typeof MutationObserver !== "function" || !document.documentElement) return;
   new MutationObserver((records) => {
+    if (containsExplicitMediaLabel(document.title)) {
+      location.replace(chrome.runtime.getURL("blocked.html"));
+      return;
+    }
     for (const record of records) {
       for (const node of record.addedNodes) {
         if (node instanceof Element) {
@@ -314,7 +330,7 @@ function installDynamicSearchGuard(): void {
         }
       }
     }
-  }).observe(document.documentElement, { childList: true, subtree: true });
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 }
 
 function checkForSearchUrlChange(): void {

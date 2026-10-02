@@ -1,3 +1,4 @@
+import { completeSketchySiteLookup, lookupDomainRegistration, observeSafariContentBlockerError } from "./sketchySites.js";
 import { performance } from "node:perf_hooks";
 import { observeBrowserProtectionForeground, unsupportedBrowser } from "./browserProtection.js";
 import { quitApplicationInstance } from "./macos.js";
@@ -17,7 +18,7 @@ import { appleContentFilterRecoveryActive, detectClockTamper, detectHardeningDri
 import { intentionalUseDecision, recordIntentionalUseTime } from "./intentionalUse.js";
 import { iosMdmQueuedPushEligible, maybeQueueIosMdmPolicyRefresh, pushIosMdmQueuedCommands } from "./iosMdm.js";
 import { activeLimitBlocks } from "./limits.js";
-import { appCanReportUrls, browserActivityWatchHealthy, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, subscribeBrowserActivity, urlHostname } from "./macos.js";
+import { appCanReportUrls, safariHasContentBlockerError, browserActivityWatchHealthy, getActiveBrowserUrl, getCurrentWifiNetwork, getFrontmostApp, getMacIdleTime, listRunningAppNames, lockScreen, openUrl, readMacGrayscaleState, redirectActiveBrowserTab, quitApp, setMacGrayscaleEnabled, subscribeBrowserActivity, urlHostname } from "./macos.js";
 import type { BrowserActivitySignal } from "./macos.js";
 import { BrowserActivityBurstScheduler } from "./monitor/browserActivity.js";
 import type { BrowserActivityBurstSchedulerDependencies } from "./monitor/browserActivity.js";
@@ -55,7 +56,7 @@ interface MonitorContext {
     usage: UsageState,
     afterCommit: <TResult>(
       effect: () => TResult | Promise<TResult>,
-      descriptor?: { key: string; kind: string; payload: UnknownRecord },
+      descriptor?: { key: string; kind: string; payload: UnknownRecord; awaitAttempt?: boolean },
       complete?: (result: TResult, state: VigilState, usage: UsageState) => void | Promise<void>,
       fail?: (error: Error, state: VigilState, usage: UsageState) => void | Promise<void>
     ) => void,
@@ -179,6 +180,7 @@ function browserActivityPersistenceRetryDelayMs(attempts: number): number {
 }
 
 interface FrontSample extends UsageSample {
+  safariContentBlockerError?: boolean;
   app: string;
   hostname: string;
   url: string;
@@ -242,6 +244,7 @@ export function hardeningDriftPolicyFingerprint(state: VigilState, now = new Dat
     managedDomains: managedBlockDomains(evaluatedState, now),
     settings: state.settings,
     adultBlocklist: state.adultBlocklist,
+    sketchySites: state.sketchySites,
     profiles: state.profiles,
     schedules: state.schedules,
     limitRules: state.limitRules,
@@ -297,6 +300,7 @@ export function browserActivityPolicyFingerprint(
     activePolicy: active,
     settings: state.settings,
     adultBlocklist: state.adultBlocklist,
+    sketchySites: state.sketchySites,
     profiles: state.profiles,
     schedules: state.schedules,
     limitRules: state.limitRules,
@@ -624,7 +628,7 @@ export class Monitor implements MonitorHandle {
   mutate: NonNullable<MonitorContext["mutate"]>;
   activeAfterCommit: (<TResult>(
     effect: () => TResult | Promise<TResult>,
-    descriptor?: { key: string; kind: string; payload: UnknownRecord },
+    descriptor?: { key: string; kind: string; payload: UnknownRecord; awaitAttempt?: boolean },
     complete?: (result: TResult, state: VigilState, usage: UsageState) => void | Promise<void>,
     fail?: (error: Error, state: VigilState, usage: UsageState) => void | Promise<void>
   ) => void) | null;
@@ -1105,6 +1109,15 @@ export class Monitor implements MonitorHandle {
       this.breakBrowserActivityContinuity();
       return true;
     }
+    if (candidate.safariContentBlockerError) {
+      // The native error is evidence about this observed URL even if the user
+      // reloads without blockers or switches tabs before serialized work runs.
+      // Commit it independently of the later foreground enforcement check.
+      const observedAt = new Date(this.browserActivityNow());
+      this.queueBrowserActivityMutation(`safari-blocker-evidence:${candidate.app}\n${candidate.url}`, async () => {
+        await this.observeSafariContentBlockerEvidence(candidate, observedAt);
+      }, { persist: true, retryOnFailure: true });
+    }
     const continuityGeneration = this.browserActivityContinuityGeneration;
     const policyGeneration = this.currentBrowserActivityPolicyGeneration();
     const blockMutationKey = `block:${candidateTarget}`;
@@ -1148,7 +1161,7 @@ export class Monitor implements MonitorHandle {
       return true;
     }
 
-    if (this.browserActivityTargetAlreadyEvaluated(candidateTarget, continuityGeneration, policyGeneration)) return true;
+    if (!candidate.safariContentBlockerError && this.browserActivityTargetAlreadyEvaluated(candidateTarget, continuityGeneration, policyGeneration)) return true;
     this.queueBrowserActivityMutation(`check:${continuityGeneration}:${policyGeneration}:${candidateTarget}`, async () => {
       // A later probe may have observed a non-browser app or an empty URL while
       // this check waited behind serialized monitor work. Such a check belongs
@@ -1168,7 +1181,7 @@ export class Monitor implements MonitorHandle {
       if (continuityGeneration !== this.browserActivityContinuityGeneration) return;
       const target = `${front.app}\n${front.url}`;
       const evaluationPolicyGeneration = this.currentBrowserActivityPolicyGeneration();
-      if (this.browserActivityTargetAlreadyEvaluated(target, continuityGeneration, evaluationPolicyGeneration)) return;
+      if (!front.safariContentBlockerError && this.browserActivityTargetAlreadyEvaluated(target, continuityGeneration, evaluationPolicyGeneration)) return;
       const previousEnforcement = this.status.lastEnforcement;
       await this.enforce(front);
       const completedPolicyGeneration = this.currentBrowserActivityPolicyGeneration();
@@ -2139,6 +2152,7 @@ export class Monitor implements MonitorHandle {
   }
 
   async refreshSafetyRails(frame: PollFrame): Promise<void> {
+    await this.refreshSketchySiteRegistrations();
     this.checkClockTamper(frame.now, frame.previousWall, frame.previousMonotonic, frame.monotonicNow);
     await this.refreshIntegrity(frame.now);
     await this.refreshAppleContentFilterLockdown(frame.now);
@@ -2448,10 +2462,45 @@ export class Monitor implements MonitorHandle {
       this.status.accessibilityLikelyMissing = false;
     }
     observeBrowserProtectionForeground(/^https?:\/\//i.test(url) && !isVigilBlockedPageUrl(url) ? front.app || "" : "", this.browserActivityNow());
-    return { ok: true, app: front.app || "", url, hostname };
+    const safariContentBlockerError = this.externalEffectsEnabled && front.app === "Safari" && /^https?:\/\//i.test(url)
+      ? await safariHasContentBlockerError(url) : false;
+    return { ok: true, app: front.app || "", url, hostname, safariContentBlockerError };
+  }
+
+  async refreshSketchySiteRegistrations(visitedDomain?: string): Promise<void> {
+    if (!this.externalEffectsEnabled) return;
+    for (const entry of this.state.sketchySites) {
+      // Resume interrupted initial checks, but refresh completed checks only
+      // after another native blocker error. History never becomes a polling feed.
+      if (visitedDomain ? entry.domain !== visitedDomain : entry.lookupStatus !== "pending") continue;
+      const interval = entry.lookupStatus === "verified" ? 86_400_000 : 3_600_000;
+      if (entry.checkedAt && Date.now() - Date.parse(entry.checkedAt) < interval) continue;
+      const domain = entry.domain;
+      if (this.activeAfterCommit) {
+        this.activeAfterCommit(() => lookupDomainRegistration(domain),
+          { key: `sketchy-site-registration:${domain}`, kind: "sketchy-site-registration", payload: { domain }, awaitAttempt: false },
+          (result, state) => {
+            completeSketchySiteLookup(state, domain, result);
+            addEvent(state, "sketchy_site_registration_checked", { domain, ...result });
+          });
+      } else completeSketchySiteLookup(this.state, domain, await lookupDomainRegistration(domain));
+    }
+  }
+
+  async observeSafariContentBlockerEvidence(front: FrontSample, observedAt = new Date()): Promise<void> {
+    if (front.app === "Safari" && front.safariContentBlockerError) {
+      const before = this.state.sketchySites.length;
+      const evidence = observeSafariContentBlockerError(this.state, front.url, observedAt);
+      if (evidence && this.state.sketchySites.length !== before) {
+        this.activePersistenceRequest?.();
+        addEvent(this.state, "sketchy_site_content_blocker_observed", { domain: evidence.domain, hostname: evidence.hostname });
+      }
+      if (evidence) await this.refreshSketchySiteRegistrations(evidence.domain);
+    }
   }
 
   async enforce(front: FrontSample, options: { observeBrowserProtection?: boolean } = {}): Promise<void> {
+    await this.observeSafariContentBlockerEvidence(front);
     const preserveBlockedPage = isVigilBlockedPageUrl(front.url);
     const evaluationSample = preserveBlockedPage
       ? { ...front, hostname: "", url: "" }

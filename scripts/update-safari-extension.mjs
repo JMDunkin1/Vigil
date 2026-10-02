@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { archiveSafariBundle, repairSafariRegistration } from './safari-installation.mjs';
+import { verifySafariResources } from './safari-resources.mjs';
 const exec = promisify(execFile);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const output = join(root, 'dist.nosync', 'safari.noindex');
@@ -45,10 +46,7 @@ try {
 const app = join(output, 'DerivedData/Build/Products/Release/Vigil Safari.app');
 await exec('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
 const resources = join(app, 'Contents/PlugIns/Vigil Safari Extension.appex/Contents/Resources');
-for (const name of ['blocked-navigation.js', 'reddit-review-background.js', 'reddit-review-guard.js', 'reddit-review-blocked.html', 'blocked.html', 'blocked.css', 'search-guard.js', 'manifest.json', 'reddit-child-lock.js', 'media-child-lock.js', 'youtube-parity.js', 'youtube-limits.js', 'youtube-bridge.js', 'youtube-background.js', 'status.html', 'status.js', 'icons/icon-16.png', 'icons/icon-32.png', 'icons/icon-48.png', 'icons/icon-128.png', 'icons/toolbar.png']) {
-  const source = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources', name));
-  if (!source.equals(await readFile(join(resources, name)))) throw new Error(`Stale Safari resource: ${name}`);
-}
+await verifySafariResources(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources'), resources);
 console.log('Signed Safari package built; running Vigil connection verified.');
 if (process.argv.includes('--install')) {
   const destination = '/Applications/Vigil Safari.app';

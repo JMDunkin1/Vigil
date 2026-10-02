@@ -16,7 +16,7 @@ const manifest = JSON.parse(await readFile(join(resources, "manifest.json"), "ut
 assert.equal(validYouTubeInteractionManifest(manifest), true);
 assert.equal(validYouTubeInteractionManifest(null), false);
 const mutations: Array<[string, (value: typeof manifest) => void]> = [
-  ["missing review guard", value => { value.content_scripts.pop(); }],
+  ["missing review guard", value => { value.content_scripts.splice(4, 1); }],
   ["review guard misses frames", value => { value.content_scripts[4].all_frames = false; }],
   ["review guard starts too late", value => { value.content_scripts[4].run_at = "document_idle"; }],
   ["review guard runs in page world", value => { value.content_scripts[4].world = "MAIN"; }],
@@ -31,7 +31,9 @@ const mutations: Array<[string, (value: typeof manifest) => void]> = [
   ["manifest downgraded", value => { value.manifest_version = 2; }],
   ["original child lock removed", value => { value.content_scripts[0].js.shift(); }],
   ["original child lock delayed", value => { value.content_scripts[0].run_at = "document_end"; }],
-  ["malformed script", value => { value.content_scripts[1] = null; }]
+  ["malformed script", value => { value.content_scripts[1] = null; }],
+  ["response guard isolated", value => { delete value.content_scripts[5].world; }],
+  ["response guard substituted", value => { value.content_scripts[5].js = ["youtube-limits.js"]; }]
 ];
 for (const [label, mutate] of mutations) {
   const changed = structuredClone(manifest);
@@ -57,7 +59,7 @@ if (process.platform === "darwin") {
         sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.byteLength
       }, `receipt fingerprints ${name}`);
     }
-    for (const name of [...reviewAssets, "manifest.json", "youtube-parity.js", "youtube-background.js"]) {
+    for (const name of [...reviewAssets, "manifest.json", "youtube-parity.js", "youtube-background.js", "youtube-player-response.js"]) {
       const file = join(extension, name);
       const original = await readFile(file);
       await writeFile(file, Buffer.concat([original, Buffer.from("\n/* stale resource */\n")]));

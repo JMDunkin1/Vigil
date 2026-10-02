@@ -38,6 +38,12 @@ struct VigilSocialApp: App {
                 #endif
                 }
             }
+                .task {
+                    let store = container
+                    SocialNotifications.shared.openService = { [weak store] service in store?.select(service) }
+                    await SocialNotifications.shared.refreshAuthorization()
+                    SocialNotifications.shared.rescheduleReminders(preferences: store.preferences)
+                }
                 .onOpenURL { url in
                     if (container.isCombined || container.initialService == .instagram),
                        url.scheme == "vigil-instagram", url.host == "safari-settings" {

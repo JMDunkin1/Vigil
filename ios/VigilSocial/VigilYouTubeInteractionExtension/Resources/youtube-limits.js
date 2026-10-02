@@ -12,7 +12,8 @@
   let state = null, panel, message, statusLine, notice;
   let lease = null, playing = null, played = 0, lastTick = 0, lastPosition = 0;
   let renewal = null;
-  let resumeMedia = null, startControl = null, retryInterruptedPlay = false, queuedStart = false;
+  let resumeMedia = null, retryInterruptedPlay = false, queuedStart = false;
+  let wantsPlayback = false, playAttempt = 0, pendingPlay = null, settlingPlayback = false;
   let previousRate = 1;
   let intent = '', busy = false, waiting = false, deadline = 0, route = location.href;
   let menuVideo = null, replayingSave = false;
@@ -85,6 +86,8 @@
     lastTick = now; lastPosition = position; previousRate = playing.playbackRate || 1;
   };
   async function stop(ended = false) {
+    settlingPlayback = true;
+    ++playAttempt; pendingPlay = null;
     sample();
     const wasPaused = !playing || playing.paused;
     ended = ended || Boolean(playing?.ended);
@@ -99,10 +102,11 @@
       catch (error) {
         // A backgrounded tab may wake after its short authorization expires.
         // The paused video itself remains usable; the next Play gets a new lease.
-        if (!wasPaused || error.message !== 'Playback authorization expired.') throw error;
+        if (!wasPaused || error.message !== 'Playback authorization expired.') { settlingPlayback = false; throw error; }
       }
     }
     idleSince = null;
+    settlingPlayback = false;
   }
   async function begin() {
     if (busy || lease || !intent || !playerFrame) return;
@@ -111,7 +115,6 @@
     let media = document.querySelector('video');
     if (!media) return;
     busy = true;
-    const control = startControl; startControl = null;
     updateHeldPlayer();
     try {
       let sent = performance.now(), response;
@@ -126,7 +129,7 @@
       }
       lease = response.lease;
       deadline = sent + (lease.expiresAt - response.serverTime) - 100;
-      if (currentID() !== id || performance.now() >= deadline || intent !== id) { await stop(); return; }
+      if (currentID() !== id || performance.now() >= deadline || intent !== id || !wantsPlayback) { await stop(); return; }
       // Authorization may outlive a YouTube player replacement during startup.
       media = document.querySelector('video');
       if (!media) { await stop(); return; }
@@ -135,24 +138,23 @@
       // authorization lock while WebKit waits for media data: renewals must
       // continue before the current bounded lease expires.
       updateHeldPlayer();
-      // Let YouTube initialize its source and update its own paused/buffering UI.
-      // Calling video.play() alone skips the handler we intercepted above.
-      if (media.paused && control?.isConnected && control !== media) control.click();
       playAuthorized(media);
     } catch (error) { intent = ''; await stop().catch(() => {}); show(error.message); }
     finally { releaseBusy(); }
   }
   function playAuthorized(media) {
     if (media !== playing || !lease || intent !== currentID()
-        || lease.videoId !== currentID() || performance.now() >= deadline) return;
+        || lease.videoId !== currentID() || performance.now() >= deadline || !wantsPlayback || pendingPlay) return;
     const authorization = lease;
+    const attempt = ++playAttempt;
+    pendingPlay = attempt;
     retryInterruptedPlay = false;
     void media.play().then(() => {
-      if (playing !== media || lease?.id !== authorization.id) return;
+      if (attempt !== playAttempt || playing !== media || lease?.id !== authorization.id) return;
       if (media.paused && media.dataset?.vigilPlaybackRequested === 'true') waiting = true;
       show('');
     }, error => {
-      if (playing !== media || lease?.id !== authorization.id) return;
+      if (attempt !== playAttempt || playing !== media || lease?.id !== authorization.id || !wantsPlayback) return;
       if (error.name === 'AbortError' && intent === currentID()) {
         // canplay can precede the rejected promise. The bounded playback clock
         // also retries ready media, so that event ordering cannot strand Play.
@@ -162,7 +164,12 @@
       }
       intent = '';
       void stop().catch(() => {}).finally(() => show(error.message));
-    });
+    }).finally(() => { if (pendingPlay === attempt) pendingPlay = null; });
+  }
+  function pauseAuthorized() {
+    sample(); wantsPlayback = false; retryInterruptedPlay = false; waiting = false;
+    ++playAttempt; pendingPlay = null;
+    (playing || document.querySelector('video'))?.pause();
   }
   function positionAllowance() {
     if (!panel) return;
@@ -552,6 +559,12 @@
     intent = currentID();
   }, true);
   document.addEventListener('play', event => {
+    if (lease && playing?.isConnected === false && event.target === document.querySelector('video')
+        && lease.videoId === currentID() && wantsPlayback && performance.now() < deadline) {
+      sample(); playing = event.target; resumeMedia = playing;
+      ++playAttempt; pendingPlay = null; retryInterruptedPlay = false;
+      lastTick = performance.now(); lastPosition = playing.currentTime;
+    }
     if (event.target !== playing || !lease || currentID() !== lease.videoId || performance.now() >= deadline) {
       event.target.pause?.();
       // Native iOS fullscreen controls produce media events, not DOM clicks.
@@ -580,6 +593,10 @@
   document.addEventListener('ended', event => { if (event.target === playing) { intent = ''; void stop(true).catch(error => show(error.message)); } }, true);
   // Keep transient player pauses local; settle an idle lease before its expiry.
   // Native controls can pause/resume within the existing bounded lease.
+  document.addEventListener('pause', event => {
+    if (event.target !== playing || waiting || playing.seeking) return;
+    sample(); retryInterruptedPlay = false; ++playAttempt; pendingPlay = null;
+  }, true);
   document.addEventListener('click', event => {
     if (replayingSave || !event.isTrusted || !(event.target instanceof Element)) return;
     // A deliberate search result uses watch time without allocating Watch Later.
@@ -612,11 +629,30 @@
       return;
     }
     rememberMenuVideo(event.target);
-    const playControl = event.target.closest('.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"]');
-    if (playControl && currentID() && (!lease || performance.now() >= deadline)) {
-      event.preventDefault(); event.stopImmediatePropagation();
-      startControl = playControl;
-      togglePlayback();
+    const playControl = event.target.closest('.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]');
+    if (playControl && currentID()) {
+      // A tap on the playing surface belongs to YouTube's controls and seek
+      // gestures; only its explicit Play/Pause buttons need direct toggling.
+      if (playControl.tagName === 'VIDEO' && lease && playing && performance.now() < deadline) return;
+      const controlLabel = (playControl.getAttribute('aria-label') || playControl.getAttribute('title') || '').trim();
+      const explicitPlay = /^play\b/i.test(controlLabel)
+        || playControl.matches?.('.ytp-large-play-button,.ytp-cued-thumbnail-overlay');
+      const explicitPause = /^pause\b/i.test(controlLabel);
+      const applyControl = () => {
+        if (explicitPause) pauseAuthorized();
+        else if (explicitPlay && busy) { wantsPlayback = true; queuedStart = true; }
+        else if (explicitPlay && lease && playing && lease.videoId === currentID() && performance.now() < deadline) {
+          wantsPlayback = true; intent = currentID(); playAuthorized(playing);
+        } else togglePlayback();
+      };
+      if (busy || (lease && playing && performance.now() < deadline)) {
+        event.preventDefault(); event.stopImmediatePropagation();
+        applyControl();
+      } else {
+        // Let the original trusted tap initialize YouTube and unlock WebKit
+        // media. The play-event gate still pauses it until the ledger replies.
+        applyControl();
+      }
     }
   }, true);
   function releaseBusy() {
@@ -628,10 +664,17 @@
     }
   }
   const togglePlayback = () => {
-    if (busy) { queuedStart = true; return; }
+    if (busy) {
+      if (settlingPlayback) { wantsPlayback = true; queuedStart = true; return; }
+      if (wantsPlayback) { pauseAuthorized(); queuedStart = false; }
+      else { wantsPlayback = true; queuedStart = true; }
+      return;
+    }
     if (lease && playing && performance.now() < deadline) {
-      if (playing.paused) playAuthorized(playing); else playing.pause();
+      if (wantsPlayback && (!playing.paused || waiting || pendingPlay || retryInterruptedPlay)) pauseAuthorized();
+      else { wantsPlayback = true; playAuthorized(playing); }
     } else {
+      wantsPlayback = true;
       intent = currentID();
       if (lease && !busy) {
         busy = true;
@@ -673,15 +716,15 @@
       // YouTube rewrites list/index/time parameters while opening Watch Later.
       // Those same-video updates must not cancel a pending or active Play.
       if (!previousID || previousID !== currentID()) {
-        intent = ''; resumeMedia = null; startControl = null; queuedStart = false;
+        intent = ''; resumeMedia = null; wantsPlayback = false; queuedStart = false;
         void stop().then(() => request({ action: 'switch', videoId: currentID() })).catch(error => show(error.message));
       }
     }
-    if (retryInterruptedPlay && playing?.readyState >= 3) playAuthorized(playing);
+    if (retryInterruptedPlay && wantsPlayback && playing?.readyState >= 3 && !playing.seeking) playAuthorized(playing);
     sample();
     if (lease && playing?.paused && !waiting) {
       idleSince ??= performance.now();
-      if (!busy && (performance.now() - idleSince >= 1000 || performance.now() >= deadline - 1000)) {
+      if (!busy && performance.now() >= deadline - 1000) {
         busy = true;
         void stop().catch(error => show(error.message)).finally(releaseBusy);
       }

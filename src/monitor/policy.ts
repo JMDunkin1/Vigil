@@ -1,3 +1,4 @@
+import { matchSketchySite } from "../sketchySites.js";
 import { browserNavigationDocument, browserPageNeedsProtection, browserProtectionDiagnostic, unsupportedBrowser } from "../browserProtection.js";
 import { activeAppLockPolicy } from "../appLocks.js";
 import { matchAdultBlocklistHost } from "../adultBlocklist.js";
@@ -70,6 +71,8 @@ export function policyForSample(state: VigilState, usage: UsageState, sample: Us
   const sessionBrowserControl = sample.url && matchStrictBrowserControlUrl(state, sessionPolicy, sample.url);
   if (sessionBrowserControl && sessionPolicy) return { ...sessionPolicy, kind: "browser-control", browserControl: sessionBrowserControl };
   const contentPolicy = sessionPolicy || baseline;
+  const sketchySite = sample.url && contentPolicy ? matchSketchySite(state, sample.url, now) : null;
+  if (sketchySite && contentPolicy) return { ...contentPolicy, kind: "browser-control", browserControl: sketchySite };
   const contentFilter = sample.url && contentPolicy ? matchContentFilterUrl(state, sample.url, contentPolicy) : null;
   if (contentFilter && contentPolicy) return { ...contentPolicy, kind: "content-filter", contentFilter };
   const adultBlocklist = matchAdultBlocklistHost(state, sample.hostname || sample.url);
