@@ -1,18 +1,18 @@
 {
   "schemaVersion": 3,
-  "version": "0.3.165",
-  "build": 168,
+  "version": "0.3.166",
+  "build": 169,
   "sourceFingerprints": {
-    "personal": "1cc706fb2686c6a0c5f1e08c7e8da39eb3d2d2e1ab91cae73dd384ab664a809f",
+    "personal": "300c1fff5da19b30401a566e1d55946f19585368687060403038cd807340fdca",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-10-02T00:53:23.042Z",
+  "releasedAt": "2026-10-03T07:57:32.483Z",
   "apps": {
     "instagram": {
-      "version": "0.3.152",
-      "build": 155,
-      "sourceFingerprint": "cf8a4f42354d44125adae46019526c83346399fcbadcc6c650adfe3386956154",
-      "releasedAt": "2026-10-02T00:53:23.042Z"
+      "version": "0.3.154",
+      "build": 157,
+      "sourceFingerprint": "0e7ba4c93e0ce6af9554917797a944a64e705206066a5ef3b2beece4fb3a665c",
+      "releasedAt": "2026-10-03T07:57:32.483Z"
     },
     "youtube": {
       "version": "0.3.150",
