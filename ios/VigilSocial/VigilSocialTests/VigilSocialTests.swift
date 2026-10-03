@@ -2,10 +2,50 @@ import XCTest
 import Combine
 import JavaScriptCore
 import UIKit
+import SwiftUI
 import WebKit
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
+    @MainActor
+    func testYouTubeTimerUpdatesRetainWebViewAndScrollPosition() async {
+        let suite = "VigilFlickerRegression.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        container.select(.youtube)
+        let store = container.store(for: .youtube)
+        let page = store.webView(for: .youtube)
+        let host = UIHostingController(rootView: SocialContainerView(container: container))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = host
+        window.isHidden = false
+        defer { window.isHidden = true }
+        host.view.layoutIfNeeded()
+        try? await Task.sleep(for: .milliseconds(100))
+        page.scrollView.contentSize = CGSize(width: 390, height: 3000)
+        page.scrollView.setContentOffset(CGPoint(x: 0, y: 500), animated: false)
+        let offset = page.scrollView.contentOffset
+        let parent = page.superview
+        XCTAssertNotNil(parent, "The regression must exercise a mounted web view")
+        for _ in 0..<12 {
+            store.setSurface(SocialSurfaceState(route: "watch", refreshEligible: false, blocksRefresh: true), for: .youtube)
+            container.objectWillChange.send()
+            host.rootView = SocialContainerView(container: container)
+            host.view.layoutIfNeeded()
+            try? await Task.sleep(for: .milliseconds(20))
+            XCTAssertTrue(store.webView(for: .youtube) === page)
+            XCTAssertTrue(page.superview === parent)
+            XCTAssertEqual(page.scrollView.contentOffset, offset)
+        }
+        // Exercise the overhaul's real one-second restriction/clock task too.
+        try? await Task.sleep(for: .milliseconds(2100))
+        XCTAssertTrue(container.store(for: .youtube) === store)
+        XCTAssertTrue(store.webView(for: .youtube) === page)
+        XCTAssertTrue(page.superview === parent)
+        XCTAssertEqual(page.scrollView.contentOffset, offset)
+    }
+
     func testSharedVideoLinksKeepTimestampsAndRejectRestrictedRoutes() throws {
         for address in ["https://youtu.be/abcdefghijk?t=90", "https://www.youtube.com/live/abcdefghijk?t=90",
                         "https://www.youtube.com/watch?v=abcdefghijk&t=90"] {

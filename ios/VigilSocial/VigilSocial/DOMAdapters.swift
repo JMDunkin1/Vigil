@@ -471,10 +471,13 @@ enum DOMAdapters {
           Object.defineProperty(prototype, name, {
             ...descriptor,
             value: function vigilVisualMutationMethod(...argumentsList) {
+              const previousStyle = typeof CSSStyleDeclaration === 'function' && this instanceof CSSStyleDeclaration
+                ? this.cssText : null;
               const result = native.apply(this, argumentsList);
+              const styleChanged = previousStyle === null || this.cssText !== previousStyle;
               const safetyRoot = safetySheetRoots.get(this);
               if (safetyRoot) ensureSafetyStyle(safetyRoot, true);
-              if (shouldSignal(argumentsList)) {
+              if (styleChanged && shouldSignal(argumentsList)) {
                 const root = safetyRoot
                   || (isShadowRoot(this) || this === document ? this : null);
                 signalVisualMutation(root);
@@ -534,8 +537,9 @@ enum DOMAdapters {
                   return descriptor.get.call(this);
                 },
                 set(value) {
+                  const previousStyle = this.cssText;
                   descriptor.set.call(this, value);
-                  signalVisualMutation();
+                  if (this.cssText !== previousStyle) signalVisualMutation();
                 }
               });
             } catch (_) {}
