@@ -132,8 +132,8 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /webViewSafeAreaEdges: Edge\.Set = service == \.instagram \|\| service == \.youtube \|\| service == \.snapchat \|\| service == \.linkedin\s*\? \[\]\s*: \.bottom/u,
-  "YouTube stays inside both native safe areas with its toolbar; established Instagram, Snapchat, and LinkedIn frames remain stable"
+  /webViewSafeAreaEdges: Edge\.Set = \[\]/u,
+  "Visible and retained service canvases stay inside native safe areas without changing their top inset"
 );
 assert.doesNotMatch(
   socialRootViewSource,

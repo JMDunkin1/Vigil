@@ -381,14 +381,13 @@ struct RootView: View {
         let isDark = (service == .instagram ? nil : store.reportedChromeIsDark(for: service))
             ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
-        // Keep YouTube's toolbar and canvas inside the native safe areas.
-        // Extending this nested canvas beneath the bottom safe area
-        // makes WebKit alternate automatic scroll insets as a short
-        // document fits/unfits its viewport, triggering continuous DOM rescans.
-        // Keep every service's established top inset and native home gesture.
-        let webViewSafeAreaEdges: Edge.Set = service == .instagram || service == .youtube || service == .snapchat || service == .linkedin
-            ? []
-            : .bottom
+        // Keep service canvases inside the native safe areas. Extending a
+        // canvas beneath the bottom safe area after adding the service toolbar
+        // makes WebKit alternate automatic insets as short pages fit/unfit the
+        // viewport. Retained hidden services can trigger that same resize loop.
+        // Native backgrounds still fill the status/home-indicator areas, and
+        // the established top inset and home gesture remain unchanged.
+        let webViewSafeAreaEdges: Edge.Set = []
         let defaultSurfaceColor = service == .instagram && isDark
             ? Self.instagramDarkSurface
             : (isDark ? (service == .youtube ? Self.youtubeDarkSurface : Color.black) : Color.white)

@@ -23,13 +23,24 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    private func verifyYouTubeViewportStability(scrollable: Bool, dynamicType: DynamicTypeSize = .large) async throws {
+    func testCachedServicesRetainStableViewportsWhileYouTubeScrolls() async throws {
+        try await verifyYouTubeViewportStability(scrollable: true, cachedServices: [.facebook, .x, .tiktok, .reddit])
+    }
+
+    @MainActor
+    private func verifyYouTubeViewportStability(scrollable: Bool, dynamicType: DynamicTypeSize = .large,
+                                               cachedServices: [SocialService] = []) async throws {
         let suite = "VigilViewportRegression.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
         container.select(.youtube)
         let store = container.store(for: .youtube), page = store.webView(for: .youtube)
+        let cachedPages = cachedServices.map { service in
+            let view = container.store(for: service).webView(for: service)
+            view.loadHTMLString("<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head><body><p>Benign scenery text</p></body></html>", baseURL: service.homeURL)
+            return view
+        }
         let host = UIHostingController(rootView: SocialContainerView(container: container).environment(\.scenePhase, .active).dynamicTypeSize(dynamicType))
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
         let window = UIWindow(windowScene: scene)
@@ -73,6 +84,11 @@ final class VigilSocialTests: XCTestCase {
         let parent = try XCTUnwrap(page.superview)
         let originalFrame = page.frame
         let originalInsets = page.scrollView.adjustedContentInset
+        let cachedFrames = cachedPages.map(\.frame)
+        let cachedInsets = cachedPages.map { $0.scrollView.adjustedContentInset }
+        for cached in cachedPages {
+            _ = try await cached.evaluateJavaScript("window.cachedViewportResizes=0;visualViewport.addEventListener('resize',()=>window.cachedViewportResizes++);true")
+        }
         let panelBottom = try await page.evaluateJavaScript("document.getElementById('allowance').getBoundingClientRect().bottom") as? Double
         if scrollable { XCTAssertGreaterThan(before.y, 1000, "Synthetic content must actually scroll") }
         // The active scene also runs the production one-second native clock.
@@ -100,9 +116,20 @@ final class VigilSocialTests: XCTestCase {
             XCTAssertEqual(page.frame, originalFrame)
             XCTAssertEqual(page.scrollView.adjustedContentInset, originalInsets)
             XCTAssertEqual(page.scrollView.contentOffset.y, before.y, accuracy: 1)
+            for index in cachedPages.indices {
+                XCTAssertEqual(cachedPages[index].frame, cachedFrames[index])
+                XCTAssertEqual(cachedPages[index].scrollView.adjustedContentInset, cachedInsets[index])
+            }
         }
         let measured = try await page.evaluateJavaScript("({...viewportRegression,height:innerHeight,scrollHeight:document.scrollingElement.scrollHeight,offset:scrollY,panel:document.getElementById('allowance').getBoundingClientRect().bottom})")
         let result = try XCTUnwrap(measured as? [String: Any])
+        var cachedResizeCounts = [Int]()
+        for cached in cachedPages {
+            let count = try await cached.evaluateJavaScript("window.cachedViewportResizes") as? Int ?? Int.max
+            cachedResizeCounts.append(count)
+            XCTAssertLessThanOrEqual(count, 2, "A retained service must not drive repeated viewport rescans while hidden")
+        }
+        if !cachedPages.isEmpty { print("VIGIL_CACHED_VIEWPORT_REGRESSION \(cachedResizeCounts)") }
         print("VIGIL_VIEWPORT_REGRESSION scrollable=\(scrollable) \(result)")
         XCTAssertLessThanOrEqual(result["resizes"] as? Int ?? Int.max, 2, "A stable native frame must not generate a viewport resize loop")
         XCTAssertEqual(result["ticks"] as? Int, 6)
