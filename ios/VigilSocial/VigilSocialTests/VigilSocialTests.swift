@@ -2,10 +2,156 @@ import XCTest
 import Combine
 import JavaScriptCore
 import UIKit
+import SwiftUI
 import WebKit
 @testable import VigilSocial
 
 final class VigilSocialTests: XCTestCase {
+    @MainActor
+    func testYouTubeHeaderKeepsShortDocumentViewportStable() async throws {
+        try await verifyYouTubeViewportStability(scrollable: false)
+    }
+
+    @MainActor
+    func testYouTubeTimerUpdatesRetainWebViewAndScrollPosition() async throws {
+        try await verifyYouTubeViewportStability(scrollable: true)
+    }
+
+    @MainActor
+    func testYouTubeAccessibleHeaderRetainsStableScrollableViewport() async throws {
+        try await verifyYouTubeViewportStability(scrollable: true, dynamicType: .accessibility3)
+    }
+
+    @MainActor
+    func testCachedServicesRetainStableViewportsWhileYouTubeScrolls() async throws {
+        try await verifyYouTubeViewportStability(scrollable: true, cachedServices: [.facebook, .x, .tiktok, .reddit])
+    }
+
+    @MainActor
+    private func verifyYouTubeViewportStability(scrollable: Bool, dynamicType: DynamicTypeSize = .large,
+                                               cachedServices: [SocialService] = []) async throws {
+        let suite = "VigilViewportRegression.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        container.select(.youtube)
+        let store = container.store(for: .youtube), page = store.webView(for: .youtube)
+        let cachedPages = cachedServices.map { service in
+            let view = container.store(for: service).webView(for: service)
+            view.loadHTMLString("<html><head><meta name='viewport' content='width=device-width,initial-scale=1'></head><body><p>Benign scenery text</p></body></html>", baseURL: service.homeURL)
+            return view
+        }
+        let host = UIHostingController(rootView: SocialContainerView(container: container).environment(\.scenePhase, .active).dynamicTypeSize(dynamicType))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        host.loadViewIfNeeded()
+        host.view.frame = window.bounds
+        window.layoutIfNeeded()
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertGreaterThan(page.bounds.height, 300, "The regression requires a scene-backed, laid-out WebKit view")
+        page.loadHTMLString("""
+        <html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>
+        body{margin:0}ytm-comment-renderer,ytm-comment-view-model{display:block;height:100px}
+        #allowance{position:fixed;bottom:8px}
+        </style></head><body><div id='thread-list'></div><aside id='allowance'>120 min left</aside></body></html>
+        """, baseURL: URL(string: "https://m.youtube.com/watch?v=abcdefghijk"))
+        try await waitForJavaScriptCondition("document.readyState==='complete'&&!!document.getElementById('thread-list')", in: page)
+        // Only the isolated access probe is stubbed; all shipped page guards and
+        // scripts remain installed. No network or protected user state is used.
+        _ = try await page.callAsyncJavaScript("globalThis.fetch=async()=>({status:200,url:'https://m.youtube.com/robots.txt'});return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        _ = try await page.callAsyncJavaScript("""
+        const list=document.getElementById('thread-list');
+        for(let i=0;i<count;i++){
+          const row=document.createElement('ytm-comment-renderer');
+          row.textContent='A benign scenery comment '+i; list.append(row);
+        }
+        return true;
+        """, arguments: ["count": scrollable ? 100 : 0], in: nil, contentWorld: .page)
+        try await Task.sleep(for: .seconds(2))
+        _ = try await page.callAsyncJavaScript("""
+        window.viewportRegression={resizes:0,ticks:0,comments:0,replies:0};
+        visualViewport.addEventListener('resize',()=>viewportRegression.resizes++);
+        if(scrollable)scrollTo(0,1200);
+        return true;
+        """, arguments: ["scrollable": scrollable], in: nil, contentWorld: .page)
+        try await Task.sleep(for: .milliseconds(100))
+        let before = page.scrollView.contentOffset
+        let parent = try XCTUnwrap(page.superview)
+        let originalFrame = page.frame
+        let originalInsets = page.scrollView.adjustedContentInset
+        let cachedFrames = cachedPages.map(\.frame)
+        let cachedInsets = cachedPages.map { $0.scrollView.adjustedContentInset }
+        for cached in cachedPages {
+            _ = try await cached.evaluateJavaScript("window.cachedViewportResizes=0;visualViewport.addEventListener('resize',()=>window.cachedViewportResizes++);true")
+        }
+        let panelBottom = try await page.evaluateJavaScript("document.getElementById('allowance').getBoundingClientRect().bottom") as? Double
+        if scrollable { XCTAssertGreaterThan(before.y, 1000, "Synthetic content must actually scroll") }
+        // The active scene also runs the production one-second native clock.
+        // Repeated publishes and appended comments/replies exercise hydration
+        // without replacing the hosting root or manually changing contentSize.
+        for index in 0..<30 {
+            store.setSurface(SocialSurfaceState(route: "watch", refreshEligible: false, blocksRefresh: true), for: .youtube)
+            container.objectWillChange.send()
+            _ = try await page.callAsyncJavaScript("""
+            const state=window.viewportRegression;
+            if(index%5===0){state.ticks++;document.getElementById('allowance').textContent=(120-state.ticks)+' min left';}
+            if(scrollable){
+              const reply=index%2===0;
+              const row=document.createElement(reply?'ytm-comment-view-model':'ytm-comment-renderer');
+              row.textContent=reply?'A benign scenery reply':'Another scenery comment';
+              document.getElementById('thread-list').append(row);
+              if(reply)state.replies++;else state.comments++;
+            }
+            return true;
+            """, arguments: ["index": index, "scrollable": scrollable], in: nil, contentWorld: .page)
+            try await Task.sleep(for: .milliseconds(200))
+            XCTAssertTrue(container.store(for: .youtube) === store)
+            XCTAssertTrue(store.webView(for: .youtube) === page)
+            XCTAssertTrue(page.superview === parent)
+            XCTAssertEqual(page.frame, originalFrame)
+            XCTAssertEqual(page.scrollView.adjustedContentInset, originalInsets)
+            XCTAssertEqual(page.scrollView.contentOffset.y, before.y, accuracy: 1)
+            for index in cachedPages.indices {
+                XCTAssertEqual(cachedPages[index].frame, cachedFrames[index])
+                XCTAssertEqual(cachedPages[index].scrollView.adjustedContentInset, cachedInsets[index])
+            }
+        }
+        let measured = try await page.evaluateJavaScript("({...viewportRegression,height:innerHeight,scrollHeight:document.scrollingElement.scrollHeight,offset:scrollY,panel:document.getElementById('allowance').getBoundingClientRect().bottom})")
+        let result = try XCTUnwrap(measured as? [String: Any])
+        var cachedResizeCounts = [Int]()
+        for cached in cachedPages {
+            let count = try await cached.evaluateJavaScript("window.cachedViewportResizes") as? Int ?? Int.max
+            cachedResizeCounts.append(count)
+            XCTAssertLessThanOrEqual(count, 2, "A retained service must not drive repeated viewport rescans while hidden")
+        }
+        if !cachedPages.isEmpty { print("VIGIL_CACHED_VIEWPORT_REGRESSION \(cachedResizeCounts)") }
+        print("VIGIL_VIEWPORT_REGRESSION scrollable=\(scrollable) \(result)")
+        XCTAssertLessThanOrEqual(result["resizes"] as? Int ?? Int.max, 2, "A stable native frame must not generate a viewport resize loop")
+        XCTAssertEqual(result["ticks"] as? Int, 6)
+        XCTAssertEqual(result["panel"] as? Double, panelBottom)
+        if scrollable {
+            XCTAssertEqual(result["comments"] as? Int, 15)
+            XCTAssertEqual(result["replies"] as? Int, 15)
+            XCTAssertGreaterThan(result["scrollHeight"] as? Double ?? 0, 10_000)
+            XCTAssertEqual(result["offset"] as? Double ?? 0, 1200, accuracy: 1)
+        }
+        // A genuine host resize still reaches WebKit instead of freezing a
+        // cached viewport size. The persistent document and engine survive.
+        window.frame.size.height = 744
+        host.view.frame = window.bounds
+        window.layoutIfNeeded()
+        host.view.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertLessThan(page.frame.height, originalFrame.height - 50)
+        XCTAssertTrue(page.superview === parent)
+        XCTAssertTrue(store.webView(for: .youtube) === page)
+    }
+
     func testSharedVideoLinksKeepTimestampsAndRejectRestrictedRoutes() throws {
         for address in ["https://youtu.be/abcdefghijk?t=90", "https://www.youtube.com/live/abcdefghijk?t=90",
                         "https://www.youtube.com/watch?v=abcdefghijk&t=90"] {

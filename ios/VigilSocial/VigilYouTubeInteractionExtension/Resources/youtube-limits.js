@@ -183,7 +183,11 @@
     panel.hidden = Boolean(document.fullscreenElement || document.webkitFullscreenElement
       || document.querySelector('video')?.webkitDisplayingFullscreen
       || document.querySelector('.html5-video-player.ytp-fullscreen'));
-    if (desktopHeader || panel.hidden) return;
+    if (desktopHeader) {
+      if (panel.style.bottom) panel.style.bottom = '';
+      return;
+    }
+    if (panel.hidden) return;
     const viewport = window.visualViewport;
     const height = window.innerHeight || document.documentElement.clientHeight;
     const visibleBottom = Math.min(height, viewport ? viewport.offsetTop + viewport.height : height);
@@ -199,10 +203,10 @@
         bottom = Math.max(bottom, height - rect.top);
       }
     }
-    const value = `${Math.ceil(bottom)}px`;
-    if (panel.style.getPropertyValue('--vigil-allowance-bottom') !== value) {
-      panel.style.setProperty('--vigil-allowance-bottom', value);
-    }
+    const value = `calc(max(${Math.ceil(bottom)}px, env(safe-area-inset-bottom)) + 8px)`;
+    // This owned panel needs a geometry update, not a custom-property change
+    // that invalidates background/generated media throughout the page.
+    if (panel.style.bottom !== value) panel.style.bottom = value;
   }
   for (const event of ['fullscreenchange', 'webkitfullscreenchange', 'webkitbeginfullscreen', 'webkitendfullscreen']) {
     document.addEventListener(event, positionAllowance, true);
@@ -221,7 +225,7 @@
     panel = document.createElement('aside'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(max(var(--vigil-allowance-bottom,0px),env(safe-area-inset-bottom)) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
+    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
     statusLine = document.createElement('strong'); statusLine.textContent = 'Checking allowance…';
     shadow.append(style, statusLine);
     panel.setAttribute('aria-label', 'YouTube daily allowance');

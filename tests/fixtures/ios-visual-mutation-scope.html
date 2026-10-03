@@ -1,0 +1,108 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+body { margin:0; font:16px -apple-system; background:#fff; color:#111 }
+yt-comment-thread { display:block; padding:12px; border-bottom:1px solid #ddd }
+ytm-video-with-context-renderer { display:block; height:96px; padding:12px; border-bottom:1px solid #ddd }
+.comment-author::before { content:'Reader'; display:block; font-weight:600 }
+.trigger[style*="--flip: 1"] ~ .target::before { content:url('data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%221%22%20height=%221%22%3E%3C/svg%3E') }
+</style></head><body><main id="home"></main><section id="watch" hidden><h1 id="watch-title">Loading a benign video</h1><main id="comments"></main></section><div class="trigger" id="trigger" style="--fixture-stable:0"></div><div class="target"></div><aside id="vigil-youtube-limits"></aside><script>
+const home = document.getElementById('home');
+for (let i=0;i<100;i++) {
+  const card = document.createElement('ytm-video-with-context-renderer');
+  card.textContent = `Benign landscape video ${i}`;
+  home.append(card);
+}
+const comments = document.getElementById('comments');
+for (let i=0;i<200;i++) {
+  const row = document.createElement('yt-comment-thread');
+  row.innerHTML = '<div class="comment-author"></div><p>A benign test comment about the scenery.</p>';
+  comments.append(row);
+}
+const allowance = document.getElementById('vigil-youtube-limits');
+const shadow = allowance.attachShadow({mode:'closed'});
+const style = document.createElement('style'); style.textContent = PRODUCTION_ALLOWANCE_CSS;
+const text = document.createElement('strong'); text.textContent='4 saves left · 120 min left'; shadow.append(style,text);
+const viewport = { offsetTop:0, height:window.innerHeight };
+const viewportWindow = { innerWidth:390, innerHeight:window.innerHeight, visualViewport:viewport };
+// Run the exact shipped allowance writer against deterministic viewport bounds
+// while using real WebKit styles, layout, closed roots and scroll anchoring.
+const positionAllowance = ((panel, document, window, location) => {
+  /* PRODUCTION_ALLOWANCE_POSITION */
+  return positionAllowance;
+})(allowance, document, viewportWindow, location);
+positionAllowance();
+const pause = ms => new Promise(resolve => setTimeout(resolve,ms));
+window.runChecks = async () => {
+  await pause(1200);
+  for (let attempt=0;attempt<100 &&
+    (document.documentElement.hasAttribute('data-vigil-background-subtree-pending') ||
+     document.documentElement.hasAttribute('data-vigil-content-subtree-pending'));attempt++) await pause(50);
+  if (document.documentElement.hasAttribute('data-vigil-background-subtree-pending') ||
+      document.documentElement.hasAttribute('data-vigil-content-subtree-pending')) throw new Error('Initial protected inspection did not settle');
+  const stableDeclaration = document.getElementById('trigger').style;
+  let globalInvalidations=0, bottomWrites=0;
+  const observer = new MutationObserver(records => {
+    globalInvalidations += records.filter(r => r.target === document.documentElement &&
+      ['data-vigil-background-subtree-pending','data-vigil-content-subtree-pending'].includes(r.attributeName) &&
+      r.oldValue !== null).length;
+    bottomWrites += records.filter(r => r.target === allowance && r.attributeName === 'style').length;
+  });
+  observer.observe(document.documentElement,{attributes:true,attributeOldValue:true});
+  observer.observe(allowance,{attributes:true,attributeFilter:['style']});
+  window.scrollTo(0,1200); await pause(100);
+  const homeOffset = window.scrollY, homeAnchor = home.children[30].getBoundingClientRect().top;
+  for (let tick=0;tick<30;tick++) {
+    stableDeclaration.setProperty('--fixture-stable','0');
+    positionAllowance(); positionAllowance();
+    await pause(16);
+  }
+  const homeScrollStable = window.scrollY === homeOffset &&
+    Math.abs(home.children[30].getBoundingClientRect().top-homeAnchor)<.1 && home.children.length === 100;
+  const originalDocument = document.documentElement;
+  // Benign SPA loading mutations preserve the document, allowance and rows.
+  // Native view identity is checked separately by the UIKit regression.
+  history.pushState({},'', '/watch?v=benign-test');
+  home.hidden = true; document.getElementById('watch').hidden = false;
+  for (let tick=0;tick<20;tick++) {
+    document.getElementById('watch-title').textContent = `Loading benign video ${tick}`;
+    stableDeclaration.setProperty('--fixture-stable','0');
+    positionAllowance();
+    await pause(16);
+  }
+  const watchLoadRetained = document.documentElement === originalDocument &&
+    allowance.isConnected && text.getRootNode() === shadow && comments.children.length === 200;
+  window.scrollTo(0,1200); await pause(100);
+  const before = comments.children[30].getBoundingClientRect().top;
+  const offset = window.scrollY, initialBottom = allowance.style.bottom;
+  for (let tick=0;tick<40;tick++) {
+    if (tick === 20) viewport.height -= 56;
+    if (tick === 30) viewport.offsetTop = 12;
+    positionAllowance(); positionAllowance();
+    stableDeclaration.setProperty('--fixture-stable','0');
+    text.textContent=`4 saves left · ${120-tick} min left`;
+    const reply=document.createElement('p'); reply.className='fixture-reply'; reply.textContent='A benign reply.';
+    comments.children[190].append(reply);
+    await pause(16);
+  }
+  await pause(600); observer.disconnect();
+  const result = {
+    globalInvalidations, bottomWrites, homeScrollStable, watchLoadRetained,
+    viewportPositionChanged: allowance.style.bottom !== initialBottom && allowance.style.bottom.includes('44px'),
+    scrollStable: window.scrollY === offset,
+    anchorStable: Math.abs(comments.children[30].getBoundingClientRect().top-before)<.1,
+    commentNodesRetained: comments.children.length === 200,
+    repliesLoaded: comments.children[190].querySelectorAll('.fixture-reply').length === 40,
+    closedAllowanceRetained: allowance.isConnected && text.getRootNode() === shadow,
+    safetyStyleRetained: Boolean(document.getElementById('vigil-content-safety-style'))
+  };
+  // A real custom-property change can affect a sibling through a style
+  // attribute selector. It must still synchronously gate the whole document
+  // and the unrelated closed allowance root before inspection runs.
+  document.getElementById('trigger').style.setProperty('--flip','1');
+  result.crossSelectorGated = Boolean(document.querySelector('.trigger[style*="--flip: 1"] ~ .target')) &&
+    document.documentElement.dataset.vigilContentSubtreePending === 'true' &&
+    document.documentElement.dataset.vigilBackgroundSubtreePending === 'true' &&
+    allowance.dataset.vigilContentSubtreePending === 'true' &&
+    allowance.dataset.vigilBackgroundSubtreePending === 'true';
+  return result;
+};
+</script></body></html>

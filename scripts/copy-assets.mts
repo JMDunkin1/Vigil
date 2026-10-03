@@ -25,6 +25,20 @@ await copyProjectFile("scripts/ios-phone-suite.mjs");
 await copyAssetDir("public");
 await copyAssetDir("extension");
 await makeExtensionScriptsClassic();
+// The same guard runs before the existing protections in native WebKit and
+// Safari. The Mac Safari resource is a symlink to this iOS parity script.
+const avatarGuard = (await readFile(join(runtimeRoot, "src/youtubeCommentAvatars.js"), "utf8")).replace(/^export /gmu, "");
+for (const resource of [
+  "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-parity.js",
+  "ios/VigilBrowser/VigilSafariExtension/Resources/ContentSafety.js"
+]) {
+  const path = join(projectRoot, resource);
+  const source = await readFile(path, "utf8");
+  const marker = /\/\/ BEGIN GENERATED YOUTUBE COMMENT AVATARS[\s\S]*?\/\/ END GENERATED YOUTUBE COMMENT AVATARS/u;
+  if (!marker.test(source)) throw new Error(`Missing shared comment-avatar guard marker in ${resource}.`);
+  await writeFile(path, source.replace(marker,
+    `// BEGIN GENERATED YOUTUBE COMMENT AVATARS\n(() => {\n${avatarGuard}\ninstallYouTubeCommentAvatarMask();\n})();\n// END GENERATED YOUTUBE COMMENT AVATARS`));
+}
 const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
 const safariBackgroundPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js");
 await writeFile(safariBackgroundPath, (await readFile(safariBackgroundPath, "utf8")).replace(
@@ -73,6 +87,11 @@ async function makeExtensionScriptsClassic(): Promise<void> {
     if (name === "background.js") {
       const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
       source = source.replace(/^import .*youtubeEmbeds\.js["'];?\s*$/mu, embedPolicy);
+      source += "\nexport {};\n";
+    }
+    if (name === "content.js") {
+      const avatarGuard = (await readFile(join(runtimeRoot, "src/youtubeCommentAvatars.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*youtubeCommentAvatars\.js["'];?\s*$/mu, avatarGuard);
       source += "\nexport {};\n";
     }
     if (name.startsWith("reddit-review-")) {
