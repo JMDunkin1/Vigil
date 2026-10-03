@@ -1,3 +1,6 @@
+import { installYouTubeCommentAvatarMask } from "../src/youtubeCommentAvatars.js";
+
+installYouTubeCommentAvatarMask();
 let lastPulseAt = Date.now();
 let pulseGeneration = 0;
 let activePauseOverlay: PauseOverlayState | null = null;
