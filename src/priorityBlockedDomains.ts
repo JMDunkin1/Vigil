@@ -279,6 +279,8 @@ export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
  * classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
+  // User-requested whole-site ban; keep this mixed-use name out of prose terms.
+  "artpal.com",
   // User-reported redirect: enforce outside Safari's overridable content blockers.
   "go2offer-1.com",
   "r.go2offer-1.com",

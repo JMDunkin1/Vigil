@@ -7,6 +7,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDirectRun } from "../src/directRun.js";
 import { assertGeneratedIosContentPolicyCurrent } from "./generate-ios-content-policy.mjs";
+import { generateNativeExplicitMedia } from "./generate-native-explicit-media.mjs";
 
 import { assertGeneratedIosSafariGuardCurrent } from "./generate-ios-safari-guard.mjs";
 
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
     return;
   }
   await assertGeneratedIosContentPolicyCurrent();
+  await generateNativeExplicitMedia();
   await assertGeneratedIosSafariGuardCurrent();
   const options = parseOptions(argv);
   const configuration = ["all", "youtube", "instagram"].includes(options.service) ? await youtubeBuildConfiguration() : null;

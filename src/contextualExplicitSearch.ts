@@ -1,4 +1,5 @@
-import { containsContextualExplicitMedia, containsMultilingualExplicitText } from "./explicitMediaContext.js";
+import { containsContextualExplicitMedia, containsMultilingualExplicitText, normalizeExplicitVocabulary, containsExplicitSearchAliases } from "./explicitMediaContext.js";
+import { decodeSearchQueryValue, searchQueries } from "./searchQueryContext.js";
 
 export function containsExplicitMediaLabel(value: string): boolean {
   return containsContextualExplicitMedia(value);
@@ -7,36 +8,22 @@ export function containsExplicitMediaLabel(value: string): boolean {
 // Mixed-use platforms supply context only for search/tag/community navigation.
 // Ordinary page prose, unrelated hosts, and generic searches retain their own
 // policy. Existing explicit terms and permanently denied sites still apply.
-const CONTEXTUAL_SEARCH_PLATFORMS = [
+export const CONTEXTUAL_SEARCH_PLATFORMS = [
   "reddit.com", "deviantart.com", "artstation.com", "pixiv.net",
   "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com",
   "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app",
   "patreon.com", "itch.io", "discord.com", "discordapp.com"
 ];
-const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
-const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
-const CONTEXTUAL_SEARCH_PARAMETERS = new Set([
-  "q", "query", "search_query", "search", "searchterm", "search_term",
-  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
-]);
-const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
-
+export const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
+export const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
 function contextualSearchDecode(value: string): string {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const decoded = decodeURIComponent(value);
-      if (decoded === value) break;
-      value = decoded;
-    } catch { break; }
-  }
-  return value.replace(/\+/gu, " ").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "");
+  return normalizeExplicitVocabulary(decodeSearchQueryValue(value));
 }
 
 // Bounded aliases and concatenated blocked words; never fuzzy-match arbitrary
 // substrings such as Middlesex, nudging, or an alphanumeric product identifier.
 export function containsExplicitSearchVariants(query: string): boolean {
-  return /^\s*nud(?:s|3s?)?\s*$/iu.test(contextualSearchDecode(query))
-    || /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(contextualSearchDecode(query));
+  return containsExplicitSearchAliases(contextualSearchDecode(query));
 }
 
 export function containsContextualExplicitSearch(query: string, hostname = "", includeRedditShorthand = true): boolean {
@@ -61,7 +48,7 @@ export function matchContextualExplicitSearchUrl(value: unknown): boolean {
   try {
     const url = new URL(String(value || ""));
     return ["http:", "https:"].includes(url.protocol)
-      && [url.pathname, url.hash].some(path => containsMultilingualExplicitText(contextualSearchDecode(path)));
+      && [url.pathname, url.hash.split("?", 1)[0]].some(path => containsMultilingualExplicitText(contextualSearchDecode(path)));
   } catch { return false; }
 }
 
@@ -73,19 +60,4 @@ export function containsExplicitXxxSearchText(query: string): boolean {
 
 export function matchExplicitXxxSearchUrl(value: unknown): boolean {
   return searchQueries(value).some(({ query }) => containsExplicitXxxSearchText(query));
-}
-
-function searchQueries(value: unknown): Array<{ query: string; hostname: string }> {
-  let url: URL;
-  try { url = new URL(String(value || "")); }
-  catch { return []; }
-  if (!["http:", "https:"].includes(url.protocol)) return [];
-  const queries = [...url.searchParams]
-    .filter(([name]) => CONTEXTUAL_SEARCH_PARAMETERS.has(name.toLowerCase()))
-    .map(([, query]) => query);
-  for (const route of [url.pathname, url.hash]) {
-    const decoded = contextualSearchDecode(route);
-    if (CONTEXTUAL_SEARCH_ROUTE.test(decoded)) queries.push(decoded);
-  }
-  return queries.map(query => ({ query, hostname: url.hostname }));
 }

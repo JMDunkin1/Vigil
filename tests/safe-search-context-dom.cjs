@@ -47,7 +47,7 @@ async function main() {
       }}
     };
     const context = createContext({ URL, URLSearchParams, document: window.document,
-      Element: window.Element, MouseEvent: window.MouseEvent, NodeFilter: window.NodeFilter, MutationObserver: window.MutationObserver,
+      Element: window.Element, HTMLFormElement: window.HTMLFormElement, HTMLInputElement: window.HTMLInputElement, HTMLButtonElement: window.HTMLButtonElement, FormData: window.FormData, MouseEvent: window.MouseEvent, NodeFilter: window.NodeFilter, MutationObserver: window.MutationObserver,
       getComputedStyle: window.getComputedStyle.bind(window), crypto: webcrypto,
       location: {href: url, replace: target => redirects.push(target), assign: target => redirects.push(target)},
       addEventListener: window.addEventListener.bind(window),
@@ -62,16 +62,65 @@ async function main() {
   }
   const query = text => `https://www.google.com/search?q=${encodeURIComponent(text)}&safe=active`;
   try {
+    for (const metadata of [
+      '<input type="hidden" name="ei" value="AQpornTracked">',
+      '<input type="hidden" name="ved" value="nsfwRandomTracking">',
+      '<input hidden name="suggestion" value="naked girls">',
+      '<input type="submit" name="btnK" value="Search naked girls">',
+      '<input type="checkbox" name="preference" value="nsfw">',
+      '<input disabled name="suggestion" value="naked girls">',
+      '<input style="display:none" name="suggestion" value="naked girls">'
+    ]) {
+      const html = `<title>cars - Google Search</title><form id="search-form" action="https://www.google.com/search" role="search"><textarea name="q">cars</textarea>${metadata}<button>Search</button></form>`;
+      const cars = await page(query('cars'), html);
+      assert.deepEqual(cars.redirects, [], `non-query metadata must not block cars on arrival: ${metadata}`);
+      await cars.win.webContents.executeJavaScript('document.querySelector("form").dispatchEvent(new MouseEvent("submit", {bubbles:true,cancelable:true}))');
+      assert.ok(!cars.redirects.includes(blocked), `non-query metadata must not block cars on submission: ${metadata}`);
+      for (const target of cars.redirects) assert.equal(new URL(target).searchParams.get('q'), 'cars');
+    }
+    for (const field of ['<input type="search" name="q" value="naked girls">', '<input type="hidden" name="q" value="naked girls">', '<input type="hidden" name="q[]" value="naked girls">']) {
+      const html = `<form action="https://www.google.com/search">${field}<button>Search</button></form>`;
+      const explicit = await page(query('cars'), html);
+      await explicit.win.webContents.executeJavaScript('document.querySelector("form").dispatchEvent(new MouseEvent("submit", {bubbles:true,cancelable:true}))');
+      assert.ok(explicit.redirects.includes(blocked), `real explicit query fields remain blocked: ${field}`);
+    }
     for (const html of ['<div role="status">SafeSearch on</div>', '<div role="status">SafeSearch blurring is on</div>', `<div id="rso">${notice}</div>`, notice.replace('id="notice"', 'id="notice" hidden')]) {
       assert.deepEqual((await page(query('Jane Example photos'), html)).redirects, [], 'settings, quoted results and hidden notices supply no evidence');
     }
+    for (const html of [
+      `<blockquote>${notice}</blockquote>`,
+      `<div role="status"><q>Some results have been limited by SafeSearch.</q></div>`,
+      `<figure><figcaption>${notice}</figcaption></figure>`,
+      '<div id="topstuff"><div role="status">No results have been limited by SafeSearch.</div></div>',
+      '<div role="status">No explicit results were removed by SafeSearch.</div>',
+      '<div role="status">If results are filtered by SafeSearch, open settings.</div>',
+      '<div role="status">Help: "Some results have been limited by SafeSearch" means Google filtered results.</div>',
+      '<div role="status">Some results have been limited by SafeSearch is an example notification.</div>',
+      '<div id="topstuff"><q>Some results have been limited by SafeSearch.</q>SafeSearch on</div>'
+    ]) {
+      const quoted = await page(query('Jane Example photos'), html);
+      assert.deepEqual(quoted.redirects, [], 'quoted, negated and conditional notice text does not create evidence');
+      assert.equal(Object.values(quoted.storage).some(value => value && typeof value.subject === 'string'), false, 'untrusted notices cannot seed future blocks');
+    }
+    assert.ok((await page(query('Jane Example photos'), '<div role="status">Some results have been limited by <a href="https://www.google.com/safesearch">SafeSearch</a>. Learn more</div>')).redirects.includes(blocked), 'a genuine notice can link its SafeSearch label');
     assert.ok((await page(query('Jane Example photos'), `<main id="search">${notice}</main>`)).redirects.includes(blocked), 'real notice inside Google search container blocks the contributing query');
     for (const text of ['sex', 'sexual', 'nude', 'nudity', 'fetish', 'leaks', 'cream pie', 'mature', 'uncensored', 'steamy', 'spicy', 'adult', 'nude art', 'uncensored interview', 'medical anatomy photos', 'adult education', 'spicy chicken videos']) {
       assert.deepEqual((await page(query(text), '<main>Ordinary results</main>')).redirects, [], `ambiguous search without a popup stays available: ${text}`);
       assert.ok((await page(query(text), notice + '<main>Limited results</main>')).redirects.includes(blocked), `ambiguous search plus popup blocks without a name or file links: ${text}`);
     }
+    for (const text of ['sensual', 'lingerie', 'underwear', 'bikini', 'cosplay', 'doujinshi', 'furry', 'waifu', 'women', 'models', 'feet', 'breasts', 'nipples', 'penis', 'vagina', 'bdsm', 'bondage', 'masturbation', 'oral', 'anal', 'sexting', 'unfiltered', 'gifs', 'wallpapers', 'livestreams']) {
+      assert.deepEqual((await page(query(text), '<main>Ordinary results</main>')).redirects, [], `expanded ambiguous word needs evidence: ${text}`);
+      assert.ok((await page(query(text), notice)).redirects.includes(blocked), `expanded word with verified SafeSearch notice blocks: ${text}`);
+      for (const html of ['<div role="status">SafeSearch is on</div>', `<div id="rso">${notice}</div>`, notice.replace('id="notice"', 'id="notice" hidden')]) {
+        assert.deepEqual((await page(query(text), html)).redirects, [], `expanded word plus settings, snippet or hidden notice stays available: ${text}`);
+      }
+    }
     for (const text of ['gardening', 'Middlesex', 'sextant', 'photosynthesis']) {
       assert.deepEqual((await page(query(text), notice)).redirects, [], `the popup alone or an embedded substring is insufficient: ${text}`);
+    }
+    for (const text of ['na\u2060ked', 'na\u00adked', 'na\u202eked', 'náked', 'nak3d']) {
+      assert.deepEqual((await page(query(text), '<main>Ordinary results</main>')).redirects, [], `normalizing ambiguous vocabulary does not ban it alone: ${text}`);
+      assert.ok((await page(query(text), notice)).redirects.includes(blocked), `normalizing ambiguous vocabulary enforces real notice evidence: ${text}`);
     }
     const name = await page(query('Jane Example'), notice + '<main><a id="photo" href="https://justpaste.it/fixture">Jane Example photos and links</a></main>');
     assert.deepEqual(name.redirects, [], 'the name alone is searchable');
@@ -99,6 +148,11 @@ async function main() {
     assert.deepEqual(JSON.parse(JSON.stringify(click)), { siteClicks: 0, cancelled: true }, 'unsafe link activation is cancelled before site handlers');
     assert.ok((await page(query('Jane Example albums'), '<main>Results</main>', stored)).redirects.includes(blocked), 'same topic retains recent evidence');
     assert.deepEqual((await page(query('Mary Example photos'), '<main>Results</main>', stored)).redirects, [], 'evidence cannot spill into another topic');
+    assert.deepEqual((await page(query('Jáne Example photos'), '<main>Results</main>', stored)).redirects, [], 'accents in a real name cannot inherit another subject’s evidence');
+    assert.deepEqual((await page(query('Jane Example Foundation photos'), '<main>Results</main>', stored)).redirects, [], 'a longer subject cannot inherit exact-subject query evidence');
+    for (const text of ['Ja\u2060ne Example photos', 'Ja\u00adne Example photos', 'Jane Example ph0t0s', 'Jane Example phótos']) {
+      assert.ok((await page(query(text), '<main>Results</main>', stored)).redirects.includes(blocked), `invisible name separators cannot bypass cached evidence: ${text}`);
+    }
     assert.deepEqual((await page(query('Jane Example news photos'), '<main>Results</main>', stored)).redirects, [], 'unflagged ordinary news context remains searchable');
     assert.ok((await page(query('Jane Example news photos'), notice, stored)).redirects.includes(blocked), 'ordinary wording cannot cancel a real popup plus ambiguous terms');
     assert.deepEqual((await page(query('Jane Example photos'), '<main>Results</main>', { 'jane example': Date.now() - 31 * 60 * 1000 })).redirects, [], 'stale evidence expires');

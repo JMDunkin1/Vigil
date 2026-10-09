@@ -34,7 +34,14 @@ const legacyBrowserPath = join(projectRoot, "ios/VigilBrowser/VigilSafariExtensi
 const brandIcon = (await readFile(join(projectRoot, "extension/icons/icon-128.png"))).toString("base64");
 const diagnosticHelpers = (await readFile(join(runtimeRoot, "src/blockPageDiagnostics.js"), "utf8")).replace(/^export /gmu, "");
 const legacyProtectionCss = `${PROTECTION_PAGE_CSS}\n.brand-mark { background-image: url("data:image/png;base64,${brandIcon}"); }`;
+const sharedMediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "")
+  + "\n" + (await readFile(join(runtimeRoot, "src/searchQueryContext.js"), "utf8")).replace(/^export /gmu, "")
+  + "\n" + (await readFile(join(runtimeRoot, "src/contextualExplicitSearch.js"), "utf8"))
+    .replace(/^import .*\sfrom\s["'][^"']+["'];?\s*$/gmu, "").replace(/^export /gmu, "");
 await writeFile(legacyBrowserPath, (await readFile(legacyBrowserPath, "utf8")).replace(
+  /\/\/ BEGIN GENERATED EXPLICIT MEDIA CONTEXT[\s\S]*?\/\/ END GENERATED EXPLICIT MEDIA CONTEXT/u,
+  `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${sharedMediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
+).replace(
   /\/\/ BEGIN GENERATED BLOCK DIAGNOSTICS[\s\S]*?\/\/ END GENERATED BLOCK DIAGNOSTICS/u,
   `// BEGIN GENERATED BLOCK DIAGNOSTICS\n${diagnosticHelpers}// END GENERATED BLOCK DIAGNOSTICS`
 ).replace(
@@ -145,11 +152,18 @@ async function makeExtensionScriptsClassic(): Promise<void> {
       // Inline the same pure matcher used by the server into the classic
       // document-start script; no runtime import or server round-trip needed.
       const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
+      const searchQueryContext = (await readFile(join(runtimeRoot, "src/searchQueryContext.js"), "utf8")).replace(/^export /gmu, "");
       const matcher = (await readFile(join(runtimeRoot, "src/contextualExplicitSearch.js"), "utf8"))
         .replace(/^import .*explicitMediaContext\.js["'];?\s*$/mu, mediaContext)
+        .replace(/^import .*searchQueryContext\.js["'];?\s*$/mu, searchQueryContext)
         .replace(/^export /gmu, "");
       source = source.replace(/^import .*contextualExplicitSearch\.js["'];?\s*$/mu, matcher);
-      const safeSearchContext = (await readFile(join(runtimeRoot, "src/safeSearchContext.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*searchQueryContext\.js["'];?\s*$/mu, "");
+      source = source.replace(/^import .*explicitMediaContext\.js["'];?\s*$/mu, "");
+      const safeSearchContext = (await readFile(join(runtimeRoot, "src/safeSearchContext.js"), "utf8"))
+        .replace(/^import .*explicitMediaContext\.js["'];?\s*$/mu, "")
+        .replace(/^import .*searchQueryContext\.js["'];?\s*$/mu, "")
+        .replace(/^export /gmu, "");
       source = source.replace(/^import .*safeSearchContext\.js["'];?\s*$/mu, safeSearchContext);
       source += "\nexport {};\n";
     }
@@ -176,6 +190,6 @@ const mediaGuardPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractio
 const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
 await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace(
   /\/\/ BEGIN GENERATED EXPLICIT MEDIA CONTEXT[\s\S]*?\/\/ END GENERATED EXPLICIT MEDIA CONTEXT/u,
-  `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n${mediaContext}// END GENERATED EXPLICIT MEDIA CONTEXT`
+  `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${mediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
 ));
 await cp(mediaGuardPath, join(runtimeRoot, "extension/media-child-lock.js"));

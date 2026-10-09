@@ -4,6 +4,7 @@ import {
   ALWAYS_ALLOWED_APPS,
   BRICK_MODE_PROFILE_ID,
   DEVICE_TARGETS,
+  DEFAULT_EXPLICIT_SEARCH_TERMS,
   NORMAL_PROFILE_ID,
   PANIC_LOCK_PROFILE_ID,
   PROCESS_SWEEP_EXEMPT_APPS,
@@ -14,7 +15,7 @@ import {
   STRICT_UNSUPPORTED_BROWSERS
 } from "./defaults.js";
 import { matchExplicitPersonSearchUrl } from "./explicitPersonSearch.js";
-import { MULTILINGUAL_EXPLICIT_TERMS, containsMultilingualExplicitText } from "./explicitMediaContext.js";
+import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_EXPLICIT_TERMS, containsAdditionalExplicitSearchTerm, containsMultilingualExplicitText } from "./explicitMediaContext.js";
 import { matchContextualExplicitSearchUrl, matchExplicitXxxSearchUrl } from "./contextualExplicitSearch.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
@@ -764,6 +765,14 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   }
   const candidates = urlPatternCandidates(parsed);
   const compactCandidates = candidates.map(compactUrlPatternText).filter(Boolean);
+  // Opaque analytics values do not describe the page/search content. Apply
+  // this only to built-in content vocabulary; explicit custom URL rules keep
+  // matching the full address, including any deliberately selected metadata.
+  const withoutTracking = new URL(parsed.href);
+  for (const name of [...withoutTracking.searchParams.keys()]) {
+    if (/^(?:ei|ved|sca_esv|sxsrf|iflsig|gclid|fbclid|msclkid|utm_[a-z_]+)$/iu.test(name)) withoutTracking.searchParams.delete(name);
+  }
+  const contentCandidates = urlPatternCandidates(withoutTracking);
   for (let index = 0; index < patterns.length; index += 1) {
     const pattern = patterns[index];
     if (!pattern) continue;
@@ -771,6 +780,8 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
     // substring in an ordinary name is not a translated explicit label.
     if (MULTILINGUAL_EXPLICIT_TERMS.some(term => normalizeUrlPattern(term) === pattern)
       && !candidates.some(containsMultilingualExplicitText)) continue;
+    if ((ADDITIONAL_EXPLICIT_SEARCH_TERMS as readonly string[]).includes(pattern)
+      && !candidates.some(containsAdditionalExplicitSearchTerm)) continue;
     const explicitXxx = pattern === "xxx" && (normalizeHost(parsed.hostname).endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
     if (pattern === "xxx" && !explicitXxx) continue;
     // Vigil's Reddit child lock adds nsfw=0 to turn adult results OFF. Only
@@ -778,11 +789,11 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
     // search text, paths, fragments, enabled flags and custom URL rules remain
     // subject to their original checks.
     const patternCandidates = pattern === "nsfw"
-      ? urlPatternCandidates(withoutRedditSafeSearchFlag(parsed))
-      : candidates;
+      ? urlPatternCandidates(withoutRedditSafeSearchFlag(withoutTracking))
+      : DEFAULT_EXPLICIT_SEARCH_TERMS.some(term => normalizeUrlPattern(term) === pattern) ? contentCandidates : candidates;
     const compactPattern = compactUrlPatternText(pattern);
     const matchesRaw = explicitXxx || patternCandidates.some((candidate) => candidate.includes(pattern));
-    const patternCompactCandidates = pattern === "nsfw"
+    const patternCompactCandidates = patternCandidates !== candidates
       ? patternCandidates.map(compactUrlPatternText)
       : compactCandidates;
     const matchesCompact = compactPattern.length >= 4

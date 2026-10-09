@@ -1,12 +1,11 @@
 import { checkSearchBreakBeforeNavigation } from "./search-break.js";
 import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
 import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
+import { SEARCH_PARAMETER_NAMES, searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
+import { normalizeExplicitVocabulary, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
-const EXPLICIT_SEARCH_PARAMETER_NAMES = new Set([
-  "q", "query", "search_query", "search", "searchterm", "search_term",
-  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag"
-]);
+const EXPLICIT_SEARCH_PARAMETER_NAMES = SEARCH_PARAMETER_NAMES;
 const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
 const PERSON_EXPOSURE_MARKERS = new Set([
   "leak", "leaks", "leaked", "leakd", "lek", "leks",
@@ -27,6 +26,9 @@ const PERSON_LEAK_CONTEXT = new Set([
   "spec", "specs", "team", "transfer", "transfers", "tutorial", "tv", "water"
 ]);
 const PERSON_NUDE_CONTEXT = new Set([
+  "eye", "eyes", "cake", "cakes",
+  "truck", "trucks", "coffee", "paint", "roof", "roofs", "wire", "wires", "cable", "cables",
+  "stock", "stocks", "option", "options", "selling", "finance", "financial", "health", "education",
   "anatomy", "animal", "animals", "art", "arts", "artwork", "artworks", "beach", "beaches",
   "beige", "color", "colors", "colour", "colours", "drawing", "drawings", "fabric", "fashion",
   "figure", "figures", "lipstick", "makeup", "medical", "mice", "model", "models", "mole",
@@ -37,7 +39,6 @@ const PERSON_NUDE_CONTEXT = new Set([
 const PERSON_NAME_FILLER_WORDS = new Set([
   "a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"
 ]);
-const SEARCH_ROUTE_PATTERN = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/iu;
 const SEARCH_DESCRIPTOR_PATTERN = /(?:^|[-_\s])(?:search|query|keyword)(?:$|[-_\s])/iu;
 let lastInspectedSearchUrl = location.href;
 const SAFE_SEARCH_EVIDENCE_KEY = "vigil-safe-search-subjects-v1";
@@ -56,23 +57,15 @@ function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): s
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (matchContextualExplicitSearchUrl(url)) return chrome.runtime.getURL("blocked.html");
-  for (const [name, rawValue] of url.searchParams) {
-    if (!EXPLICIT_SEARCH_PARAMETER_NAMES.has(name.toLowerCase())) continue;
-    if (containsExplicitSearchText(rawValue, url.hostname)) return chrome.runtime.getURL("blocked.html");
-  }
-  const decodedPath = decodeNestedSearchValue(url.pathname);
-  const decodedHash = decodeNestedSearchValue(url.hash.replace(/^#/u, ""));
-  if ((SEARCH_ROUTE_PATTERN.test(decodedPath) && containsExplicitSearchText(decodedPath, url.hostname))
-    || (SEARCH_ROUTE_PATTERN.test(decodedHash) && containsExplicitSearchText(decodedHash, url.hostname))) {
-    return chrome.runtime.getURL("blocked.html");
-  }
+  if (searchQueries(url).some(({ query }) => containsExplicitSearchText(query, url.hostname))) return chrome.runtime.getURL("blocked.html");
   return null;
 }
 
 function containsExplicitSearchText(rawValue: string, hostname = new URL(location.href).hostname, includeRedditShorthand = true): boolean {
   const decoded = decodeNestedSearchValue(rawValue);
-  return EXPLICIT_SEARCH_PATTERN.test(decoded)
-    || EXPLICIT_SEARCH_PATTERN.test(decoded.replace(/\+/gu, " "))
+  const vocabulary = normalizeExplicitVocabulary(decoded);
+  return EXPLICIT_SEARCH_PATTERN.test(vocabulary)
+    || EXPLICIT_SEARCH_PATTERN.test(vocabulary.replace(/\+/gu, " "))
     || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
     || containsExplicitXxxSearchText(decoded)
     || containsExplicitPersonSearchText(decoded)
@@ -103,7 +96,7 @@ function hasCurrentSafeSearchEvidence(): boolean {
 
 function sameSafeSearchQuery(first: string, second: string): boolean {
   const normalize = (value: string) => decodeNestedSearchValue(value).normalize("NFKC")
-    .replace(/\+/gu, " ").replace(/[\u200b-\u200d\ufeff]/gu, "").replace(/\s+/gu, " ").trim().toLowerCase();
+    .replace(/\+/gu, " ").replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "").replace(/\s+/gu, " ").trim().toLowerCase();
   return Boolean(second && normalize(first) === normalize(second));
 }
 
@@ -141,6 +134,7 @@ function visibleContextElement(element: Element): boolean {
 function observeSafeSearchNotice(): void {
   const query = currentGoogleSearchQuery();
   if (!query) return;
+  const excludedText = "#rso, article, h3, pre, code, blockquote, q, figcaption";
   const candidates = new Set(document.querySelectorAll("[role='alert'], [role='status'], [role='dialog'], [aria-live], #taw, #taw *, #topstuff, #topstuff *, #botstuff, #botstuff *"));
   for (const link of document.querySelectorAll("a[href*='safesearch' i]")) {
     let parent: Element | null = link;
@@ -148,7 +142,7 @@ function observeSafeSearchNotice(): void {
   }
   for (const candidate of candidates) {
     // Search snippets, quoted documentation and hidden settings are not notices.
-    if (candidate.closest("#rso, article, a, h3, pre, code") || candidate.querySelector("h3") || !visibleContextElement(candidate)) continue;
+    if (candidate.closest(`${excludedText}, a`) || candidate.querySelector("h3") || !visibleContextElement(candidate)) continue;
     let resultCard = false;
     for (let parent = candidate.parentElement; parent && parent !== document.body && parent !== document.documentElement
       && !["search", "topstuff", "botstuff", "taw"].includes(parent.id); parent = parent.parentElement) {
@@ -158,7 +152,8 @@ function observeSafeSearchNotice(): void {
     let notice = "";
     const walker = document.createTreeWalker(candidate, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node && notice.length <= 600; node = walker.nextNode()) {
-      if (node.parentElement && visibleContextElement(node.parentElement)) notice += `${node.textContent || ""} `;
+      if (node.parentElement && !node.parentElement.closest(excludedText)
+        && visibleContextElement(node.parentElement)) notice += `${node.textContent || ""} `;
     }
     if (isSafeSearchLimitedNotice(notice)) {
       rememberSafeSearchSubject(query);
@@ -340,7 +335,7 @@ function installSafeSearchContextGuard(): void {
 }
 
 function containsExplicitPersonSearchText(rawValue: string): boolean {
-  const query = decodeNestedSearchValue(rawValue).replace(/\+/gu, " ").normalize("NFKC");
+  const query = normalizeExplicitMediaText(decodeNestedSearchValue(rawValue).replace(/\+/gu, " "));
   const tokens = query.match(/[\p{L}\p{M}][\p{L}\p{M}'’.-]*/gu)
     ?.map(token => token.replace(/^[^\p{L}\p{M}]+|[^\p{L}\p{M}]+$/gu, ""))
     .filter(Boolean) || [];
@@ -378,17 +373,7 @@ function startsWithUppercaseLetter(value: string): boolean {
 }
 
 function decodeNestedSearchValue(rawValue: string): string {
-  let value = rawValue;
-  for (let pass = 0; pass < 3; pass += 1) {
-    try {
-      const decoded = decodeURIComponent(value);
-      if (decoded === value) break;
-      value = decoded;
-    } catch {
-      break;
-    }
-  }
-  return value;
+  return decodeSearchQueryValue(rawValue);
 }
 
 function googleSafeSearchRedirect(rawUrl: string, baseUrl = location.href): string | null {
@@ -488,9 +473,9 @@ function formDataEntries(
 
 function explicitSearchTextFromForm(form: HTMLFormElement, fields: Array<[string, string]>): boolean {
   const formIsSearch = elementLooksLikeSearchContainer(form)
-    || SEARCH_ROUTE_PATTERN.test(form.action || "");
+    || looksLikeSearchRoute(form.action || "");
   if (fields.some(([name, value]) => (
-    (formIsSearch || EXPLICIT_SEARCH_PARAMETER_NAMES.has(name.toLowerCase()))
+    isProtectedSearchParameter(name, formIsSearch)
       && containsExplicitSearchText(value)
   ))) return true;
   const controls = form.elements ? Array.from(form.elements) : [];
@@ -527,6 +512,14 @@ function isSearchControl(value: unknown): value is Element {
   const editable = (value as HTMLElement).isContentEditable === true;
   if (!editable && tagName !== "input" && tagName !== "textarea") return false;
   const type = (value.getAttribute("type") || "").toLowerCase();
+  // Tracking fields, checkboxes and submit labels are not user search text.
+  // Real hidden query fields are still checked through URL/submission policy.
+  if (tagName === "input" && !["", "text", "search"].includes(type)) return false;
+  if (value.closest("[hidden], [aria-hidden='true']") || value.getAttribute("disabled") !== null) return false;
+  if (typeof getComputedStyle === "function") {
+    const style = getComputedStyle(value);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+  }
   const role = (value.getAttribute("role") || "").toLowerCase();
   const descriptor = [
     value.getAttribute("name"), value.getAttribute("id"), value.getAttribute("aria-label"),

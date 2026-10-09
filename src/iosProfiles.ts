@@ -27,6 +27,7 @@ import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord 
 import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import type { IosUrlFilterServiceConfiguration } from "./iosUrlFilterServiceConfiguration.js";
 import { IOS_GOOGLE_SAFE_SEARCH_DOMAINS, IOS_SAFE_SEARCH_DOH_URL } from "./iosSafeSearch.js";
+import { ADDITIONAL_EXPLICIT_SEARCH_TERMS } from "./explicitMediaContext.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 export const IOS_RETIRED_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
@@ -50,7 +51,10 @@ const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(
 // The companion filter can recognize these typo variants directly. Avoid
 // spending seven scarce BuiltIn-filter URL slots per typo and displacing the
 // higher-priority domain overlay from Apple's 500-entry deny list.
-const IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS = new Set(["prno", "p0rn"]);
+// The expanded labels use the shared companion matcher. Generating seven
+// prefix URLs for each would displace existing protected sites/custom rules;
+// Apple's prefix matching also cannot express the required word boundaries.
+const IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS = new Set(["prno", "p0rn", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS]);
 const IOS_PRIORITY_BLOCKED_SITE_KEYS = new Set([
   ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
   ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES

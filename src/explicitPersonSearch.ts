@@ -1,11 +1,7 @@
+import { normalizeExplicitMediaText } from "./explicitMediaContext.js";
+import { searchQueries } from "./searchQueryContext.js";
+
 export const EXPLICIT_PERSON_SEARCH_RULE_ID = "person-intimate-exposure";
-
-const SEARCH_PARAMETER_NAMES = new Set([
-  "q", "query", "search_query", "search", "searchterm", "search_term",
-  "keyword", "keywords", "term", "text", "p", "k", "s", "wd"
-]);
-
-const SEARCH_ROUTE_PATTERN = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/iu;
 const EXPOSURE_MARKERS = new Set([
   "leak", "leaks", "leaked", "leakd", "lek", "leks",
   "nud", "nuds", "nude", "nudes", "nued", "naked", "topless"
@@ -30,6 +26,9 @@ const LEAK_CONTEXT = new Set([
   "spec", "specs", "team", "transfer", "transfers", "tutorial", "tv", "water"
 ]);
 const NUDE_CONTEXT = new Set([
+  "eye", "eyes", "cake", "cakes",
+  "truck", "trucks", "coffee", "paint", "roof", "roofs", "wire", "wires", "cable", "cables",
+  "stock", "stocks", "option", "options", "selling", "finance", "financial", "health", "education",
   "anatomy", "animal", "animals", "art", "arts", "artwork", "artworks", "beach", "beaches",
   "beige", "color", "colors", "colour", "colours", "drawing", "drawings", "fabric", "fashion",
   "figure", "figures", "lipstick", "makeup", "medical", "mice", "model", "models", "mole",
@@ -55,23 +54,7 @@ export interface ExplicitPersonSearchMatch {
  * searches.
  */
 export function matchExplicitPersonSearchUrl(value: unknown): ExplicitPersonSearchMatch | null {
-  let url: URL;
-  try {
-    url = new URL(String(value || ""));
-    if (!["http:", "https:"].includes(url.protocol)) return null;
-  } catch {
-    return null;
-  }
-
-  const candidates = [...url.searchParams]
-    .filter(([name]) => SEARCH_PARAMETER_NAMES.has(name.toLowerCase()))
-    .map(([, query]) => query);
-  const path = decodeNested(url.pathname);
-  const hash = decodeNested(url.hash.replace(/^#/u, ""));
-  if (SEARCH_ROUTE_PATTERN.test(path)) candidates.push(path);
-  if (SEARCH_ROUTE_PATTERN.test(hash)) candidates.push(hash);
-
-  for (const query of candidates) {
+  for (const { query } of searchQueries(value)) {
     const match = matchExplicitPersonSearchText(query);
     if (match) return match;
   }
@@ -79,7 +62,7 @@ export function matchExplicitPersonSearchUrl(value: unknown): ExplicitPersonSear
 }
 
 export function matchExplicitPersonSearchText(value: unknown): ExplicitPersonSearchMatch | null {
-  const query = decodeNested(String(value || "")).replace(/\+/gu, " ").normalize("NFKC");
+  const query = normalizeExplicitMediaText(decodeNested(String(value || "")).replace(/\+/gu, " "));
   const tokens = wordTokens(query);
   if (tokens.length < 2) return null;
   const normalized = tokens.map((token) => token.toLocaleLowerCase("en-US"));

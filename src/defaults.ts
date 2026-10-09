@@ -1,7 +1,7 @@
 import type { DeviceTarget, VigilState } from "./types.js";
 import { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./socialFeatureFilters.js";
-import { MULTILINGUAL_EXPLICIT_TERMS } from "./explicitMediaContext.js";
+import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_EXPLICIT_TERMS } from "./explicitMediaContext.js";
 
 export { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 
@@ -328,6 +328,7 @@ export const DEFAULT_EXPLICIT_SEARCH_TERMS = [
   "18%2b",
   "18plus",
   "18-plus",
+  ...ADDITIONAL_EXPLICIT_SEARCH_TERMS,
   ...MULTILINGUAL_EXPLICIT_TERMS
 ];
 

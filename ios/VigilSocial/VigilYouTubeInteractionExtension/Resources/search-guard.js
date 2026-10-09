@@ -125,6 +125,103 @@ const MULTILINGUAL_EXPLICIT_TERMS = [
     "pornografia", "pornografie", "pornografisch"
 ];
 const MULTILINGUAL_UNSPACED_LABELS = MULTILINGUAL_EXPLICIT_TERMS.filter(term => /[\p{Script=Han}\p{Script=Katakana}\p{Script=Hangul}]/u.test(term));
+// Explicit-media labels and services, rather than general anatomy, identities,
+// relationship words or sexual-health vocabulary. Ambiguous words belong in
+// the phrase matcher below and in verified SafeSearch evidence, never here.
+const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
+    "pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos",
+    "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes",
+    "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate",
+    "futanari", "ecchi"
+];
+// Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
+// product IDs. Ordinary subjects retain their own accents and spellings.
+const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+    { pattern: /\b(?:nak3d|n4ked|n4k3d)\b/giu.source, replacement: "naked" },
+    { pattern: /\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b/giu.source, replacement: "nudes" },
+    { pattern: /\b(?:ph0t0s|ph0tos|phot0s)\b/giu.source, replacement: "photos" },
+    { pattern: /\bn[\s_.-]+a[\s_.-]+k[\s_.-]+e[\s_.-]+d\b/giu.source, replacement: "naked" },
+    { pattern: /\bn[\s_.-]+u[\s_.-]+d[\s_.-]+e(?:[\s_.-]+s)?\b/giu.source, replacement: "nudes" },
+    { pattern: /\bp[\s_.-]+[o0][\s_.-]+r[\s_.-]+n\b/giu.source, replacement: "porn" },
+    { pattern: /\b(naked|nudes?|topless|bottomless|adult|sex)(girls?|boys?|women|woman|men|males?|females?|models?|videos?|vids?|photos?|pics?|images?)\b/giu.source, replacement: "$1 $2" }
+];
+// Each exception consumes only the established nonsexual phrase. Adding an
+// unrelated word to a nude-person query therefore cannot excuse that query,
+// and a separate explicit phrase remains visible to the matcher.
+const EXPLICIT_MEDIA_ORDINARY_PHRASES = [
+    /\bnaked[\s_-]+(?:eyes?|mole[\s_-]+rats?|neck[\s_-]+chickens?|singularit(?:y|ies)|dna|seeds?|calls?|puts?|short[\s_-]+(?:selling|positions?)|stocks?|options?|economics|wires?|cables?|roofs?|trucks?|cakes?|burrito(?:[\s_-]+bowls?)?)\b/giu.source,
+    /\b(?:bare[\s_-]+naked[\s_-]+ladies|barenaked[\s_-]+ladies|naked[\s_-]+(?:gun|truth|lunch|brothers[\s_-]+band|king|snake|cowboy|chef))\b/giu.source,
+    /\b(?:nude[\s_-]+descending[\s_-]+(?:a[\s_-]+)?staircase|(?:the[\s_-]+)?naked[\s_-]+maja|blue[\s_-]+nude[\s_-]+matisse)\b/giu.source,
+    /\bnude[\s_-]+(?:sculptures?|statues?|figure[\s_-]+drawings?|lipsticks?|makeup|nail[\s_-]+polish|nails?|palettes?|manicures?|beige[\s_-]+swatches?|(?:colou?red[\s_-]+)?(?:shoes?|heels?|dresses?|clothing|outfits?|fabrics?|shades?|colou?rs?))\b/giu.source,
+    /\b(?:see[\s_-]+through|seethrough)[\s_-]+(?:glass|windows?|fabrics?|curtains?|materials?)\b/giu.source,
+    /\b(?:topless[\s_-]+trucks?|bottomless[\s_-]+(?:coffee|mimosas?|brunch|pits?))\b/giu.source,
+    /\bstripping[\s_-]+(?:paint|wallpaper|furniture|wood|floors?|ions?|bond[\s_-]+coupons?|thyme[\s_-]+leaves)\b/giu.source,
+    /\b(?:boston[\s_-]+cream[\s_-]+pies?|cream[\s_-]+pies?[\s_-]+baker(?:y|ies)|cum[\s_-]+laude)\b/giu.source,
+    /\b(?:blue|great|coal|crested|marsh|willow|bearded|long[\s_-]+tailed)[\s_-]+tits?\b/giu.source,
+    /\b(?:tits?[\s_-]+bird[\s_-]+species|boobies[\s_-]+galapagos[\s_-]+birds?|(?:blue[\s_-]+footed|red[\s_-]+footed|brown|masked|nazca)[\s_-]+boobies|cock[\s_-]+(?:pheasants?|sparrows?|roosters?|robins?)|wild[\s_-]+asses|pussy[\s_-]+willows?)\b/giu.source,
+    /\b(?:horny[\s_-]+(?:toads?|goat[\s_-]+weed)|adult[\s_-]+(?:butterflies|birds?|fish|animals?|insects?))\b/giu.source,
+    /\b(?:oral[\s_-]+(?:thrush|feeding|arguments?|presentations?|exams?|hygiene|fixation[\s_-]+shakira)|(?:assisted[\s_-]+)?oral[\s_-]+feeding|anal[\s_-]+fistulas?)\b/giu.source,
+    /\b(?:sex[\s_-]+(?:education|determination|differences|changing|chromosomes?)|sexual[\s_-]+(?:health|reproduction|dimorphism|selection|orientation|harassment|assault)|same[\s_-]+sex|opposite[\s_-]+sex)\b/giu.source,
+    /\b(?:breast[\s_-]+(?:reconstruction|feeding|tissue[\s_-]+histology)|buttocks[\s_-]+stretching|feet[\s_-]+pain|thighs?[\s_-]+exercises?|cleavage[\s_-]+(?:crystal|mineral))\b/giu.source,
+    /\b(?:sex[\s_-]+pistols|dick[\s_-]+(?:van[\s_-]+dyke|tracy|clark)|moby[\s_-]+dick|hot[\s_-]+money|penetration[\s_-]+(?:pricing|testing|tests?))\b/giu.source,
+    /\b(?:fingering[\s_-]+(?:guitar|piano|music)|(?:guitar|piano)[\s_-]+fingering|strip[\s_-]+tease[\s_-]+rose(?=[\s_-]+(?:growing|garden|plant)))\b/giu.source,
+    /\bleak(?:s|ed)?[\s_-]+(?:(?:pentagon|government|classified|court|source)[\s_-]+)?(?:documents?|data|databases?|passwords?|code|pipes?|aquariums?|gardening)\b/giu.source
+];
+const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, replacement }) => ({ pattern: new RegExp(pattern, "giu"), replacement }));
+const ordinaryPhrasePatterns = EXPLICIT_MEDIA_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
+const explicitHomoglyphs = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "Α": "A" };
+function normalizeExplicitVocabulary(value) {
+    let text = String(value || "").normalize("NFKC")
+        .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
+        .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""));
+    text = text.replace(/[\p{L}\p{N}]+/gu, token => {
+        const folded = token.replace(/[аеорсхіуΑ]/gu, letter => explicitHomoglyphs[letter]).toLowerCase();
+        return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded) ? folded : token;
+    });
+    for (const { pattern, replacement } of vocabularyReplacements)
+        text = text.replace(pattern, replacement);
+    return text;
+}
+function normalizeExplicitMediaText(value) {
+    let text = normalizeExplicitVocabulary(value);
+    for (const pattern of ordinaryPhrasePatterns)
+        text = text.replace(pattern, " vigilordinary ");
+    return text;
+}
+const EXPLICIT_SEARCH_ALIAS_PATTERNS = [
+    /^\s*(?:nud(?:s|3s?)?|nudes)\s*$/iu.source,
+    /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.source
+];
+function containsExplicitSearchAliases(value) {
+    const text = normalizeExplicitVocabulary(value);
+    return EXPLICIT_SEARCH_ALIAS_PATTERNS.some(pattern => new RegExp(pattern, "iu").test(text));
+}
+// Sources also generate the native phone matcher. All evidence and exceptions
+// are bounded to four words either side; an unrelated paragraph cannot supply
+// a sexual clue or cancel a separate explicit phrase.
+const EXPLICIT_MEDIA_PATTERNS = {
+    exposure: /^(?:nud|nuds|nudes?|nued|nudity|naked|nakedness|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|fullfrontal|seethrough|upskirt|downblouse|nipslips?|cameltoe)$/u.source,
+    sexual: /^(?:erotic|erotica|lewd|horny|sensual|seductive|sex|sexual|sexually|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage)$/u.source,
+    acts: /^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|ejaculation|fingering|selfpleasure|creampies?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting)$/u.source,
+    strongActs: /^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|bukkake|gangbangs?|fucking|selfpleasure|upskirt|downblouse|nipslips?|cameltoe)$/u.source,
+    connectors: /^(?:a|an|the|of|with|who|that|are|is|were|was|be|being|their|very|really|absolutely|totally|completely|fully|amazingly|beautiful|gorgeous|amazing|pretty|lovely)$/u.source,
+    body: /^(?:boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?)$/u.source,
+    people: /^(?:girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?)$/u.source,
+    media: /^(?:videos?|vids?|movies?|films?|clips?|photos?|pics?|pictures?|images?|gifs?|galler(?:y|ies)|albums?|wallpapers?|footage|streams?|livestreams?|webcams?|compilations?|documentar(?:y|ies)|animations?|animated|illustrations?|comics?|manga|hentai|audios?)$/u.source,
+    marketing: /^(?:adults?|spicy|mature|steamy|uncensored|unfiltered|uncut|explicit|revealing|suggestive|provocative|teasing|tease|thirst|thirsttraps?|nsfl)$/u.source,
+    ordinary: /^(?:recipes?|cooking|baking|food|desserts?|kitchen|chicken|sauce|peppers?|banana|chocolate|coconut|vanilla|pastry|education|educational|learning|classes|training|tutorials?|fitness|medical|medicine|health|anatomy|clinical|diagnosis|symptoms?|treatment|cancer|screening|mammography|reconstruction|surgery|histology|breastfeeding|lactation|consent|prevention|safety|research|scientific|biology|orientation|identity|identities|gender|genders|equality|rights|discrimination|harassment|assault|abuse|violence|victims?|survivors?|legal|laws?)$/u.source,
+    relationship: /^(?:same|opposite|biological|assigned)$/u.source,
+    bodyContext: /^(?:art|arts|drawing|paintings?|sculptures?|museum|exhibitions?|makeup|lipstick|palettes?|manicures?|nails?|skincare|cakes?|dresses?|clothing|outfits?|fabric|fabrics|shades?|colors?|colours?)$/u.source,
+    ordinaryBody: /^(?:presentations?|exams?|examinations?|hygiene|dentists?|dental|languages?|history|historical|measurement|measurements|inches|inch|meters?|metres?|conversion|convert|shoes?|socks?|walking|running|birds?|roosters?|cats?|kittens?|donkeys?|moby|dyke|dickens|mountains?|sailing|storms?)$/u.source,
+    ambiguousBody: /^(?:oral|anal|penetration|bondage|feet|soles|thighs?|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies)$/u.source,
+    nonsexualExposure: /^(?:eye|eyes|mole|rats?|roof|roofs|paint|wallpaper|wire|wires|cable|cables|furniture|wood|floor|floors|truck|trucks|pit|pits|coffee|portafilter|stocks?|options?|probability)$/u.source
+};
+const explicitMediaPatterns = Object.fromEntries(Object.entries(EXPLICIT_MEDIA_PATTERNS)
+    .map(([name, source]) => [name, new RegExp(source, "u")]));
+function containsAdditionalExplicitSearchTerm(value) {
+    const tokens = normalizeExplicitVocabulary(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+    return tokens.some(token => ["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS].includes(token));
+}
 function containsMultilingualExplicitText(value) {
     const text = String(value || "").normalize("NFKC")
         .replace(/[\u200b-\u200d\u2060\ufeff\u0640]/gu, "")
@@ -147,38 +244,164 @@ function containsMultilingualExplicitText(value) {
 function containsContextualExplicitMedia(value) {
     if (containsMultilingualExplicitText(value))
         return true;
-    const text = String(value || "").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase();
+    if (containsAdditionalExplicitSearchTerm(value))
+        return true;
+    const text = normalizeExplicitMediaText(value).toLowerCase();
     if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
         return true;
-    const tokens = text.replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
+    const tokens = text.replace(/\b(?:without(?:[\s_-]+any)?|with[\s_-]+no)[\s_-]+clothes\b/gu, "naked")
+        .replace(/\b(?:wearing[\s_-]+nothing|(?:in[\s_-]+(?:the|their|a)[\s_-]+)?birthday[\s_-]+suits?|in[\s_-]+the[\s_-]+buff)\b/gu, "naked")
+        .replace(/\b(?:pleasur(?:ing|e)[\s_-]+(?:myself|herself|himself|themselves)|playing[\s_-]+with[\s_-]+(?:myself|herself|himself|themselves)|self[\s_-]+pleasure)\b/gu, "selfpleasure")
+        .replace(/\bup[\s_-]+skirt\b/gu, "upskirt").replace(/\bdown[\s_-]+blouse\b/gu, "downblouse")
+        .replace(/\bstrip[\s_-]+tease\b/gu, "striptease").replace(/\bnip[\s_-]+slips?\b/gu, "nipslip")
+        .replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie")
+        .replace(/\bfull[\s_\p{Pd}]+frontal\b/gu, "fullfrontal")
+        .replace(/\bsee[\s_\p{Pd}]+through\b/gu, "seethrough").match(/[\p{L}\p{N}]+/gu) || [];
+    const { exposure, sexual, acts, strongActs, connectors, body, people, media, marketing, ordinary, relationship, bodyContext, ordinaryBody, ambiguousBody, nonsexualExposure } = explicitMediaPatterns;
     const marker = /^(?:adults?|spicy|creampies?|nudes?|naked|nudity|erotic|erotica|lewd|x+)$/u;
     // Marketing adjectives need a stronger nearby clue; "mature film" and
     // "uncensored interview" alone do not establish explicit content.
     const contributor = /^(?:mature|steamy|uncensored)$/u;
-    const media = /^(?:videos?|vids?|movies?|films?|clips?|photos?|pics?|pictures?|documentar(?:y|ies)|compilations?)$/u;
-    const ordinary = /^(?:recipes?|cooking|baking|food|desserts?|kitchen|chicken|sauce|peppers?|banana|chocolate|coconut|vanilla|pastry|education|educational|learning|classes|training|tutorials?|fitness)$/u;
-    const bodyContext = /^(?:art|arts|drawing|paintings?|sculptures?|museum|exhibitions?|anatomy|medical|medicine|health|makeup|lipstick|palettes?|manicures?|nails?|skincare|cakes?)$/u;
     for (let index = 0; index < tokens.length; index += 1) {
-        if (!marker.test(tokens[index]))
+        const token = tokens[index];
+        const directPerson = [1, -1].some(direction => {
+            for (let offset = 1; offset <= 12; offset += 1) {
+                const adjacent = tokens[index + direction * offset];
+                if (!adjacent)
+                    return false;
+                if (people.test(adjacent))
+                    return true;
+                if (!connectors.test(adjacent))
+                    return false;
+            }
+            return false;
+        });
+        if ((exposure.test(token) || token === "bare") && directPerson)
+            return true;
+        if (!(marker.test(token) || exposure.test(token) || sexual.test(token) || acts.test(token)
+            || body.test(token) || marketing.test(token) || /^(?:sexy|hot)$/u.test(token)))
             continue;
         // Both orders work; unrelated text elsewhere on a page supplies neither
         // evidence nor an exemption. Ordinary context only qualifies these weak
         // markers and cannot override existing explicit terms or X-rated labels.
         const nearby = tokens.slice(Math.max(0, index - 4), index + 5);
+        if (strongActs.test(token) && nearby.some(word => media.test(word) || people.test(word)))
+            return true;
         if (/^x{1,2}$/u.test(tokens[index]) && nearby.some(token => /^(?:model|men|files|axis|chromosomes?)$/u.test(token)))
             continue;
         if (nearby.some(token => ordinary.test(token)))
             continue;
-        if (/^(?:nudes?|naked|nudity|erotic|erotica|lewd)$/u.test(tokens[index]) && nearby.some(token => bodyContext.test(token)))
+        if (token === "sex" && nearby.some(word => relationship.test(word)))
             continue;
-        if (tokens[index] === "naked" && nearby.some(token => /^(?:eye|mole|rats?)$/u.test(token)))
+        if (ambiguousBody.test(token) && nearby.some(word => ordinaryBody.test(word)))
             continue;
-        if (nearby.some(token => media.test(token)))
+        if ((exposure.test(token) || sexual.test(token) || body.test(token) || /^(?:sexy|hot)$/u.test(token))
+            && nearby.some(word => bodyContext.test(word)))
+            continue;
+        if (exposure.test(token) && nearby.some(word => nonsexualExposure.test(word)))
+            continue;
+        const others = nearby.filter((_word, offset) => Math.max(0, index - 4) + offset !== index);
+        // Hot is too broad for generic media (weather, music, food). Sexy clothing
+        // and isolated anatomy or fetish terms likewise need a qualifying phrase.
+        if (/^(?:sexy|hot)$/u.test(token)) {
+            if (others.some(word => people.test(word)))
+                return true;
+            continue;
+        }
+        if (exposure.test(token) || sexual.test(token) || acts.test(token)) {
+            if (others.some(word => media.test(word) || people.test(word) || body.test(word)
+                || exposure.test(word) || sexual.test(word) || acts.test(word) || marketing.test(word)))
+                return true;
+        }
+        if (body.test(token) && others.some(word => media.test(word) || exposure.test(word) || sexual.test(word)))
             return true;
-        if (nearby.some(token => token !== tokens[index] && (marker.test(token) || contributor.test(token))))
+        if (marker.test(token) && others.some(word => media.test(word) || marker.test(word) || contributor.test(word)))
+            return true;
+        if (marketing.test(token) && others.some(word => exposure.test(word) || sexual.test(word) || acts.test(word)))
             return true;
     }
     return false;
+}
+
+// Search text belongs to declared query fields and discovery routes. Do not
+// turn arbitrary URL metadata or route scaffolding into apparent search words.
+const SEARCH_PARAMETER_NAMES = new Set([
+    "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
+    "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
+]);
+const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+)(?=\/|$)/iu;
+const STRUCTURED_SEARCH_PARAMETER_PATTERN = /^(q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)\[(\d*|q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|word|tags|tag)\]$/iu;
+function decodeSearchQueryValue(value) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        const next = value.replace(/(?:%[a-f0-9]{2})+/giu, run => {
+            try {
+                return decodeURIComponent(run);
+            }
+            catch {
+                return run.replace(/%([a-f0-9]{2})/giu, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+            }
+        });
+        if (next === value)
+            break;
+        value = next;
+    }
+    // URLSearchParams already decodes query separators. A percent-encoded plus
+    // is literal content (for example 18+) and must survive nested decoding.
+    return value;
+}
+function isProtectedSearchParameter(name, onSearchRoute = false) {
+    const normalized = decodeSearchQueryValue(name).toLowerCase();
+    return SEARCH_PARAMETER_NAMES.has(normalized)
+        || (onSearchRoute && STRUCTURED_SEARCH_PARAMETER_PATTERN.test(normalized));
+}
+function searchRoutePath(value) {
+    return decodeSearchQueryValue(value.replace(/^#!?/u, "").split("?", 1)[0]);
+}
+function looksLikeSearchRoute(value) {
+    return SEARCH_ROUTE_CONTEXT_PATTERN.test(searchRoutePath(value));
+}
+function searchRouteText(value) {
+    const path = searchRoutePath(value);
+    const match = SEARCH_ROUTE_CONTEXT_PATTERN.exec(path);
+    if (!match)
+        return null;
+    // An embedded tag carries its value in the route segment itself. Keep that
+    // segment so the existing platform-specific tag-adult rule retains context.
+    const start = match[1].toLowerCase().startsWith("tag-")
+        ? match.index + match[0].length - match[1].length
+        : match.index + match[0].length;
+    return path.slice(start).replace(/^\/+|\/+$/gu, "");
+}
+function searchQueries(value) {
+    let url;
+    try {
+        url = new URL(String(value || ""));
+    }
+    catch {
+        return [];
+    }
+    if (!["http:", "https:"].includes(url.protocol))
+        return [];
+    const fragment = url.hash.replace(/^#!?/u, "");
+    const pathIsSearch = looksLikeSearchRoute(url.pathname);
+    const fragmentIsSearch = looksLikeSearchRoute(fragment);
+    const queries = [...url.searchParams]
+        .filter(([name]) => isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch))
+        .map(([, query]) => decodeSearchQueryValue(query));
+    if (fragmentIsSearch) {
+        const queryStart = fragment.indexOf("?");
+        if (queryStart >= 0) {
+            queries.push(...[...new URLSearchParams(fragment.slice(queryStart + 1))]
+                .filter(([name]) => isProtectedSearchParameter(name, true))
+                .map(([, query]) => decodeSearchQueryValue(query)));
+        }
+    }
+    for (const route of [url.pathname, fragment]) {
+        const text = searchRouteText(route);
+        if (text)
+            queries.push(text);
+    }
+    return queries.map(query => ({ query, hostname: url.hostname }));
 }
 
 function containsExplicitMediaLabel(value) {
@@ -195,30 +418,13 @@ const CONTEXTUAL_SEARCH_PLATFORMS = [
 ];
 const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
 const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
-const CONTEXTUAL_SEARCH_PARAMETERS = new Set([
-    "q", "query", "search_query", "search", "searchterm", "search_term",
-    "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
-]);
-const CONTEXTUAL_SEARCH_ROUTE = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/]+)(?:[/?.#]|$)/iu;
 function contextualSearchDecode(value) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-        try {
-            const decoded = decodeURIComponent(value);
-            if (decoded === value)
-                break;
-            value = decoded;
-        }
-        catch {
-            break;
-        }
-    }
-    return value.replace(/\+/gu, " ").normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "");
+    return normalizeExplicitVocabulary(decodeSearchQueryValue(value));
 }
 // Bounded aliases and concatenated blocked words; never fuzzy-match arbitrary
 // substrings such as Middlesex, nudging, or an alphanumeric product identifier.
 function containsExplicitSearchVariants(query) {
-    return /^\s*nud(?:s|3s?)?\s*$/iu.test(contextualSearchDecode(query))
-        || /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(contextualSearchDecode(query));
+    return containsExplicitSearchAliases(contextualSearchDecode(query));
 }
 function containsContextualExplicitSearch(query, hostname = "", includeRedditShorthand = true) {
     const decoded = contextualSearchDecode(query);
@@ -246,7 +452,7 @@ function matchContextualExplicitSearchUrl(value) {
     try {
         const url = new URL(String(value || ""));
         return ["http:", "https:"].includes(url.protocol)
-            && [url.pathname, url.hash].some(path => containsMultilingualExplicitText(contextualSearchDecode(path)));
+            && [url.pathname, url.hash.split("?", 1)[0]].some(path => containsMultilingualExplicitText(contextualSearchDecode(path)));
     }
     catch {
         return false;
@@ -260,26 +466,8 @@ function containsExplicitXxxSearchText(query) {
 function matchExplicitXxxSearchUrl(value) {
     return searchQueries(value).some(({ query }) => containsExplicitXxxSearchText(query));
 }
-function searchQueries(value) {
-    let url;
-    try {
-        url = new URL(String(value || ""));
-    }
-    catch {
-        return [];
-    }
-    if (!["http:", "https:"].includes(url.protocol))
-        return [];
-    const queries = [...url.searchParams]
-        .filter(([name]) => CONTEXTUAL_SEARCH_PARAMETERS.has(name.toLowerCase()))
-        .map(([, query]) => query);
-    for (const route of [url.pathname, url.hash]) {
-        const decoded = contextualSearchDecode(route);
-        if (CONTEXTUAL_SEARCH_ROUTE.test(decoded))
-            queries.push(decoded);
-    }
-    return queries.map(query => ({ query, hostname: url.hostname }));
-}
+
+
 
 // SafeSearch being enabled is universal in Vigil. Only a notice about results
 // actually removed for this query supplies additional classification evidence.
@@ -287,44 +475,38 @@ function isSafeSearchLimitedNotice(value) {
     const text = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
     if (text.length > 600)
         return false;
-    return /\b(?:explicit|some|search) results (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search\b/iu.test(text)
-        || /\bresults (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search\b/iu.test(text)
-        || /\bsafe\s?search (?:has |have )?(?:filtered|limited|removed|hidden|blurred) (?:some |explicit |search )?results\b/iu.test(text);
+    // Evidence must be an affirmative result notice, not a substring inside
+    // "No results ...", an if-clause, or a help article quoting the notice.
+    const notice = text.match(/^(?:(?:(?:explicit|some|search) )?results (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search|safe\s?search (?:has |have )?(?:filtered|limited|removed|hidden|blurred) (?:some |explicit |search )?results)\b/iu);
+    if (!notice)
+        return false;
+    // Google's notices can include their normal explanation/settings links.
+    // Other trailing prose can instead describe, negate, or quote this wording.
+    const tail = text.slice(notice[0].length).replace(/^[\s.!:;\u2013\u2014-]+/u, "");
+    return !tail || /^(?:learn more|(?:change|manage|view|open) (?:your )?(?:safe\s?search )?settings)\b/iu.test(tail);
 }
 // These already-ambiguous media, exposure and search markers do not become
 // standalone bans. A real limited-results notice supplies the missing context.
-const SAFE_SEARCH_CONTRIBUTORS = /^(?:photos?|pics?|pictures?|images?|videos?|vids?|movies?|films?|clips?|documentar(?:y|ies)|compilations?|albums?|galler(?:y|ies)|collections?|links?|downloads?|folders?|files?|packs?|mirrors?|adults?|mature|steamy|spicy|uncensored|nud|nuds|nude|nudes|nued|nudity|naked|topless|erotic|erotica|lewd|fetish|sex|sexual|explicit|sensitive|intimate|leak|leaks|leaked|leakd|lek|leks|creampies?|x+|18|18g|r18g?|unreviewed|成人|成人向|成人向け|mega|gofile|pixl|cyberdrop|bunkr)$/u;
+const SAFE_SEARCH_CONTRIBUTORS = /^(?:photos?|pics?|pictures?|images?|videos?|vids?|movies?|films?|clips?|gifs?|wallpapers?|footage|streams?|livestreams?|webcams?|documentar(?:y|ies)|compilations?|animations?|illustrations?|comics?|manga|audios?|albums?|galler(?:y|ies)|collections?|links?|downloads?|folders?|files?|packs?|mirrors?|adults?|mature|steamy|spicy|uncensored|unfiltered|uncut|nud|nuds|nude|nudes|nued|nudity|naked|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|frontal|erotic|erotica|lewd|horny|sensual|seductive|sexualized|sexualised|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage|sex|sexual|sexually|sexy|hot|explicit|sensitive|intimate|revealing|suggestive|provocative|teasing|tease|thirst|thirsttraps?|nsfl|leak|leaks|leaked|leakd|lek|leks|creampies?|blowjobs?|handjobs?|cumshots?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting|boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?|girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?|cosplay|furry|furries|doujinshi|lingerie|underwear|bikinis?|swimsuits?|stockings|pantyhose|upskirt|downblouse|x+|18|18g|r18g?|unreviewed|成人|成人向|成人向け|mega|gofile|pixl|cyberdrop|bunkr)$/u;
 const SAFE_SEARCH_ORDINARY_CONTEXT = /\b(?:news|biograph(?:y|ies)|interviews?|journalism|research|education|educational|medical|medicine|anatomy|health|history|historical|science|museum|art|drawing|painting|sculpture|makeup|lipstick|recipes?|cooking|baking|chicken|peppers?|software|source code|documentation|security|tutorials?)\b/u;
 function safeSearchWords(value) {
-    let text = String(value || "");
-    for (let pass = 0; pass < 3; pass += 1) {
-        try {
-            const decoded = decodeURIComponent(text);
-            if (decoded === text)
-                break;
-            text = decoded;
-        }
-        catch {
-            break;
-        }
-    }
-    return text.normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase()
+    const text = decodeSearchQueryValue(String(value || ""));
+    return text.normalize("NFKC").replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "").toLowerCase()
         .replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
 }
 function hasSafeSearchContributor(value) {
-    const words = safeSearchWords(value);
-    return words.some(word => SAFE_SEARCH_CONTRIBUTORS.test(word));
+    return safeSearchWords(value).some(word => SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word)));
 }
 function hasOrdinarySafeSearchContext(value) {
-    return SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).join(" "));
+    return SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).map(word => normalizeExplicitVocabulary(word)).join(" "));
 }
 // Cache exact subjects rather than carrying an unsafe flag to an unrelated
 // search. Strip only media/navigation qualifiers, never part of a person's name.
 function safeSearchSubject(value) {
-    if (SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).join(" ")))
+    if (hasOrdinarySafeSearchContext(value))
         return "";
     const withoutSites = value.replace(/\bsite:\S+/giu, "");
-    const words = safeSearchWords(withoutSites).filter(word => !SAFE_SEARCH_CONTRIBUTORS.test(word)
+    const words = safeSearchWords(withoutSites).filter(word => !SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word))
         && !/^(?:a|an|the|and|of|for|in|on|with|free|full|hd|official|nz|io|com|it)$/u.test(word));
     return words.length >= 1 && words.length <= 6 && words.join(" ").length >= 4 ? words.join(" ") : "";
 }
@@ -375,10 +557,7 @@ function isExplicitLinkCollection(destinations, safeSearchEvidence) {
 }
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
-const EXPLICIT_SEARCH_PARAMETER_NAMES = new Set([
-    "q", "query", "search_query", "search", "searchterm", "search_term",
-    "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag"
-]);
+const EXPLICIT_SEARCH_PARAMETER_NAMES = SEARCH_PARAMETER_NAMES;
 const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
 const PERSON_EXPOSURE_MARKERS = new Set([
     "leak", "leaks", "leaked", "leakd", "lek", "leks",
@@ -399,6 +578,9 @@ const PERSON_LEAK_CONTEXT = new Set([
     "spec", "specs", "team", "transfer", "transfers", "tutorial", "tv", "water"
 ]);
 const PERSON_NUDE_CONTEXT = new Set([
+    "eye", "eyes", "cake", "cakes",
+    "truck", "trucks", "coffee", "paint", "roof", "roofs", "wire", "wires", "cable", "cables",
+    "stock", "stocks", "option", "options", "selling", "finance", "financial", "health", "education",
     "anatomy", "animal", "animals", "art", "arts", "artwork", "artworks", "beach", "beaches",
     "beige", "color", "colors", "colour", "colours", "drawing", "drawings", "fabric", "fashion",
     "figure", "figures", "lipstick", "makeup", "medical", "mice", "model", "models", "mole",
@@ -409,7 +591,6 @@ const PERSON_NUDE_CONTEXT = new Set([
 const PERSON_NAME_FILLER_WORDS = new Set([
     "a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"
 ]);
-const SEARCH_ROUTE_PATTERN = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/iu;
 const SEARCH_DESCRIPTOR_PATTERN = /(?:^|[-_\s])(?:search|query|keyword)(?:$|[-_\s])/iu;
 let lastInspectedSearchUrl = location.href;
 const SAFE_SEARCH_EVIDENCE_KEY = "vigil-safe-search-subjects-v1";
@@ -430,24 +611,15 @@ function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
         return null;
     if (matchContextualExplicitSearchUrl(url))
         return vigilBlockedSearchURL();
-    for (const [name, rawValue] of url.searchParams) {
-        if (!EXPLICIT_SEARCH_PARAMETER_NAMES.has(name.toLowerCase()))
-            continue;
-        if (containsExplicitSearchText(rawValue, url.hostname))
-            return vigilBlockedSearchURL();
-    }
-    const decodedPath = decodeNestedSearchValue(url.pathname);
-    const decodedHash = decodeNestedSearchValue(url.hash.replace(/^#/u, ""));
-    if ((SEARCH_ROUTE_PATTERN.test(decodedPath) && containsExplicitSearchText(decodedPath, url.hostname))
-        || (SEARCH_ROUTE_PATTERN.test(decodedHash) && containsExplicitSearchText(decodedHash, url.hostname))) {
+    if (searchQueries(url).some(({ query }) => containsExplicitSearchText(query, url.hostname)))
         return vigilBlockedSearchURL();
-    }
     return null;
 }
 function containsExplicitSearchText(rawValue, hostname = new URL(location.href).hostname, includeRedditShorthand = true) {
     const decoded = decodeNestedSearchValue(rawValue);
-    return EXPLICIT_SEARCH_PATTERN.test(decoded)
-        || EXPLICIT_SEARCH_PATTERN.test(decoded.replace(/\+/gu, " "))
+    const vocabulary = normalizeExplicitVocabulary(decoded);
+    return EXPLICIT_SEARCH_PATTERN.test(vocabulary)
+        || EXPLICIT_SEARCH_PATTERN.test(vocabulary.replace(/\+/gu, " "))
         || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
         || containsExplicitXxxSearchText(decoded)
         || containsExplicitPersonSearchText(decoded)
@@ -477,7 +649,7 @@ function hasCurrentSafeSearchEvidence() {
 }
 function sameSafeSearchQuery(first, second) {
     const normalize = (value) => decodeNestedSearchValue(value).normalize("NFKC")
-        .replace(/\+/gu, " ").replace(/[\u200b-\u200d\ufeff]/gu, "").replace(/\s+/gu, " ").trim().toLowerCase();
+        .replace(/\+/gu, " ").replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "").replace(/\s+/gu, " ").trim().toLowerCase();
     return Boolean(second && normalize(first) === normalize(second));
 }
 function safeSearchContextStorage() {
@@ -516,6 +688,7 @@ function observeSafeSearchNotice() {
     const query = currentGoogleSearchQuery();
     if (!query)
         return;
+    const excludedText = "#rso, article, h3, pre, code, blockquote, q, figcaption";
     const candidates = new Set(document.querySelectorAll("[role='alert'], [role='status'], [role='dialog'], [aria-live], #taw, #taw *, #topstuff, #topstuff *, #botstuff, #botstuff *"));
     for (const link of document.querySelectorAll("a[href*='safesearch' i]")) {
         let parent = link;
@@ -524,7 +697,7 @@ function observeSafeSearchNotice() {
     }
     for (const candidate of candidates) {
         // Search snippets, quoted documentation and hidden settings are not notices.
-        if (candidate.closest("#rso, article, a, h3, pre, code") || candidate.querySelector("h3") || !visibleContextElement(candidate))
+        if (candidate.closest(`${excludedText}, a`) || candidate.querySelector("h3") || !visibleContextElement(candidate))
             continue;
         let resultCard = false;
         for (let parent = candidate.parentElement; parent && parent !== document.body && parent !== document.documentElement
@@ -539,7 +712,8 @@ function observeSafeSearchNotice() {
         let notice = "";
         const walker = document.createTreeWalker(candidate, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node && notice.length <= 600; node = walker.nextNode()) {
-            if (node.parentElement && visibleContextElement(node.parentElement))
+            if (node.parentElement && !node.parentElement.closest(excludedText)
+                && visibleContextElement(node.parentElement))
                 notice += `${node.textContent || ""} `;
         }
         if (isSafeSearchLimitedNotice(notice)) {
@@ -744,7 +918,7 @@ function installSafeSearchContextGuard() {
     addEventListener("hashchange", scheduleScan, true);
 }
 function containsExplicitPersonSearchText(rawValue) {
-    const query = decodeNestedSearchValue(rawValue).replace(/\+/gu, " ").normalize("NFKC");
+    const query = normalizeExplicitMediaText(decodeNestedSearchValue(rawValue).replace(/\+/gu, " "));
     const tokens = query.match(/[\p{L}\p{M}][\p{L}\p{M}'’.-]*/gu)
         ?.map(token => token.replace(/^[^\p{L}\p{M}]+|[^\p{L}\p{M}]+$/gu, ""))
         .filter(Boolean) || [];
@@ -780,19 +954,7 @@ function startsWithUppercaseLetter(value) {
     return Boolean(first && first === first.toLocaleUpperCase("en-US") && first !== first.toLocaleLowerCase("en-US"));
 }
 function decodeNestedSearchValue(rawValue) {
-    let value = rawValue;
-    for (let pass = 0; pass < 3; pass += 1) {
-        try {
-            const decoded = decodeURIComponent(value);
-            if (decoded === value)
-                break;
-            value = decoded;
-        }
-        catch {
-            break;
-        }
-    }
-    return value;
+    return decodeSearchQueryValue(rawValue);
 }
 function googleSafeSearchRedirect(rawUrl, baseUrl = location.href) {
     let url;
@@ -896,8 +1058,8 @@ function formDataEntries(form, submitter) {
 }
 function explicitSearchTextFromForm(form, fields) {
     const formIsSearch = elementLooksLikeSearchContainer(form)
-        || SEARCH_ROUTE_PATTERN.test(form.action || "");
-    if (fields.some(([name, value]) => ((formIsSearch || EXPLICIT_SEARCH_PARAMETER_NAMES.has(name.toLowerCase()))
+        || looksLikeSearchRoute(form.action || "");
+    if (fields.some(([name, value]) => (isProtectedSearchParameter(name, formIsSearch)
         && containsExplicitSearchText(value))))
         return true;
     const controls = form.elements ? Array.from(form.elements) : [];
@@ -937,6 +1099,17 @@ function isSearchControl(value) {
     if (!editable && tagName !== "input" && tagName !== "textarea")
         return false;
     const type = (value.getAttribute("type") || "").toLowerCase();
+    // Tracking fields, checkboxes and submit labels are not user search text.
+    // Real hidden query fields are still checked through URL/submission policy.
+    if (tagName === "input" && !["", "text", "search"].includes(type))
+        return false;
+    if (value.closest("[hidden], [aria-hidden='true']") || value.getAttribute("disabled") !== null)
+        return false;
+    if (typeof getComputedStyle === "function") {
+        const style = getComputedStyle(value);
+        if (style.display === "none" || style.visibility === "hidden")
+            return false;
+    }
     const role = (value.getAttribute("role") || "").toLowerCase();
     const descriptor = [
         value.getAttribute("name"), value.getAttribute("id"), value.getAttribute("aria-label"),

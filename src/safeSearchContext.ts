@@ -1,43 +1,46 @@
+import { normalizeExplicitVocabulary } from "./explicitMediaContext.js";
+import { decodeSearchQueryValue } from "./searchQueryContext.js";
+
 // SafeSearch being enabled is universal in Vigil. Only a notice about results
 // actually removed for this query supplies additional classification evidence.
 export function isSafeSearchLimitedNotice(value: string): boolean {
   const text = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
   if (text.length > 600) return false;
-  return /\b(?:explicit|some|search) results (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search\b/iu.test(text)
-    || /\bresults (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search\b/iu.test(text)
-    || /\bsafe\s?search (?:has |have )?(?:filtered|limited|removed|hidden|blurred) (?:some |explicit |search )?results\b/iu.test(text);
+  // Evidence must be an affirmative result notice, not a substring inside
+  // "No results ...", an if-clause, or a help article quoting the notice.
+  const notice = text.match(/^(?:(?:(?:explicit|some|search) )?results (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search|safe\s?search (?:has |have )?(?:filtered|limited|removed|hidden|blurred) (?:some |explicit |search )?results)\b/iu);
+  if (!notice) return false;
+  // Google's notices can include their normal explanation/settings links.
+  // Other trailing prose can instead describe, negate, or quote this wording.
+  const tail = text.slice(notice[0].length).replace(/^[\s.!:;\u2013\u2014-]+/u, "");
+  return !tail || /^(?:learn more|(?:change|manage|view|open) (?:your )?(?:safe\s?search )?settings)\b/iu.test(tail);
 }
 
 // These already-ambiguous media, exposure and search markers do not become
 // standalone bans. A real limited-results notice supplies the missing context.
-const SAFE_SEARCH_CONTRIBUTORS = /^(?:photos?|pics?|pictures?|images?|videos?|vids?|movies?|films?|clips?|documentar(?:y|ies)|compilations?|albums?|galler(?:y|ies)|collections?|links?|downloads?|folders?|files?|packs?|mirrors?|adults?|mature|steamy|spicy|uncensored|nud|nuds|nude|nudes|nued|nudity|naked|topless|erotic|erotica|lewd|fetish|sex|sexual|explicit|sensitive|intimate|leak|leaks|leaked|leakd|lek|leks|creampies?|x+|18|18g|r18g?|unreviewed|成人|成人向|成人向け|mega|gofile|pixl|cyberdrop|bunkr)$/u;
+const SAFE_SEARCH_CONTRIBUTORS = /^(?:photos?|pics?|pictures?|images?|videos?|vids?|movies?|films?|clips?|gifs?|wallpapers?|footage|streams?|livestreams?|webcams?|documentar(?:y|ies)|compilations?|animations?|illustrations?|comics?|manga|audios?|albums?|galler(?:y|ies)|collections?|links?|downloads?|folders?|files?|packs?|mirrors?|adults?|mature|steamy|spicy|uncensored|unfiltered|uncut|nud|nuds|nude|nudes|nued|nudity|naked|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|frontal|erotic|erotica|lewd|horny|sensual|seductive|sexualized|sexualised|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage|sex|sexual|sexually|sexy|hot|explicit|sensitive|intimate|revealing|suggestive|provocative|teasing|tease|thirst|thirsttraps?|nsfl|leak|leaks|leaked|leakd|lek|leks|creampies?|blowjobs?|handjobs?|cumshots?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting|boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?|girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?|cosplay|furry|furries|doujinshi|lingerie|underwear|bikinis?|swimsuits?|stockings|pantyhose|upskirt|downblouse|x+|18|18g|r18g?|unreviewed|成人|成人向|成人向け|mega|gofile|pixl|cyberdrop|bunkr)$/u;
 const SAFE_SEARCH_ORDINARY_CONTEXT = /\b(?:news|biograph(?:y|ies)|interviews?|journalism|research|education|educational|medical|medicine|anatomy|health|history|historical|science|museum|art|drawing|painting|sculpture|makeup|lipstick|recipes?|cooking|baking|chicken|peppers?|software|source code|documentation|security|tutorials?)\b/u;
 
 function safeSearchWords(value: string): string[] {
-  let text = String(value || "");
-  for (let pass = 0; pass < 3; pass += 1) {
-    try { const decoded = decodeURIComponent(text); if (decoded === text) break; text = decoded; }
-    catch { break; }
-  }
-  return text.normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase()
+  const text = decodeSearchQueryValue(String(value || ""));
+  return text.normalize("NFKC").replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "").toLowerCase()
     .replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
 }
 
 export function hasSafeSearchContributor(value: string): boolean {
-  const words = safeSearchWords(value);
-  return words.some(word => SAFE_SEARCH_CONTRIBUTORS.test(word));
+  return safeSearchWords(value).some(word => SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word)));
 }
 
 export function hasOrdinarySafeSearchContext(value: string): boolean {
-  return SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).join(" "));
+  return SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).map(word => normalizeExplicitVocabulary(word)).join(" "));
 }
 
 // Cache exact subjects rather than carrying an unsafe flag to an unrelated
 // search. Strip only media/navigation qualifiers, never part of a person's name.
 export function safeSearchSubject(value: string): string {
-  if (SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).join(" "))) return "";
+  if (hasOrdinarySafeSearchContext(value)) return "";
   const withoutSites = value.replace(/\bsite:\S+/giu, "");
-  const words = safeSearchWords(withoutSites).filter(word => !SAFE_SEARCH_CONTRIBUTORS.test(word)
+  const words = safeSearchWords(withoutSites).filter(word => !SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word))
     && !/^(?:a|an|the|and|of|for|in|on|with|free|full|hd|official|nz|io|com|it)$/u.test(word));
   return words.length >= 1 && words.length <= 6 && words.join(" ").length >= 4 ? words.join(" ") : "";
 }
