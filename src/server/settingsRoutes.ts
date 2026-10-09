@@ -1,6 +1,5 @@
+import { RETIRED_SETTING_KEYS } from "../retiredFeatures.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { minecraftAudioCatalog } from "../../public/minecraft-audio-catalog.js";
-import { sacredAudioCatalog } from "../../public/sacred-audio-catalog.js";
 import { adultBlocklistSource, invalidateAdultBlocklistIfSourceChanged } from "../adultBlocklist.js";
 import { parseBoolean } from "../booleans.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -74,6 +73,8 @@ export function updateSettings(
   if (settings.protectedBrowsersOnly && Object.hasOwn(body, "protectedBrowsersOnly") && !parseBoolean(body.protectedBrowsersOnly)) {
     throw new Error("Protected-browser enforcement cannot be disabled.");
   }
+  const retired = Object.keys(body).filter(key => RETIRED_SETTING_KEYS.has(key));
+  if (retired.length) throw Object.assign(new Error(`These settings have been retired: ${retired.join(", ")}.`), { status: 410 });
   const draft = { ...settings };
   const context: SettingMutationContext = { profileIds: new Set(profileIds) };
   const updated: string[] = [];
@@ -98,15 +99,6 @@ const SETTINGS_WITHOUT_IMMEDIATE_ENFORCEMENT = new Set([
   "panicLockDurationMinutes",
   "intentReasonEnabled",
   "intentReasonMinLength",
-  "focusSoundEnabled",
-  "focusSoundMode",
-  "focusSoundActivity",
-  "focusSoundPreset",
-  "focusSoundIntensity",
-  "focusSoundTimerMode",
-  "focusSoundTimerMinutes",
-  "focusSoundBreakMinutes",
-  "focusSoundVolume",
   "typingChallengeEnabled",
   "interventionEnabled",
   "interventionWindowMinutes",
@@ -175,6 +167,7 @@ function profileIdSetting<Key extends "activeProfileId" | "baselineProfileId">(k
   return {
     apply(settings, value, context) {
       const profileId = String(value || "").trim();
+      if (profileId === "soft-block") throw Object.assign(new Error("Soft Lock has been retired."), { status: 410 });
       if (!profileId || !context.profileIds.has(profileId)) {
         throw settingsError(`Unknown profile for ${key}.`);
       }
@@ -204,75 +197,38 @@ const SETTING_MUTATIONS = {
   pollIntervalMs: numberSetting("pollIntervalMs"),
   idleUsageTrackingEnabled: booleanSetting("idleUsageTrackingEnabled"),
   idleUsageThresholdSeconds: numberSetting("idleUsageThresholdSeconds", { min: 30, max: 3600 }),
-  strictByDefault: booleanSetting("strictByDefault"),
+  strictByDefault: alwaysEnabledBooleanSetting("strictByDefault"),
   emergencyTokensPerWeek: numberSetting("emergencyTokensPerWeek"),
   emergencyDelaySeconds: numberSetting("emergencyDelaySeconds"),
   panicLockDurationMinutes: numberSetting("panicLockDurationMinutes", { min: 1, max: 1440 }),
-  intentReasonEnabled: booleanSetting("intentReasonEnabled"),
+  intentReasonEnabled: alwaysEnabledBooleanSetting("intentReasonEnabled"),
   intentReasonMinLength: numberSetting("intentReasonMinLength", { min: 1, max: 280 }),
-  focusSoundEnabled: booleanSetting("focusSoundEnabled"),
-  focusSoundMode: enumSetting("focusSoundMode", ["focus", "relax", "sleep", "meditate"]),
-  focusSoundActivity: enumSetting("focusSoundActivity", [
-    "deep-work",
-    "creative-flow",
-    "learning",
-    "light-work",
-    "motivation",
-    "recharge",
-    "destress",
-    "wind-down",
-    "power-nap",
-    "guided",
-    "unguided"
-  ]),
-  focusSoundPreset: enumSetting("focusSoundPreset", [
-    "brown-noise", "pink-noise", "white-noise", "rain", "ocean", "storm", "stream", "binaural-beat", "isochronic-tone",
-    "bach-goldberg-aria", "bach-invention-8", "bach-italian-concerto", "handel-harmonious-blacksmith", "scarlatti-sonata-k87", "scarlatti-sonata-k466",
-    ...sacredAudioCatalog.map((track) => track.id),
-    ...minecraftAudioCatalog.map((track) => track.id)
-  ]),
-  focusSoundIntensity: enumSetting("focusSoundIntensity", ["low", "medium", "high"]),
-  focusSoundTimerMode: enumSetting("focusSoundTimerMode", ["infinite", "timer", "interval"]),
-  focusSoundTimerMinutes: numberSetting("focusSoundTimerMinutes", { min: 1, max: 480 }),
-  focusSoundBreakMinutes: numberSetting("focusSoundBreakMinutes", { min: 1, max: 120 }),
-  focusSoundVolume: numberSetting("focusSoundVolume", { min: 0, max: 100 }),
-  typingChallengeEnabled: booleanSetting("typingChallengeEnabled"),
+  typingChallengeEnabled: alwaysEnabledBooleanSetting("typingChallengeEnabled"),
   interventionEnabled: booleanSetting("interventionEnabled"),
   interventionWindowMinutes: numberSetting("interventionWindowMinutes"),
   interventionThreshold: numberSetting("interventionThreshold"),
   interventionExtraDelaySeconds: numberSetting("interventionExtraDelaySeconds"),
   interventionMaxExtraDelaySeconds: numberSetting("interventionMaxExtraDelaySeconds"),
-  intentionalUseEnabled: booleanSetting("intentionalUseEnabled"),
-  baselineDailyMinutes: numberSetting("baselineDailyMinutes"),
-  focusScoreGoal: numberSetting("focusScoreGoal"),
   activeProfileId: profileIdSetting("activeProfileId"),
   baselineProfileId: profileIdSetting("baselineProfileId"),
   foolproofModeEnabled: booleanSetting("foolproofModeEnabled"),
   appQuitEscalationSeconds: numberSetting("appQuitEscalationSeconds"),
-  siteRedirectEnabled: booleanSetting("siteRedirectEnabled"),
+  siteRedirectEnabled: alwaysEnabledBooleanSetting("siteRedirectEnabled"),
   contentFilterEnabled: alwaysEnabledBooleanSetting("contentFilterEnabled"),
   sketchySiteMaxAgeDays: numberSetting("sketchySiteMaxAgeDays", { min: 1, max: 90 }),
-  adultBlocklistEnabled: booleanSetting("adultBlocklistEnabled"),
+  adultBlocklistEnabled: alwaysEnabledBooleanSetting("adultBlocklistEnabled"),
   adultBlocklistSourceId: enumSetting("adultBlocklistSourceId", ["hagezi-nsfw", "stevenblack-porn", "blocklistproject-porn", "shadowwhisperer-adult", "custom"]),
   adultBlocklistCustomUrl: stringSetting("adultBlocklistCustomUrl"),
   adultBlocklistPreloadLimit: numberSetting("adultBlocklistPreloadLimit", { min: 0, max: 250 }),
-  browserNoiseBlockingEnabled: booleanSetting("browserNoiseBlockingEnabled"),
-  appQuitEnabled: booleanSetting("appQuitEnabled"),
+  browserNoiseBlockingEnabled: alwaysEnabledBooleanSetting("browserNoiseBlockingEnabled"),
+  appQuitEnabled: alwaysEnabledBooleanSetting("appQuitEnabled"),
   strictBypassProtectionEnabled: alwaysEnabledBooleanSetting("strictBypassProtectionEnabled"),
-  processSweepEnabled: booleanSetting("processSweepEnabled"),
+  processSweepEnabled: alwaysEnabledBooleanSetting("processSweepEnabled"),
   processSweepIntervalSeconds: numberSetting("processSweepIntervalSeconds"),
-  systemSleepLockEnabled: booleanSetting("systemSleepLockEnabled"),
-  systemSleepLockIntervalSeconds: numberSetting("systemSleepLockIntervalSeconds"),
-  focusShortcutEnabled: booleanSetting("focusShortcutEnabled"),
-  focusShortcutOnName: stringSetting("focusShortcutOnName"),
-  focusShortcutOffName: stringSetting("focusShortcutOffName"),
-  systemNetworkBlockingEnabled: booleanSetting("systemNetworkBlockingEnabled"),
+  systemNetworkBlockingEnabled: alwaysEnabledBooleanSetting("systemNetworkBlockingEnabled"),
   safariUrlFilterEnabled: alwaysEnabledBooleanSetting("safariUrlFilterEnabled"),
-  externalNetworkBlockEnabled: booleanSetting("externalNetworkBlockEnabled"),
-  externalNetworkBlockProvider: enumSetting("externalNetworkBlockProvider", ["manual"]),
-  hostsBlockingEnabled: booleanSetting("hostsBlockingEnabled"),
-  protectedEditsEnabled: booleanSetting("protectedEditsEnabled"),
-  protectedBrowsersOnly: booleanSetting("protectedBrowsersOnly"),
+  protectedEditsEnabled: alwaysEnabledBooleanSetting("protectedEditsEnabled"),
+  protectedBrowsersOnly: alwaysEnabledBooleanSetting("protectedBrowsersOnly"),
   protectedEditDelaySeconds: numberSetting("protectedEditDelaySeconds"),
   protectedEditWindowMinutes: numberSetting("protectedEditWindowMinutes")
 } satisfies Partial<Record<keyof AppSettings, SettingMutation>>;

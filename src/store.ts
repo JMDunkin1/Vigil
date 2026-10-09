@@ -1,4 +1,5 @@
 import { normalizeSketchySiteEvidence } from "./sketchySites.js";
+import { archiveRetiredFeatureState, retireUnusedFeatures, SETTINGS_CLEANUP_VERSION } from "./retiredFeatures.js";
 import { chmod, lstat, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -177,8 +178,12 @@ export async function loadState(): Promise<VigilState> {
   } catch (error) {
     return await recoverMalformedState(rawBytes, error);
   }
+  const cleanupPending = parsed.settingsCleanupVersion !== SETTINGS_CLEANUP_VERSION
+    && (verification.ok || verification.status === "missing");
+  if (cleanupPending) await archiveRetiredFeatureState(raw, DATA_DIR);
   const migratedPlaintextJournal = await restoreJournalEntries(parsed);
   const state = migrateState(parsed);
+  if (cleanupPending) retireUnusedFeatures(state);
   applySealVerificationToState(state, verification);
   // Event compaction is persisted by the first coordinated runtime snapshot.
   // Avoid introducing a startup-only state-then-seal crash window merely to

@@ -4,7 +4,6 @@ import { adultBlocklistSummary } from "../adultBlocklist.js";
 import { DEVICE_TARGETS } from "../defaults.js";
 import { buildFirewallBlock, buildPfConfBlock, firewallStatus } from "../firewall.js";
 import { focusShortcutSummary } from "../focusHooks.js";
-import { externalNetworkBlockSummary } from "../externalNetworkBlock.js";
 import { grayscaleSummary } from "../grayscale.js";
 import { assertFoolproofReadyForStrict, foolproofSummary } from "../foolproof.js";
 import { buildResolvedHostsBlock, hostsStatus, launchAgentPath, launchAgentStatus, managedBlockDomains, stateSealStatus } from "../hardening.js";
@@ -14,11 +13,9 @@ import { activePolicy, activeProfile, sessionPhase, snapshotProfile } from "../p
 import { distanceKeySummary } from "../distanceKey.js";
 import { deviceSummary } from "../devices.js";
 import { interventionSummary } from "../intervention.js";
-import { intentionalUseSummary } from "../intentionalUse.js";
 import { keyholderSummary } from "../keyholder.js";
 import { protectionSummary } from "../protection.js";
 import { distractionPresets } from "../presets.js";
-import { focusReport } from "../reports.js";
 import { vigilAppInfo, vigilStateHeaders } from "../vigilHealth.js";
 import { safariFilterPolicySignature, safariFilterStatus } from "../safariFilter.js";
 import { attestChromeSafeSearchStatus, chromeSafeSearchStatus } from "../chromeSafeSearch.js";
@@ -115,7 +112,6 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
   const monitorStatus = structuredClone(monitor.status);
   const policy = activePolicy(currentState);
   const { hosts, firewall, agent, account, stateSeal, sourceSeal, safariFilter, chromeSafeSearch, devices, hostsBlock } = await stateDiagnostics(currentState, manageEngineOutputDirectory);
-  const externalNetworkBlock = externalNetworkBlockSummary(currentState);
   const adultBlocklist = adultBlocklistSummary(currentState);
   const protection = protectionSummary(currentState);
   const foolproof = foolproofSummary(currentState, { hosts, firewall, safariFilter, chromeSafeSearch, agent, account, monitor: monitorStatus, stateSeal, sourceSeal });
@@ -125,8 +121,6 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
       app: vigilAppInfo({ port: activePort, startedAt }),
       state: publicState(currentState, policy),
       usage: usageSummary(currentUsage, currentState),
-      report: focusReport(currentUsage, currentState),
-      intentionalUse: intentionalUseSummary(currentState, currentUsage),
       limits: limitSummary(currentState, currentUsage),
       appLocks: appLockSummary(currentState),
       devices,
@@ -139,7 +133,6 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         firewall,
         safariFilter,
         chromeSafeSearch,
-        externalNetworkBlock,
         adultBlocklist,
         launchAgent: agent,
         account,
@@ -149,7 +142,7 @@ export async function buildStatePayload({ state, usage, monitor, activePort, sta
         hostsBlock,
         actions: hardeningActions(localScripts),
         foolproof,
-        audit: hardeningAudit({ state: currentState, hosts, firewall, safariFilter, chromeSafeSearch, externalNetworkBlock, agent, account, protection, monitor: monitorStatus, foolproof, stateSeal, sourceSeal })
+        audit: hardeningAudit({ state: currentState, hosts, firewall, safariFilter, chromeSafeSearch, agent, account, protection, monitor: monitorStatus, foolproof, stateSeal, sourceSeal })
       }
     },
     headers: vigilStateHeaders()

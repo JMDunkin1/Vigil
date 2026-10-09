@@ -75,7 +75,6 @@
         <div><strong id="templateHeading">Templates</strong></div>
         <button type="button" data-schedule-template="workday"><span class="template-icon">☀</span><span><strong>Workday</strong><small>Weekdays · 9 to 5</small></span></button>
         <button type="button" data-schedule-template="evening"><span class="template-icon">☾</span><span><strong>Evening</strong><small>Daily · 9 PM to 7 AM</small></span></button>
-        <button type="button" data-schedule-template="grayscale"><span class="template-icon">◐</span><span><strong>Grayscale</strong><small>Daily · grayscale</small></span></button>
       </section>
 
       <div class="schedule-overview">
@@ -93,11 +92,11 @@
       <div id="configurationIndex" class="configuration-index">
         <button class="config-card" type="button" data-config-target="rules" data-config-search="rules profiles block apps sites baseline">
           <span class="config-icon rust"><svg viewBox="0 0 24 24"><path d="M5 4.5h14v15H5Z"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/></svg></span>
-          <span><strong>Blocking rules</strong></span><span id="rulesConfigStatus" class="config-status">Baseline</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Social protection</strong></span><span id="rulesConfigStatus" class="config-status">Baseline</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
-        <button class="config-card" type="button" data-config-target="limits" data-config-search="limits app locks opens minutes daily unlock socials">
+        <button class="config-card" type="button" data-config-target="limits" data-config-search="social lock vigil instagram commitment phone">
           <span class="config-icon violet"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3.25 2M5.5 5.5l2 2M18.5 5.5l-2 2"/></svg></span>
-          <span><strong>Limits &amp; app locks</strong></span><span id="limitsConfigStatus" class="config-status">No rules</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
+          <span><strong>Social lock</strong></span><span class="config-status">On iPhone</span><svg class="row-chevron" viewBox="0 0 20 20"><path d="m7 4 6 6-6 6"/></svg>
         </button>
         <button class="config-card" type="button" data-config-target="protection" data-config-search="protection browser network filter background grayscale focus">
           <span class="config-icon blue"><svg viewBox="0 0 24 24"><path d="M12 3.5 20 7v5.25c0 4.95-3.35 8.08-8 9.75-4.65-1.67-8-4.8-8-9.75V7Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span>
@@ -124,116 +123,48 @@
 
       <div id="configurationDetails" class="configuration-details" hidden>
         <section class="config-panel" data-config-panel="rules" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Blocking rules</h2></div></header>
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Social protection</h2></div></header>
           <div class="settings-surface">
-            <div class="field-heading"><label for="profileSelect"><strong>Baseline ruleset</strong><small>Used whenever no stronger session is active.</small></label><select id="profileSelect"></select></div>
-            <div id="profileSummary" class="managed-note"><span>✓</span><div><strong>Ruleset details</strong><p id="managedBlocklistSummary">Loading effective rules…</p></div></div>
-            <div class="button-row"><button id="editProfile" class="button secondary" type="button">Edit custom profile</button><button id="newProfile" class="button secondary" type="button">New custom profile</button></div>
+            <h3>Filtered social</h3>
+            <p>Instagram Reels feeds, YouTube Shorts, and unsafe content stay blocked. YouTube keeps its daily feed and Watch Later allowance.</p>
+            <p>Use Full Brick on Home to pause social access on the Mac. Use Social lock inside the iPhone app for a commitment that cannot end early.</p>
           </div>
-          <form id="profileForm" class="settings-surface editor-surface" hidden>
-            <input name="id" type="hidden">
-            <div class="form-grid two"><label>Profile name<input name="name" type="text" maxlength="80" required></label><label>Rule mode<select name="mode"><option value="blocklist">Block selected targets</option><option value="allowlist">Allow only selected targets</option></select></label></div>
-            <label>Blocked apps<textarea name="blockedApps" rows="4" placeholder="One app name or bundle ID per line"></textarea></label>
-            <label>Blocked sites<textarea name="blockedSites" rows="4" placeholder="example.com"></textarea></label>
-            <label>Blocked URL patterns<textarea name="blockedUrlPatterns" rows="3" placeholder="youtube.com/shorts"></textarea></label>
-            <div class="form-grid two"><label>Allowed apps<textarea name="allowedApps" rows="3"></textarea></label><label>Allowed sites<textarea name="allowedSites" rows="3"></textarea></label></div>
-            <div class="button-row"><button class="button primary" type="submit">Save profile</button><button id="cancelProfileEdit" class="button secondary" type="button">Cancel</button><button id="deleteProfile" class="button danger-outline push-right" type="button">Delete profile</button></div>
-          </form>
+          <div class="settings-surface"><h3>Permanent blocks</h3><div id="permanentLockList" class="health-list"></div></div>
         </section>
 
         <section class="config-panel" data-config-panel="limits" hidden>
-          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Limits &amp; app locks</h2></div></header>
-
+          <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to configuration">‹</button><div><h2>Social lock</h2></div></header>
           <div class="settings-surface">
-            <div class="section-heading"><div><h3>Time &amp; open limits</h3></div><button id="newLimit" class="button secondary" type="button">New limit</button></div>
-            <div id="limitList" class="rule-list"></div>
-            <form id="limitForm" class="rule-editor" hidden>
-              <input name="id" type="hidden">
-              <div class="form-grid two"><label>Limit name<input name="name" type="text" value="Instagram" required></label><label>Measure by<select name="type"><option value="time">Time used</option><option value="open">Number of opens</option></select></label></div>
-              <div class="form-grid three"><label data-limit-field="time">Daily minutes<input name="limitMinutes" type="number" min="1" max="1440" value="20"></label><label data-limit-field="open">Daily opens<input name="unlocksAllowed" type="number" min="0" max="200" value="5"></label><label>Block duration (minutes)<input name="blockMinutes" type="number" min="0" max="1440" value="20"></label><label>Lock strength<select name="lockLevel"><option value="deep">Strict block</option><option value="light">Soft block</option></select></label></div>
-              <fieldset class="day-fieldset"><legend>Days</legend><div id="limitDays" class="day-chips"><label><input type="checkbox" value="0" checked><span>Sun</span></label><label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label><label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label><label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6" checked><span>Sat</span></label></div></fieldset>
-              <div class="form-grid two"><label>Apps<textarea name="apps" rows="3" placeholder="Instagram&#10;com.burbn.instagram"></textarea></label><label>Sites<textarea name="sites" rows="3" placeholder="instagram.com"></textarea></label></div>
-              <label class="switch-row standalone"><span><strong>Enable limit</strong></span><input name="enabled" type="checkbox" checked><i></i></label>
-              <div class="button-row"><button class="button primary" type="submit">Save limit</button><button id="cancelLimitEdit" class="button secondary" type="button">Cancel</button></div>
-            </form>
-          </div>
-
-          <div class="settings-surface">
-            <div class="section-heading"><div><h3>App locks</h3></div><button id="newAppLock" class="button secondary" type="button">New app lock</button></div>
-            <div id="appLockList" class="rule-list"></div>
-            <form id="appLockForm" class="rule-editor" hidden>
-              <input name="id" type="hidden">
-              <div class="form-grid two"><label>Lock name<input name="name" type="text" value="Locked socials" required></label><label>Lock strength<select name="lockLevel"><option value="deep">Strict block</option><option value="light">Soft block</option></select></label></div>
-              <div class="form-grid three"><label>Unlocks each day<input name="unlocksAllowed" type="number" min="0" max="200" value="2"></label><label>Minutes per unlock<input name="unlockMinutes" type="number" min="1" max="1440" value="10"></label><label>Cooldown (seconds)<input name="delaySeconds" type="number" min="0" max="3600" value="30"></label></div>
-              <fieldset class="day-fieldset"><legend>Days</legend><div id="appLockDays" class="day-chips"><label><input type="checkbox" value="0" checked><span>Sun</span></label><label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label><label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label><label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6" checked><span>Sat</span></label></div></fieldset>
-              <div class="form-grid two"><label>Apps<textarea name="apps" rows="3" placeholder="Instagram&#10;com.burbn.instagram"></textarea></label><label>Sites<textarea name="sites" rows="3" placeholder="instagram.com"></textarea></label></div>
-              <label class="switch-row standalone"><span><strong>Enable app lock</strong></span><input name="enabled" type="checkbox"><i></i></label>
-              <div class="button-row"><button class="button primary" type="submit">Save app lock</button><button id="cancelAppLockEdit" class="button secondary" type="button">Cancel</button></div>
-            </form>
-            <div id="appLockUnlockPanel" class="unlock-panel" hidden>
-              <div><strong id="appLockUnlockTitle">Choose an app lock</strong></div>
-              <label>Reason<input id="appLockReason" type="text" placeholder="Why this unlock is needed"></label>
-              <div class="form-grid two"><label>Keyholder passcode<input id="appLockPasscode" type="password"></label><label>Distance key<input id="appLockDistanceKey" type="password"></label></div>
-              <code id="appLockChallenge" class="typing-challenge" hidden></code>
-              <input id="appLockChallengeInput" type="text" placeholder="Type the phrase above" hidden>
-            </div>
+            <h3>Commit to time away</h3>
+            <p>Open Settings in Vigil Social on your iPhone and choose Social lock. Lock Instagram, including profiles and messages, or every service until your chosen end time.</p>
+            <p>A running lock can be extended but cannot be cancelled or shortened. Account switching and reopening the app keep the lock in place.</p>
           </div>
         </section>
 
         <section class="config-panel" data-config-panel="protection" hidden>
           <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Core protection</h2></div></header>
           <div class="settings-surface">
-            <h3>Browser &amp; network</h3>
-            <div class="switch-list">
-              <label class="switch-row"><span><strong>System network blocking</strong><small>Block supported sites outside the browser too.</small></span><input id="systemNetworkBlockingEnabled" data-setting="systemNetworkBlockingEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Safari filtering</strong><small>Always on.</small></span><input id="safariUrlFilterEnabled" type="checkbox" checked disabled><i></i></label>
-              <label class="switch-row"><span><strong>Content filtering</strong><small>Unsafe-content and feed filtering. Always on.</small></span><input id="contentFilterEnabled" type="checkbox" checked disabled><i></i></label>
-              <label class="switch-row"><span><strong>Blocked-page explanation</strong><small>Show why a site is blocked.</small></span><input id="siteRedirectEnabled" data-setting="siteRedirectEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Browser cleanup</strong><small>Hide recommendations and feeds.</small></span><input id="browserNoiseBlockingEnabled" data-setting="browserNoiseBlockingEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Unsafe-content blocklist</strong><small>Use Vigil’s maintained list of blocked sites.</small></span><input id="adultBlocklistEnabled" data-setting="adultBlocklistEnabled" type="checkbox"><i></i></label>
-            </div>
+            <h3>Always-on safeguards</h3>
+            <p>Content filtering, the unsafe-site blocklist, Safari guards, browser cleanup, network blocking, and blocked-app enforcement are required protections.</p>
+            <p>Background checks and automatic restart protection keep enforcement online when the window is hidden. Check Health and maintenance for live status.</p>
           </div>
           <div class="settings-surface">
             <h3>New suspicious domains</h3>
-            <p>Block a domain when Safari rejects it with a content-blocker error and its registration is younger than this limit. Unknown ages stay blocked. Always on.</p>
+            <p>Domains rejected by Safari stay blocked when their registration is younger than this limit. Unknown ages stay blocked.</p>
             <form id="sketchySiteForm" class="form-grid">
               <label>Maximum registration age (days)<input id="sketchySiteMaxAgeDays" type="number" min="1" max="90" step="1" required></label>
               <button type="submit">Save age limit</button>
             </form>
             <p id="sketchySiteStatus"></p>
           </div>
-          <div class="settings-surface">
-            <h3>Background enforcement</h3>
-            <div class="switch-list">
-              <label class="switch-row"><span><strong>Close blocked apps</strong><small>Force-close apps that stay open after a block.</small></span><input id="appQuitEnabled" data-setting="appQuitEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Block bypass tools</strong><small>Required during strict sessions.</small></span><input id="strictBypassProtectionEnabled" type="checkbox" checked disabled><i></i></label>
-              <label class="switch-row"><span><strong>Check background apps</strong></span><input id="processSweepEnabled" data-setting="processSweepEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Relock during sleep sessions</strong></span><input id="systemSleepLockEnabled" data-setting="systemSleepLockEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Readiness checks</strong><small>Verify safeguards before strict enforcement starts.</small></span><input id="foolproofModeEnabled" data-setting="foolproofModeEnabled" type="checkbox"><i></i></label>
-            </div>
-            <form id="enforcementTimingForm" class="compact-form"><label>App escalation<input id="appQuitEscalationSeconds" type="number" min="1" max="3600"><small>seconds</small></label><label>Sweep interval<input id="processSweepIntervalSeconds" type="number" min="3" max="3600"><small>seconds</small></label><label>Sleep relock<input id="systemSleepLockIntervalSeconds" type="number" min="15" max="3600"><small>seconds</small></label><button class="button secondary" type="submit">Save timing</button></form>
-          </div>
-          <div class="settings-surface">
-            <h3>Screen color &amp; macOS Focus</h3>
-            <div class="switch-list">
-              <label class="switch-row"><span><strong>Grayscale during focused sessions</strong><small>Apply during Soft Lock schedules and sessions.</small></span><input id="grayscaleSoftBlockEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Prevent grayscale changes</strong></span><input id="grayscalePreventManualChanges" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Run Focus shortcuts</strong></span><input id="focusShortcutEnabled" data-setting="focusShortcutEnabled" type="checkbox"><i></i></label>
-            </div>
-            <form id="focusShortcutForm" class="inline-form"><input id="focusShortcutOnName" type="text" placeholder="Focus On shortcut"><input id="focusShortcutOffName" type="text" placeholder="Focus Off shortcut"><button class="button secondary" type="submit">Save shortcuts</button></form>
-          </div>
         </section>
 
         <section class="config-panel" data-config-panel="access" hidden>
           <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>Unlock safeguards</h2></div></header>
           <div class="settings-surface">
-            <div class="switch-list">
-              <label class="switch-row"><span><strong>Protect settings changes</strong><small>Require maintenance approval to reduce protection.</small></span><input id="protectedEditsEnabled" data-setting="protectedEditsEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Typing challenge</strong><small>Type a phrase before protected actions.</small></span><input id="typingChallengeEnabled" data-setting="typingChallengeEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Require a reason</strong></span><input id="intentReasonEnabled" data-setting="intentReasonEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Strict by default</strong><small>Use strict blocking unless a rule specifies otherwise.</small></span><input id="strictByDefault" data-setting="strictByDefault" type="checkbox"><i></i></label>
-            </div>
-            <form id="accessTimingForm" class="compact-form"><label>Minimum reason<input id="intentReasonMinLength" type="number" min="1" max="280"><small>characters</small></label><label>Panic duration<input id="panicLockDurationMinutes" type="number" min="1" max="1440"><small>minutes</small></label><button class="button secondary" type="submit">Save safeguards</button></form>
+            <h3>Protected changes</h3>
+            <p>Maintenance and emergency confirmations require a written reason, a cooldown, and a typing challenge. Social commitments have no early unlock.</p>
+            <form id="accessTimingForm" class="compact-form"><label>Panic duration<input id="panicLockDurationMinutes" type="number" min="1" max="1440"><small>minutes</small></label><button class="button secondary" type="submit">Save duration</button></form>
           </div>
           <form id="keyholderForm" class="settings-surface">
             <div class="section-heading"><div><h3>Keyholder passcode</h3></div><span id="keyholderStatus" class="count-pill">Not set</span></div>
@@ -271,15 +202,13 @@
           <header class="detail-header"><button class="back-button" type="button" data-config-back aria-label="Back to settings">‹</button><div><h2>iPhone &amp; devices</h2></div></header>
           <form id="iosForm" class="settings-surface">
             <div class="section-heading"><div><h3 id="iosStatusTitle">Vigil content filter</h3><p id="iosStatusText">Checking phone policy…</p></div><span id="iosStatus" class="count-pill">Ready</span></div>
+            <p>Vigil Social uses the supervised, non-removable profile and required app and web restrictions. Changes are installed through the verified phone update.</p>
             <div class="switch-list">
-              <label class="switch-row"><span><strong>Enable iPhone protection</strong></span><input id="iosEnabled" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Filter websites</strong><small>Apply website rules across browsers.</small></span><input id="iosBlockWeb" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Restrict apps</strong><small>Use the supervised allowlist and Vigil companion apps.</small></span><input id="iosBlockApps" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Non-removable profile</strong><small>Prevent removal in iPhone Settings.</small></span><input id="iosHardenRemoval" type="checkbox"><i></i></label>
-              <label class="switch-row"><span><strong>Restrict app installs and device erase</strong><small>Applies while protection is active.</small></span><input id="iosRestrictInstallErase" type="checkbox"><i></i></label>
+              <label class="switch-row"><span><strong>Restrict app installs and device erase</strong></span><input id="iosRestrictInstallErase" type="checkbox"><i></i></label>
               <label class="switch-row"><span><strong>Allow clearing Safari history</strong></span><input id="iosAllowSafariHistoryClearing" type="checkbox"><i></i></label>
             </div>
-            <div class="button-row"><button class="button primary" type="submit">Save iPhone policy</button><button id="iosDownloadProfile" class="button secondary" type="button">Download profile</button></div>
+            <div class="button-row"><button class="button primary" type="submit">Save desired policy</button></div>
+            <p class="field-note">Saving prepares the policy. The next verified phone update installs and checks it.</p>
             <div id="iosSummary" class="device-summary"></div>
           </form>
 
@@ -290,7 +219,7 @@
           <div class="settings-surface"><label for="appearanceTheme">Theme</label><select id="appearanceTheme"><option value="system">Match system</option><option value="light">Light</option><option value="dark">Dark</option></select><p class="field-note">Choose what feels comfortable. Protection stays the same.</p></div>
           <fieldset class="settings-surface icon-picker">
             <legend>App icon</legend>
-            <label><input type="radio" name="appIconTheme" value="blue"><span class="icon-preview"><img src="/app-icons/blue.png" alt=""></span><span><strong>Blue</strong></span></label>
+            <label><input type="radio" name="appIconTheme" value="blue"><span class="icon-preview"><img src="/app-icons/blue.png" alt=""></span><span><strong>Vigil</strong></span></label>
             <label><input type="radio" name="appIconTheme" value="graphite"><span class="icon-preview"><img src="/app-icons/graphite.png" alt=""></span><span><strong>Graphite</strong></span></label>
             <label><input type="radio" name="appIconTheme" value="mist"><span class="icon-preview"><img src="/app-icons/mist.png" alt=""></span><span><strong>Mist</strong></span></label>
             <p id="iconThemeStatus" class="field-note">Loading icon…</p>
@@ -325,9 +254,9 @@
       <input name="id" type="hidden">
       <header class="dialog-header"><div><h2 id="scheduleEditorTitle">New schedule</h2></div><button id="closeScheduleEditor" class="icon-button" type="button" aria-label="Close schedule editor">×</button></header>
       <div class="dialog-body">
-        <label>Schedule type<select id="scheduleKind" name="kind"><option value="lock">Protection schedule</option><option value="grayscale">Grayscale routine</option></select></label>
+        <label>Schedule type<select id="scheduleKind" name="kind"><option value="lock">Protection schedule</option></select></label>
         <label>Schedule name<input name="name" type="text" maxlength="80" value="Focus block" required></label>
-        <div class="form-grid two" data-schedule-kind-field="lock"><label>Session style<select name="mode"><option value="focus">Focus</option><option value="brick">Full lock</option><option value="sleep">Sleep</option><option value="rehab">Recovery</option></select></label><label>Ruleset<select id="scheduleProfileId" name="profileId"></select></label></div>
+        <div class="form-grid two" data-schedule-kind-field="lock"><label>Session style<select name="mode"><option value="focus">Focus</option><option value="brick">Full lock</option><option value="sleep">Sleep</option></select></label><label>Ruleset<select id="scheduleProfileId" name="profileId"></select></label></div>
         <div class="form-grid two"><label>Starts<input name="start" type="time" value="09:00" required></label><label>Ends<input name="end" type="time" value="17:00" required></label></div>
         <fieldset class="day-fieldset"><legend>Days</legend><div id="scheduleDays" class="day-chips"><label><input type="checkbox" value="0"><span>Sun</span></label><label><input type="checkbox" value="1" checked><span>Mon</span></label><label><input type="checkbox" value="2" checked><span>Tue</span></label><label><input type="checkbox" value="3" checked><span>Wed</span></label><label><input type="checkbox" value="4" checked><span>Thu</span></label><label><input type="checkbox" value="5" checked><span>Fri</span></label><label><input type="checkbox" value="6"><span>Sat</span></label></div></fieldset>
         <fieldset class="device-fieldset"><legend>Devices</legend><div class="segmented-checks"><label><input name="deviceTargets" type="checkbox" value="computer" checked><span>Mac</span></label><label><input name="deviceTargets" type="checkbox" value="phone" checked><span>iPhone</span></label></div></fieldset>

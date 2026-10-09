@@ -2,7 +2,6 @@ import { distanceKeySummary } from "./distanceKey.js";
 import { adultBlocklistSummary } from "./adultBlocklist.js";
 import { extensionDynamicRulesReady, extensionRecentlySeen, extensionVersionReady, foolproofSummary } from "./foolproof.js";
 import { focusShortcutDetail, focusShortcutSummary } from "./focusHooks.js";
-import { externalNetworkBlockSummary } from "./externalNetworkBlock.js";
 import { integrityRuntimeSummary } from "./integrityLockdown.js";
 import { intentReasonSummary } from "./intentReason.js";
 import { keyholderSummary } from "./keyholder.js";
@@ -81,7 +80,6 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
   const firewall = context.firewall || {};
   const safariFilter = context.safariFilter || {};
   const chromeSafeSearch = context.chromeSafeSearch || {};
-  const externalNetworkBlock = context.externalNetworkBlock || externalNetworkBlockSummary(state);
   const agent = context.agent || {};
   const account = context.account || {};
   const monitor = context.monitor || {
@@ -123,7 +121,6 @@ export function doctorRows(state: VigilState, context: DoctorContext = {}, now =
     row("system-network-block", "System network block", networkEnabled && networkCurrent, networkEnabled ? (networkCurrent ? "Whole-site blocks and strict Google, Bing, and DuckDuckGo search are enforced across browsers by hosts/PF." : "Apply the network block so hosts/PF are current.") : "System network blocking is disabled."),
     row("safari-url-filter", "Safari web filter", !safariRequired || safariWebFilterCurrent(safariFilter), safariFilterDetail(safariFilter, Boolean(safariRequired))),
     row("chrome-safe-search", "Chrome SafeSearch filter", Boolean(chromeSafeSearch.current), chromeSafeSearchDetail(chromeSafeSearch)),
-    row("external-network-block", "Apple network DNS/router", !externalNetworkBlock.enabled || Boolean(externalNetworkBlock.ready), externalNetworkBlockDetail(externalNetworkBlock)),
     row("adult-blocklist", "Adult blocklist", !adultBlocklist.enabled || Boolean(adultBlocklist.ready), adultBlocklist.detail),
     row("browser-redirect", "Browser redirect fallback", networkCurrent || Boolean(settings.siteRedirectEnabled), networkCurrent ? "Not required while the system network block is current." : (settings.siteRedirectEnabled ? "Fallback redirects blocked sites to the block screen." : "Disabled while the system network block is not current.")),
     row("browser-cleanup", "Browser cleanup", true, settings.browserNoiseBlockingEnabled !== false ? "Extension cleanup/noise rules are enabled." : "Browser cleanup/noise blocking is disabled."),
@@ -176,12 +173,6 @@ function appleContentFilterDetail(safariFilter: SummaryRecord): string {
   if (apple?.detail) return String(apple.detail);
   if (appleContentFilterCurrent(safariFilter)) return "Apple Screen Time Limit Adult Websites is on.";
   return "Apple Screen Time Limit Adult Websites and Content & Privacy Restrictions must stay on in System Settings.";
-}
-
-function externalNetworkBlockDetail(externalNetworkBlock: SummaryRecord): string {
-  if (externalNetworkBlock.detail) return String(externalNetworkBlock.detail);
-  if (!externalNetworkBlock.enabled) return "Optional DNS/router sync is disabled.";
-  return `Manual DNS/router provider is ready with ${externalNetworkBlock.targetDomainCount || 0} domain targets to copy.`;
 }
 
 function accountDetail(account: SummaryRecord): string {

@@ -2,6 +2,105 @@ import XCTest
 @testable import VigilSocial
 
 final class SocialPreferencesTests: XCTestCase {
+    private final class CommitmentStorage: SocialCommitmentStorage {
+        var data: Data?
+        var failSave = false
+        func load() throws -> Data? { data }
+        func save(_ data: Data) throws {
+            if failSave { throw NSError(domain: "CommitmentStorage", code: 1) }
+            self.data = data
+        }
+    }
+
+    private final class CommitmentClock {
+        var value = SocialCommitmentStore.Clock(boot: "test-boot", seconds: 1000)
+    }
+
+    func testSocialLockPersistsAndChangingWallTimeCannotReleaseIt() throws {
+        let storage = CommitmentStorage()
+        let clock = CommitmentClock()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = SocialCommitmentStore(storage: storage, clock: { clock.value })
+        XCTAssertTrue(store.begin(scope: "instagram", until: now.addingTimeInterval(3600), at: now))
+        let reopened = SocialCommitmentStore(storage: storage, clock: { clock.value })
+        XCTAssertNotNil(reopened.restriction(for: .instagram, at: now.addingTimeInterval(10 * 365 * 24 * 3600)))
+        XCTAssertNil(reopened.restriction(for: .youtube, at: now))
+        clock.value.seconds += 3599
+        XCTAssertNotNil(reopened.restriction(for: .instagram, at: now))
+        clock.value.seconds += 1
+        XCTAssertNil(reopened.restriction(for: .instagram, at: now))
+    }
+
+    func testSocialLockCannotBeShortenedAndChangingScopeDoesNotRemoveAnAllServiceLock() {
+        let storage = CommitmentStorage()
+        let clock = CommitmentClock()
+        let now = Date()
+        let store = SocialCommitmentStore(storage: storage, clock: { clock.value })
+        XCTAssertTrue(store.begin(scope: "all", until: now.addingTimeInterval(7200), at: now))
+        XCTAssertFalse(store.begin(scope: "all", until: now.addingTimeInterval(3600), at: now))
+        XCTAssertTrue(store.begin(scope: "instagram", until: now.addingTimeInterval(3600), at: now))
+        for service in SocialService.allCases { XCTAssertNotNil(store.restriction(for: service, at: now)) }
+        XCTAssertTrue(store.begin(scope: "all", until: now.addingTimeInterval(10800), at: now))
+    }
+
+    func testPermanentSocialLockCannotBecomeTimed() {
+        let storage = CommitmentStorage()
+        let clock = CommitmentClock()
+        let now = Date()
+        let store = SocialCommitmentStore(storage: storage, clock: { clock.value })
+        XCTAssertTrue(store.begin(scope: "all", until: nil, at: now))
+        XCTAssertFalse(store.begin(scope: "all", until: now.addingTimeInterval(7 * 24 * 3600), at: now))
+        clock.value.seconds += 100_000_000
+        for service in SocialService.allCases { XCTAssertEqual(store.restriction(for: service, at: now)?.permanent, true) }
+    }
+
+    func testPhoneRestartRetainsRemainingSocialCommitmentInsteadOfCountingUntrustedWallTime() {
+        let storage = CommitmentStorage()
+        let clock = CommitmentClock()
+        let now = Date()
+        let store = SocialCommitmentStore(storage: storage, clock: { clock.value })
+        XCTAssertTrue(store.begin(scope: "all", until: now.addingTimeInterval(3600), at: now))
+        clock.value.seconds += 120
+        XCTAssertNotNil(store.restriction(for: .youtube, at: now))
+        clock.value = .init(boot: "new-boot", seconds: 10)
+        let reopened = SocialCommitmentStore(storage: storage, clock: { clock.value })
+        XCTAssertNotNil(reopened.restriction(for: .youtube, at: now.addingTimeInterval(86400)))
+        clock.value.seconds += 3479
+        XCTAssertNotNil(reopened.restriction(for: .youtube, at: now))
+        clock.value.seconds += 1
+        XCTAssertNil(reopened.restriction(for: .youtube, at: now))
+    }
+
+    func testCorruptOrUnwritableCommitmentRecordBlocksEveryService() {
+        let storage = CommitmentStorage()
+        storage.data = Data("broken commitment".utf8)
+        let broken = SocialCommitmentStore(storage: storage)
+        for service in SocialService.allCases { XCTAssertNotNil(broken.restriction(for: service, at: Date())) }
+        XCTAssertFalse(broken.begin(scope: "all", until: nil, at: Date()))
+        let unwritable = CommitmentStorage()
+        unwritable.failSave = true
+        let clock = CommitmentClock()
+        let store = SocialCommitmentStore(storage: unwritable, clock: { clock.value })
+        XCTAssertFalse(store.begin(scope: "instagram", until: nil, at: Date()))
+        for service in SocialService.allCases { XCTAssertNotNil(store.restriction(for: service, at: Date())) }
+    }
+
+    @MainActor
+    func testAccountAndConvenienceChangesCannotRemoveSocialCommitment() throws {
+        let suite = "VigilSocialTests.commitment.\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let storage = CommitmentStorage()
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: storage)
+        XCTAssertTrue(preferences.beginSocialLock(instagramOnly: false, until: nil))
+        preferences.setStartupService(.youtube)
+        preferences.setHapticsEnabled(false)
+        XCTAssertNil(preferences.addAccount(for: .youtube, name: "Other"))
+        defaults.removePersistentDomain(forName: suite)
+        let reinstalled = SocialPreferences(defaults: defaults, commitmentStorage: storage)
+        for service in SocialService.allCases { XCTAssertTrue(reinstalled.isBlocked(for: service)) }
+    }
+
     private func calendar(_ zone: String = "America/New_York") -> Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: zone)!

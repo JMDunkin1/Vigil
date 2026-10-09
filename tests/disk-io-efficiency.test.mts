@@ -203,21 +203,20 @@ try {
   assert.equal(intervention.topTargets[0]?.label, "instagram.com");
 
   const settings = defaultState().settings;
-  assert.deepEqual(updateSettings(settings, { focusSoundVolume: settings.focusSoundVolume }), [],
+  assert.deepEqual(updateSettings(settings, { panicLockDurationMinutes: settings.panicLockDurationMinutes }), [],
     "same-value settings must not create a write");
   const audioKeys = updateSettings(settings, {
-    focusSoundVolume: settings.focusSoundVolume === 42 ? 43 : 42,
-    focusSoundMode: settings.focusSoundMode === "focus" ? "relax" : "focus"
+    panicLockDurationMinutes: settings.panicLockDurationMinutes === 42 ? 43 : 42,
   });
   assert.equal(settingsRequireImmediatePolicyEnforcement(audioKeys), false,
-    "audio-only settings must not launch full OS enforcement");
+    "duration preferences must not launch full OS enforcement");
   assert.equal(settingsRequireImmediatePolicyEnforcement([
     "browserNoiseBlockingEnabled",
     "externalNetworkBlockEnabled",
     "externalNetworkBlockProvider",
     "hostsBlockingEnabled"
   ]), false, "settings outside the immediate monitor call-chain must not launch an unrelated full OS sweep");
-  const policyKeys = updateSettings(settings, { siteRedirectEnabled: !settings.siteRedirectEnabled });
+  const policyKeys = updateSettings(settings, { sketchySiteMaxAgeDays: settings.sketchySiteMaxAgeDays + 1 });
   assert.equal(settingsRequireImmediatePolicyEnforcement(policyKeys), true);
   assert.equal(settingsRequireImmediatePolicyEnforcement([...audioKeys, ...policyKeys]), true);
   assert.deepEqual(updateSettings(settings, { futureUnknownSetting: true }), []);
@@ -244,13 +243,13 @@ try {
     }), true);
     return JSON.parse(responseBody) as { keys: string[] };
   };
-  assert.deepEqual((await postSettings({ focusSoundVolume: 41 })).keys, ["focusSoundVolume"]);
+  assert.deepEqual((await postSettings({ panicLockDurationMinutes: 41 })).keys, ["panicLockDurationMinutes"]);
   assert.equal(routeEnforcements, 0);
   const beforeNoopPost = await readFile(store.STATE_PATH, "utf8");
-  assert.deepEqual((await postSettings({ focusSoundVolume: 41 })).keys, []);
+  assert.deepEqual((await postSettings({ panicLockDurationMinutes: 41 })).keys, []);
   assert.equal(await readFile(store.STATE_PATH, "utf8"), beforeNoopPost,
     "a same-value settings post must not rewrite state or its seal metadata");
-  assert.deepEqual((await postSettings({ siteRedirectEnabled: !routeState.settings.siteRedirectEnabled })).keys, ["siteRedirectEnabled"]);
+  assert.deepEqual((await postSettings({ sketchySiteMaxAgeDays: routeState.settings.sketchySiteMaxAgeDays + 1 })).keys, ["sketchySiteMaxAgeDays"]);
   assert.equal(routeEnforcements, 1, "a current-enforcement setting must schedule one immediate reconciliation");
 
   const quietState = defaultState();

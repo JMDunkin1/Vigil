@@ -1,4 +1,21 @@
 import { blockedPageBack } from "../src/blockedPageBack.js";
+import { blockPageDiagnostic } from "../src/blockPageDiagnostics.js";
+
+// Static redirects share a minimal page; its corner reference identifies the
+// browser surface even when the original website's referrer is unavailable.
+const diagnosticNode = document.querySelector<HTMLElement>("#vigilBlockDiagnostic");
+const detailsNode = document.querySelector<HTMLScriptElement>("#vigilBlockDetails");
+const blockKind = document.body?.dataset?.vigilBlockKind;
+if (blockKind && diagnosticNode && detailsNode) {
+  const source = location.protocol === "chrome-extension:" ? "CHR"
+    : location.protocol === "safari-web-extension:" ? "SAF" : "EXT";
+  const diagnostic = blockPageDiagnostic({
+    source, kind: blockKind, target: document.referrer || "",
+    detail: blockKind === "search-break" ? "Search-warning browser break" : "Vigil explicit-content browser guard"
+  });
+  diagnosticNode.textContent = diagnostic.reference;
+  detailsNode.textContent = JSON.stringify(diagnostic);
+}
 
 // Bundled extension pages do not receive website content scripts.
 const returnApi: typeof chrome = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || chrome;

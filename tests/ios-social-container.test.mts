@@ -14,7 +14,9 @@ state.deviceControls.ios = normalizeIosSettings(patch, state.deviceControls.ios)
 assert.equal(state.deviceControls.ios.socialContainer, true);
 assert.equal(normalizeIosSettings({ socialContainer: false }, state.deviceControls.ios).socialContainer, true,
   "An unrelated settings edit must not revert to policies that ignore services in the container");
-assert.throws(() => normalizeIosSettings({ blockWeb: false }, state.deviceControls.ios), /requires both/);
+assert.throws(() => normalizeIosSettings({ blockWeb: false }, state.deviceControls.ios), /requires enabled, non-removable/);
+assert.throws(() => normalizeIosSettings({ enabled: false }, state.deviceControls.ios), /requires enabled, non-removable/);
+assert.throws(() => normalizeIosSettings({ hardenRemoval: false }, state.deviceControls.ios), /requires enabled, non-removable/);
 assert.ok(!iosPolicyTargets(state, instant).appBundleIds.includes("tech.caseline.vigil.instagram"));
 
 for (const service of ["instagram", "youtube", "snapchat", "linkedin", "facebook", "x", "tiktok", "reddit"]) {

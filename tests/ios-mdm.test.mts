@@ -1,8 +1,9 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ADULT_BLOCKLIST_SOURCES, clearAdultBlocklistCacheForTest, setAdultBlocklistDomainsForTest } from "../src/adultBlocklist.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, IOS_UNGUARDED_BROWSER_BUNDLE_IDS, NORMAL_PROFILE_ID, PANIC_LOCK_PROFILE_ID, defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, IOS_UNGUARDED_BROWSER_BUNDLE_IDS, NORMAL_PROFILE_ID, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, buildIosMdmPushRequest, handleIosMdmCheckIn, handleIosMdmConnect, iosMdmDeviceUsageCredential, iosMdmDoctor, iosMdmQueuedPushEligible, iosMdmSummary, normalizeIosMdmSettings, queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { IOS_APP_STORE_BUNDLE_ID, IOS_PANIC_ALLOWED_APP_BUNDLE_IDS, IOS_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER, buildIosConfigurationProfile, iosPolicyTargets, iosProfileSummary } from "../src/iosProfiles.js";
 import { IOS_GOOGLE_SAFE_SEARCH_DOMAINS, IOS_SAFE_SEARCH_DOH_URL } from "../src/iosSafeSearch.js";

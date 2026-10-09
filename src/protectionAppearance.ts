@@ -1,0 +1,140 @@
+export const PROTECTION_THEME_CSS = `
+/* Vigil's protection palette matches the main app's dark appearance. */
+:root, :host {
+  color-scheme: dark;
+  --paper: #181a1c;
+  --paper-2: #141618;
+  --surface: #202225;
+  --surface-strong: #292b2e;
+  --ink: #e7e8ea;
+  --muted: #9c9fa5;
+  --line: #303236;
+  --line-strong: #484b51;
+  --primary: #365b41;
+  --primary-strong: #2c4d35;
+  --accent: #8db39a;
+  --accent-soft: rgba(141, 179, 154, .12);
+  --focus: rgba(141, 179, 154, .28);
+  --font-body: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+  --font-display: var(--font-body);
+  -webkit-text-size-adjust: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-body);
+}
+`;
+
+// Packaged for Chrome and Safari, and embedded by the private companion server.
+export const PROTECTION_PAGE_CSS = `${PROTECTION_THEME_CSS}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100svh;
+  display: grid;
+  place-items: center;
+  padding: max(40px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  background:
+    radial-gradient(circle at 78% -8%, rgba(141, 179, 154, .06), transparent 34rem),
+    linear-gradient(180deg, var(--paper), var(--paper-2));
+}
+main { width: min(560px, 100%); }
+.brand-lockup { display: flex; align-items: center; gap: 12px; margin-bottom: 36px; }
+.brand-mark { display: block; width: 44px; height: 44px; flex: 0 0 auto; background: url("icons/icon-128.png") center / contain no-repeat; }
+.eyebrow { margin: 0; color: var(--accent); font-size: .72rem; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+h1 {
+  max-width: 16ch;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 5vw, 3.75rem);
+  font-weight: 500;
+  line-height: 1.12;
+  letter-spacing: -.025em;
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+.message, .reason {
+  max-width: 46ch;
+  margin: 22px 0 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.escape-actions { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.escape-actions a, .escape-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  min-height: 48px;
+  padding: 12px 20px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: var(--primary);
+  color: #ffffff;
+  font-family: var(--font-body);
+  cursor: pointer;
+  font-size: .94rem;
+  font-weight: 700;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: background .15s ease, transform .15s ease;
+}
+.escape-actions a:hover, .escape-actions button:hover { background: var(--primary-strong); }
+.escape-actions a:active, .escape-actions button:active { transform: translateY(1px); }
+.escape-actions a:focus-visible, .escape-actions button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+strong { color: var(--ink); }
+@media (max-width: 520px) {
+  .brand-lockup { margin-bottom: 28px; }
+  .escape-actions a, .escape-actions button { width: 100%; justify-content: space-between; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .escape-actions a, .escape-actions button { transition: none; }
+}
+
+/* Quiet rejection pages. The diagnostic reference stays readable in screenshots. */
+body[data-vigil-block-page="1"] {
+  background: var(--paper);
+  text-align: center;
+}
+body[data-vigil-block-page="1"] main { width: min(400px, 100%); }
+body[data-vigil-block-page="1"] h1 {
+  max-width: none;
+  color: #c1c4c8;
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 400;
+  line-height: 1.25;
+  letter-spacing: -.025em;
+}
+body[data-vigil-block-page="1"] .escape-actions { margin-top: 8px; padding: 0; border: 0; }
+body[data-vigil-block-page="1"] .escape-actions :is(a, button) {
+  min-width: 44px;
+  min-height: 44px;
+  width: auto;
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--accent);
+  font-size: .75rem;
+  font-weight: 400;
+  line-height: 1.4;
+  justify-content: center;
+}
+body[data-vigil-block-page="1"] .escape-actions :is(a, button):hover { background: transparent; text-decoration: underline; }
+body[data-vigil-block-page="1"] .message { margin: 16px auto 0; font-size: .75rem; line-height: 1.5; }
+.block-reference {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  color: #737980;
+  font: 10px/1.4 "SFMono-Regular", Menlo, monospace;
+  letter-spacing: .02em;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+`;

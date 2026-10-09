@@ -500,6 +500,7 @@ export function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnap
     adultBlocklist: protectedAdultBlocklist(state.adultBlocklist || {}),
     intentionalUse: protectedIntentionalUse(state.intentionalUse || {}),
     ...(state.youtubeLimits ? { youtubeLimits: state.youtubeLimits } : {}),
+    ...(state.searchBreak ? { searchBreak: state.searchBreak } : {}),
     extension: protectedExtension(state.extension || {}),
     keyholder: state.keyholder || {},
     distanceKey: state.distanceKey || {},

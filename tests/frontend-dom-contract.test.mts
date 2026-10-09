@@ -65,7 +65,7 @@ assert.doesNotMatch(html, /saintStage|sacred portrait|art\/saints/u, "the shell 
 assert.match(html, /id="newSchedule"/u);
 assert.match(html, /id="scheduleList"/u);
 assert.match(html, /id="scheduleForm"/u);
-assert.match(html, /id="scheduleKind"[\s\S]*?value="lock"[\s\S]*?value="grayscale"/u, "Schedules must manage protection and grayscale routines together");
+assert.doesNotMatch(html, /value="grayscale"/u, "retired grayscale creation must not remain");
 assert.match(html, /id="scheduleProfileId" name="profileId"/u, "protection schedules must choose an explicit ruleset");
 assert.match(html, /id="scheduleDays"[\s\S]*?value="0"[\s\S]*?value="6"/u, "the schedule editor must expose every weekday");
 assert.match(html, /name="deviceTargets"[^>]*value="computer"[\s\S]*?name="deviceTargets"[^>]*value="phone"/u, "schedule targets must be directly configurable");
@@ -76,7 +76,7 @@ assert.match(appSource, /selectedScheduleDays\(\)/u);
 assert.match(appSource, /selectedScheduleDevices\(\)/u);
 assert.match(appSource, /wifiNetworks: lines/u);
 assert.match(appSource, /lockLevel: scheduleField[\s\S]*dataset\.lockLevel \|\| "deep"/u, "editing schedules must preserve their saved lock level");
-assert.match(appSource, /baselineProfileId\(ui\.data\?\.state\)/u, "new schedules must default from the baseline profile, not the active runtime profile");
+assert.match(appSource, /const baseline = "brick-mode"/u, "new schedules must default to a real social pause");
 
 const configTargets = [...html.matchAll(/data-config-target="([^"]+)"/g)].map((match) => match[1]);
 assert.deepEqual(configTargets, ["rules", "limits", "protection", "access", "devices", "appearance", "maintenance"], "Configuration must break important settings into focused destinations");
@@ -87,10 +87,8 @@ assert.match(html, /id="configurationSearch"[^>]*placeholder="Find a setting"/u)
 assert.match(appSource, /openConfigurationPanel\("maintenance"\)/u, "protected edit failures and update details must route to maintenance");
 assert.match(appSource, /resumeScheduleAfterMaintenance/u, "a schedule edit interrupted by protected maintenance must be resumable");
 
-for (const permanentControl of ["safariUrlFilterEnabled", "contentFilterEnabled", "strictBypassProtectionEnabled"]) {
-  assert.match(html, new RegExp(`id="${permanentControl}"[^>]*checked disabled`), `${permanentControl} must remain visibly forced on`);
-}
-assert.match(html, /id="protectedEditsEnabled"[^>]*data-setting="protectedEditsEnabled"/u);
+assert.match(html, /Always-on safeguards/u);
+assert.doesNotMatch(html, /data-setting=|id="enforcementTimingForm"|id="limitForm"|id="appLockForm"|id="profileForm"/u, "retired or weakening controls must not survive hidden");
 assert.match(html, /id="requestMaintenance"[\s\S]*?id="confirmMaintenance"/u, "authenticated maintenance must remain reachable");
 assert.doesNotMatch(html, />\s*(?:Quit|Force Quit|Stop Vigil|Disable watchdog)\s*</iu, "the redesign must not expose an availability bypass");
 
@@ -104,7 +102,7 @@ assert.match(updateSource, /deriveAppUpdateViewState/u, "the protected updater s
 
 assert.match(appSource, /get\("\/api\/state"\)|get<DashboardData>\("\/api\/state"\)/u, "the renderer must read the authoritative dashboard state");
 assert.match(appSource, /post\("\/api\/schedule"/u);
-assert.match(appSource, /post\("\/api\/grayscale\/schedule"/u);
+assert.doesNotMatch(appSource, /post\("\/api\/grayscale\/schedule"/u);
 assert.match(appSource, /post\("\/api\/settings"/u);
 assert.match(appSource, /post\("\/api\/devices\/ios\/settings"/u);
 assert.match(appSource, /\/api\/protection\/maintenance\/request/u);

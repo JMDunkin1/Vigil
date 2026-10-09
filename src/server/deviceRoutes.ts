@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { deviceUsageSyncAuthorization } from "../apiSecurity.js";
 import { DEVICE_TARGETS } from "../defaults.js";
-import { buildIosMdmEnrollmentProfile, iosMdmDeviceUsageCredential, iosMdmDeviceUsageTokens, iosMdmDoctor, iosMdmEnrollmentReadiness, markIosMdmEnrollmentGenerated, normalizeIosMdmSettings, publicIosMdmSettings } from "../iosMdm.js";
+import { iosMdmDeviceUsageTokens } from "../iosMdm.js";
 import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated, normalizeIosSettings } from "../iosProfiles.js";
 import { activeLimitPolicy } from "../limits.js";
 import { assertProtectedEditAllowed } from "../protection.js";
@@ -58,19 +58,6 @@ export async function handleDeviceApiRoute(
     return true;
   }
 
-  if (method === "POST" && path === "/api/devices/ios/app-removal") {
-    const body = await readBody(request);
-    assertProtectedEditAllowed(state, { kind: "settings" });
-    state.deviceControls.ios.blockApps = parseToggle(body.enabled, state.deviceControls.ios.blockApps !== false);
-    addEvent(state, "ios_app_removal_toggled", {
-      enabled: state.deviceControls.ios.blockApps
-    });
-    recordIosMdmPolicyQueue("ios-app-removal-toggle");
-    await saveState(state);
-    sendJson(response, 200, { ok: true, ios: publicIosState(state.deviceControls.ios) });
-    return true;
-  }
-
   if (method === "POST" && path === "/api/devices/ios/usb-profile-apply") {
     const current = state.deviceControls.ios;
     state.deviceControls.ios = normalizeIosSettings({
@@ -98,63 +85,6 @@ export async function handleDeviceApiRoute(
     recordIosMdmPolicyQueue("ios-usb-profile-apply");
     await saveState(state);
     sendJson(response, 200, { ok: true, ios: publicIosState(state.deviceControls.ios) });
-    return true;
-  }
-
-  if (method === "POST" && path === "/api/devices/ios/mdm/settings") {
-    const body = await readBody(request);
-    assertProtectedEditAllowed(state, { kind: "settings" });
-    state.deviceControls.ios.mdm = normalizeIosMdmSettings(body, state.deviceControls.ios.mdm) as VigilState["deviceControls"]["ios"]["mdm"];
-    addEvent(state, "ios_mdm_settings_updated", {
-      enabled: state.deviceControls.ios.mdm.enabled,
-      hasPublicBaseUrl: Boolean(state.deviceControls.ios.mdm.publicBaseUrl),
-      hasTopic: Boolean(state.deviceControls.ios.mdm.topic)
-    });
-    recordIosMdmPolicyQueue("ios-mdm-settings");
-    await saveState(state);
-    sendJson(response, 200, { ok: true, mdm: publicIosMdmSettings(state.deviceControls.ios.mdm) });
-    return true;
-  }
-
-  if (method === "GET" && path === "/api/devices/ios/mdm/doctor") {
-    sendJson(response, 200, { ok: true, mdm: iosMdmDoctor(state) });
-    return true;
-  }
-
-  if (method === "GET" && path === "/api/devices/ios/mdm/enrollment.mobileconfig") {
-    const readiness = iosMdmEnrollmentReadiness(state);
-    if (!readiness.enrollmentReady) {
-      sendJson(response, 409, {
-        ok: false,
-        error: "Self-hosted Vigil MDM enrollment is not ready.",
-        blockers: readiness.setupBlockers,
-        mdm: iosMdmDoctor(state)
-      });
-      return true;
-    }
-    const profile = buildIosMdmEnrollmentProfile(state);
-    markIosMdmEnrollmentGenerated(state);
-    addEvent(state, "ios_mdm_enrollment_generated", { bytes: Buffer.byteLength(profile), source: "app" });
-    await saveState(state);
-    sendDownload(response, 200, profile, "vigil-iphone-mdm.mobileconfig", "application/x-apple-aspen-config");
-    return true;
-  }
-
-  if (method === "GET" && path === "/api/devices/ios/mdm/device-usage-token") {
-    const identifier = String(url.searchParams.get("device") || "");
-    const credential = iosMdmDeviceUsageCredential(state, identifier);
-    if (!credential) {
-      sendJson(response, 404, { ok: false, error: "Enrolled iPhone not found." });
-      return true;
-    }
-    sendJson(response, 200, { ok: true, ...credential });
-    return true;
-  }
-
-  if (method === "POST" && path === "/api/devices/ios/mdm/queue-policy") {
-    const result = recordIosMdmPolicyQueue("app-refresh");
-    await saveState(state);
-    sendJson(response, 200, { ok: Boolean(result.queued), result, push: { staged: true } });
     return true;
   }
 
@@ -201,14 +131,6 @@ export async function handleDeviceApiRoute(
   }
 
   return false;
-}
-
-function parseToggle(value: unknown, fallback: boolean): boolean {
-  if (typeof value === "boolean") return value;
-  const text = String(value ?? "").trim().toLowerCase();
-  if (["1", "true", "yes", "on"].includes(text)) return true;
-  if (["0", "false", "no", "off"].includes(text)) return false;
-  return fallback;
 }
 
 function evaluateDeviceLimitBlocks(

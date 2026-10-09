@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
-import { focusReport } from "../src/reports.js";
+import { focusReport } from "./fixtures/legacy-reports.mjs";
 import { dateKey } from "../src/time.js";
 import { recordOpen, recordUsage, syncDeviceUsageSnapshot, usageSummary } from "../src/usage.js";
 import type { UsageState } from "../src/types.js";

@@ -6,6 +6,7 @@ import { isDirectRun } from "../src/directRun.js";
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const output = join(dirname(dirname(runtimeRoot)), "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/search-guard.js");
 export const redditReviewAssets = ["blocked-navigation.js", "reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html"];
+export const searchBreakAssets = ["search-break.html", "search-break-page.js"];
 
 export async function generatedIosSafariGuard(): Promise<string> {
   const source = await readFile(join(runtimeRoot, "extension/google-safe-search.js"), "utf8");
@@ -22,7 +23,7 @@ export async function assertGeneratedIosSafariGuardCurrent(): Promise<void> {
   if (await readFile(output, "utf8").catch(() => "") !== await generatedIosSafariGuard()) {
     throw new Error("The Safari search guard is stale. Run node dist/runtime/scripts/generate-ios-safari-guard.mjs --write after npm run build.");
   }
-  for (const name of redditReviewAssets) {
+  for (const name of [...redditReviewAssets, ...searchBreakAssets]) {
     if (await readFile(join(dirname(output), name), "utf8").catch(() => "") !== await readFile(join(runtimeRoot, "extension", name), "utf8")) {
       throw new Error(`The Safari Reddit review asset ${name} is stale. Run the Safari guard generator with --write.`);
     }
@@ -32,7 +33,7 @@ export async function assertGeneratedIosSafariGuardCurrent(): Promise<void> {
 if (isDirectRun(import.meta.url)) {
   if (process.argv.includes("--write")) {
     await writeFile(output, await generatedIosSafariGuard());
-    for (const name of redditReviewAssets) await writeFile(join(dirname(output), name), await readFile(join(runtimeRoot, "extension", name)));
+    for (const name of [...redditReviewAssets, ...searchBreakAssets]) await writeFile(join(dirname(output), name), await readFile(join(runtimeRoot, "extension", name)));
   }
   else await assertGeneratedIosSafariGuardCurrent();
 }

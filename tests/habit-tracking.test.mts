@@ -1,6 +1,7 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 
-import { defaultState, NORMAL_PROFILE_ID } from "../src/defaults.js";
+import { NORMAL_PROFILE_ID } from "../src/defaults.js";
 import { intentionalUseSummary, normalizeIntentionalUse, recordIntentionalBehaviorCheckIn } from "../src/intentionalUse.js";
 import { dateKey, trackingDateKey, weekKey } from "../src/time.js";
 

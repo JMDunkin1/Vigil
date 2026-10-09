@@ -1,9 +1,9 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { defaultState } from "../src/defaults.js";
 import { addIntentionalJournalEntry, intentionalUseSummary } from "../src/intentionalUse.js";
 import {
   journalVaultSummary,

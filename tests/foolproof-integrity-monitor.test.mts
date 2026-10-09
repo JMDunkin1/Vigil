@@ -243,7 +243,7 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     monitor: liveMonitor
   }, now);
   const byId = new Map(rows.map((item) => [item.id, item]));
-  assert.equal(must(byId.get("external-network-block"), "external-network-block row").ok, true);
+  assert.equal(byId.has("external-network-block"), false, "retired DNS/router tooling must not appear as a protection check");
   assert.equal(must(byId.get("foolproof"), "foolproof row").ok, true);
   assert.equal(must(byId.get("mac-account"), "mac-account row").ok, true);
   assert.equal(must(byId.get("extension-version"), "extension-version row").ok, true);
@@ -1000,8 +1000,14 @@ import { must, mustPolicy, now, recordValue, TEST_DAYS } from "./test-helpers.mj
     blockedSites: [],
     blockedUrlPatterns: []
   };
-  assert.equal(shouldBlockAppForPolicy(state, mustPolicy(activePolicy(state, now)), "Firefox"), false);
+  assert.equal(shouldBlockAppForPolicy(state, mustPolicy(activePolicy(state, now)), "Firefox"), true,
+    "required browser protection must continue when the active profile has no site restrictions");
   assert.equal(shouldBlockAppForPolicy(state, mustPolicy(activePolicy(state, now)), "Slack"), false);
+  // Isolate legacy profile matching from the required browser safeguard so the
+  // channel/helper identity cases below continue exercising their own policy.
+  state.settings.protectedBrowsersOnly = false;
+  assert.equal(shouldBlockAppForPolicy(state, mustPolicy(activePolicy(state, now)), "Firefox"), false,
+    "a legacy profile without site restrictions must not add a strict-browser block");
   state.activeSession.profileSnapshot = {
     ...state.profiles[0],
     mode: "allowlist",

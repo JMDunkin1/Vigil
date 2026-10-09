@@ -1,8 +1,9 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER } from "../src/apiSecurity.js";
-import { BUILT_IN_CHROME_EXTENSION_ID, defaultState, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import { extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { handleExtensionApiRoute } from "../src/server/extensionApi.js";
 import type { UsageState } from "../src/types.js";
@@ -44,6 +45,33 @@ function response(): ServerResponse & MockResponse {
 
 const state = defaultState();
 const usage: UsageState = {};
+{
+  const breakState = defaultState();
+  let persisted = 0;
+  let enforcements = 0;
+  const context = { state: breakState, usage: {}, requestPersistence: () => { persisted++; }, schedulePolicyEnforcement: () => { enforcements++; } };
+  const url = new URL("http://127.0.0.1:8787/api/extension/youtube");
+  const trustedHeaders = { host: "127.0.0.1:8787", "content-type": "application/json", origin: `chrome-extension://${BUILT_IN_CHROME_EXTENSION_ID}`,
+    [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID };
+  const untrusted = response();
+  await handleExtensionApiRoute(request("POST", url.pathname, { "content-type": "application/json" }, { action: "search-break-warning" }), untrusted, url, context);
+  assert.equal(untrusted.statusCodeValue, 403, "websites cannot create a break directly");
+  const wrongPage = response();
+  await handleExtensionApiRoute(request("POST", url.pathname, trustedHeaders, { action: "search-break-warning", url: "https://example.org/", warning: "Results are limited by SafeSearch", id: "0" }), wrongPage, url, context);
+  assert.equal(wrongPage.statusCodeValue, 400, "only supported search pages can report warnings");
+  for (let i = 0; i < 3; i++) {
+    const result = response();
+    await handleExtensionApiRoute(request("POST", url.pathname, trustedHeaders, { action: "search-break-warning", url: "https://www.google.com/search?q=trees", warning: "Results are limited by SafeSearch", id: String(i) }), result, url, context);
+    assert.equal(result.statusCodeValue, 200);
+    assert.equal(JSON.parse(result.bodyText).blocked, i === 2);
+  }
+  assert.equal(persisted, 3, "each accepted warning is durably committed");
+  assert.equal(enforcements, 1, "the third warning schedules immediate browser enforcement");
+  const status = response();
+  await handleExtensionApiRoute(request("POST", url.pathname, trustedHeaders, { action: "search-break-status" }), status, url, context);
+  assert.equal(JSON.parse(status.bodyText).blocked, true);
+  assert.equal(persisted, 3, "status polling cannot rewrite the ledger");
+}
 const localResponse = response();
 const handled = await handleExtensionApiRoute(
   request("POST", "/api/extension/check", {
@@ -298,89 +326,10 @@ try {
   assert.equal(failedSyncResponse.statusCodeValue, 200);
   assert.equal(rulesPersistenceRequests, 3, "material rule status and error changes must request durability");
 
-  const pauseState = defaultState();
-  pauseState.intentionalUse.rules[0].urlPatterns?.push("review.example/thread");
-  pauseState.settings.activeProfileId = "normal";
-  pauseState.settings.baselineProfileId = "normal";
-  const pauseUsage: UsageState = {};
-  let pausePersistenceRequests = 0;
-  const pauseHeaders = {
-    origin: "chrome-extension://pause-extension",
-    "content-type": "application/json",
-    [EXTENSION_TOKEN_HEADER]: "test-extension-secret"
-  };
-  const pauseResponse = response();
-  await handleExtensionApiRoute(
-    request("POST", "/api/extension/check", pauseHeaders, {
-      url: "https://review.example/thread",
-      event: "navigation",
-      extensionVersion: REQUIRED_EXTENSION_VERSION
-    }),
-    pauseResponse,
-    new URL("http://127.0.0.1:8787/api/extension/check"),
-    {
-      state: pauseState,
-      usage: pauseUsage,
-      requestPersistence: () => { pausePersistenceRequests += 1; }
-    }
-  );
-
-  assert.equal(pauseResponse.statusCodeValue, 200);
-  const pauseBody: unknown = JSON.parse(pauseResponse.bodyText);
-  assert.equal(isRecord(pauseBody) && pauseBody.paused, true);
-  assert.equal(isRecord(pauseBody) && isRecord(pauseBody.overlay), true);
-  assert.equal(pauseState.intentionalUse.pauses.length, 1);
-  assert.equal(pausePersistenceRequests, 1, "new intentional pauses must request durability");
-  const pauseId = pauseState.intentionalUse.pauses[0].id;
-  pauseState.intentionalUse.pauses[0].eligibleAt = new Date(Date.now() - 1000).toISOString();
-
-  const spoofedContinueResponse = response();
-  await handleExtensionApiRoute(
-    request("POST", "/api/extension/pause/continue", {
-      host: "127.0.0.1:8787",
-      origin: "chrome-extension://attacker-extension",
-      "content-type": "application/json",
-      [EXTENSION_ID_HEADER]: BUILT_IN_CHROME_EXTENSION_ID
-    }, {
-      requestId: pauseId,
-      intention: "Bypass the companion",
-      mood: "Impersonating"
-    }),
-    spoofedContinueResponse,
-    new URL("http://127.0.0.1:8787/api/extension/pause/continue"),
-    {
-      state: pauseState,
-      usage: pauseUsage,
-      requestPersistence: () => { pausePersistenceRequests += 1; }
-    }
-  );
-
-  assert.equal(spoofedContinueResponse.statusCodeValue, 403);
-  assert.equal(pauseState.intentionalUse.grants.length, 0);
-  assert.equal(pauseState.intentionalUse.pauses[0].status, "pending");
-
-  const continueResponse = response();
-  await handleExtensionApiRoute(
-    request("POST", "/api/extension/pause/continue", pauseHeaders, {
-      requestId: pauseId,
-      intention: "Watch one specific thing",
-      mood: "Focused"
-    }),
-    continueResponse,
-    new URL("http://127.0.0.1:8787/api/extension/pause/continue"),
-    {
-      state: pauseState,
-      usage: pauseUsage,
-      requestPersistence: () => { pausePersistenceRequests += 1; }
-    }
-  );
-
-  assert.equal(continueResponse.statusCodeValue, 200);
-  const continueBody: unknown = JSON.parse(continueResponse.bodyText);
-  assert.equal(isRecord(continueBody) && continueBody.ok, true);
-  assert.equal(pauseState.intentionalUse.grants.length, 1);
-  assert.equal(pauseState.extension.lastEvent, "pause-continue");
-  assert.equal(pausePersistenceRequests, 2, "pause decisions must remain durable");
+  assert.equal(await handleExtensionApiRoute(
+    request("POST", "/api/extension/pause/continue", persistenceHeaders, {}),
+    response(), new URL("http://127.0.0.1:8787/api/extension/pause/continue"), rulesContext
+  ), false, "retired pause handlers cannot grant access");
 } finally {
   if (previousToken === undefined) delete process.env.VIGIL_EXTENSION_TOKEN;
   else process.env.VIGIL_EXTENSION_TOKEN = previousToken;

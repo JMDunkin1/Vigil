@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark">
+  <title>Take a browser break — Vigil</title>
+  <link rel="stylesheet" href="blocked.css">
+</head>
+<body data-vigil-block-page="1" data-vigil-block-kind="search-break">
+  <main>
+    <h1>Blocked</h1>
+    <p class="message" hidden>Three search-limit warnings appeared within one minute.<br>Browsing pauses for 2½ minutes.</p>
+    <p id="searchBreakCountdown" hidden role="status" aria-live="off">Checking the remaining time…</p>
+    <div class="escape-actions"><a id="leaveBlockedPage" href="about:blank">Back</a></div>
+  </main>
+  <p id="vigilBlockDiagnostic" class="block-reference">V1-EXT-BREAK</p>
+  <script id="vigilBlockDetails" type="application/json">{"schema":1,"source":"EXT","kind":"search-break"}</script>
+  <script src="blocked-navigation.js"></script>
+  <script src="search-break-page.js"></script>
+</body>
+</html>

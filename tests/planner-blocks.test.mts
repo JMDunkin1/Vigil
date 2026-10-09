@@ -1,5 +1,6 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
-import { defaultState, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { addEvent } from "../src/store.js";
 import { addIntentionalJournalEntry, completeIntentionalPlanBlock, intentionalUseSummary, normalizeIntentionalUse, upsertIntentionalPlanBlock, upsertIntentionalPlanItem, upsertIntentionalPlanList } from "../src/intentionalUse.js";
 import { activePolicy } from "../src/policy.js";

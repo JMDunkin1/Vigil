@@ -6,6 +6,112 @@ function vigilBlockedSearchURL() {
     return (globalThis.browser || globalThis.chrome).runtime.getURL("blocked.html");
   } catch { return "about:blank"; }
 }
+function limitedSearchWarning(value) {
+    return typeof value === "string" && value.length <= 240
+        && /^(?:some\s+)?results\s+are\s+limited\s+by\s+(?:safe\s*search|search)\s*[.!]?$/iu.test(value.replace(/\s+/gu, " ").trim());
+}
+function limitedSearchPage(value) {
+    try {
+        const url = new URL(String(value));
+        return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443")
+            && ["google.com", "www.google.com", "images.google.com"].includes(url.hostname)
+            && url.pathname === "/search" && Boolean(url.searchParams.get("q"));
+    }
+    catch {
+        return false;
+    }
+}
+
+const checkSearchBreakBeforeNavigation = (() => {
+    if (globalThis.top !== globalThis.self || typeof document === "undefined" || typeof document.addEventListener !== "function")
+        return () => undefined;
+    const api = globalThis.browser || chrome;
+    let warningURL = "";
+    let warningID = "";
+    let reported = false;
+    let pending;
+    let lastStatusAt = 0;
+    let scheduled = false;
+    function check(warningsOnly = false) {
+        if (document.hidden)
+            return;
+        const url = location.href;
+        if (warningURL !== url) {
+            warningURL = url;
+            warningID = limitedSearchPage(url) ? crypto.randomUUID() : "";
+            reported = false;
+        }
+        const notice = !reported && limitedSearchPage(url) ? findNotice() : "";
+        if (!notice && warningsOnly)
+            return;
+        if (pending)
+            return pending.then(blocked => blocked || check(warningsOnly) || false);
+        if (!notice && Date.now() - lastStatusAt < 1000)
+            return;
+        lastStatusAt = Date.now();
+        const work = async () => {
+            try {
+                const result = await api.runtime.sendMessage({ type: "VIGIL_SEARCH_BREAK", action: notice ? "search-break-warning" : "search-break-status",
+                    id: warningID, warning: notice, url });
+                if (result?.ok && notice && warningURL === url)
+                    reported = true;
+                if (result?.ok && result.blocked && location.href === url) {
+                    location.replace(api.runtime.getURL("search-break.html"));
+                    return true;
+                }
+            }
+            catch { /* The background retains the durable break across page retries. */ }
+            return false;
+        };
+        const next = work();
+        pending = next;
+        void next.finally(() => { if (pending === next)
+            pending = undefined; });
+        return next;
+    }
+    function findNotice() {
+        // Read visible, standalone notice text, never a search query, result title,
+        // quoted code sample, or a result snippet describing this feature.
+        for (const node of document.querySelectorAll("[role='alert'], [role='alert'] *, [role='status'], [role='status'] *, [role='dialog'], [role='dialog'] *, [aria-live], [aria-live] *, #taw *, #topstuff *, #botstuff *, #search div, #search span, #search p")) {
+            const text = node.innerText?.trim() || "";
+            if (!limitedSearchWarning(text) || !node.getClientRects().length
+                || getComputedStyle(node).visibility !== "visible"
+                || node.closest("#rso, article, a, h3, input, textarea, pre, code, [hidden], [aria-hidden='true']"))
+                continue;
+            let resultCard = false;
+            for (let parent = node.parentElement; parent && parent !== document.body && parent !== document.documentElement && !["search", "topstuff", "botstuff", "taw"].includes(parent.id); parent = parent.parentElement) {
+                if (parent.querySelector("a h3")) {
+                    resultCard = true;
+                    break;
+                }
+            }
+            if (!resultCard)
+                return text;
+        }
+        return "";
+    }
+    function schedule() {
+        if (scheduled)
+            return;
+        scheduled = true;
+        setTimeout(() => { scheduled = false; void check(); }, 100);
+    }
+    function observe() {
+        if (document.documentElement)
+            new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["hidden", "style", "class", "aria-hidden"] });
+        void check();
+    }
+    if (document.documentElement)
+        observe();
+    else
+        document.addEventListener("DOMContentLoaded", observe, { once: true });
+    addEventListener("pageshow", schedule);
+    addEventListener("popstate", schedule);
+    document.addEventListener("visibilitychange", schedule);
+    setInterval(() => { void check(); }, 1000);
+    return () => check(true);
+})();
+
 // Shared by navigation/search guards and media-card inspection. Ambiguous
 // markers contribute evidence only within a short local phrase.
 // Keep the list limited to pornography labels and specific sexual-media
@@ -175,6 +281,99 @@ function searchQueries(value) {
     return queries.map(query => ({ query, hostname: url.hostname }));
 }
 
+// SafeSearch being enabled is universal in Vigil. Only a notice about results
+// actually removed for this query supplies additional classification evidence.
+function isSafeSearchLimitedNotice(value) {
+    const text = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (text.length > 600)
+        return false;
+    return /\b(?:explicit|some|search) results (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search\b/iu.test(text)
+        || /\bresults (?:have been |were |are )?(?:filtered|limited|removed|hidden|blurred) (?:with|by|due to) safe\s?search\b/iu.test(text)
+        || /\bsafe\s?search (?:has |have )?(?:filtered|limited|removed|hidden|blurred) (?:some |explicit |search )?results\b/iu.test(text);
+}
+// These already-ambiguous media, exposure and search markers do not become
+// standalone bans. A real limited-results notice supplies the missing context.
+const SAFE_SEARCH_CONTRIBUTORS = /^(?:photos?|pics?|pictures?|images?|videos?|vids?|movies?|films?|clips?|documentar(?:y|ies)|compilations?|albums?|galler(?:y|ies)|collections?|links?|downloads?|folders?|files?|packs?|mirrors?|adults?|mature|steamy|spicy|uncensored|nud|nuds|nude|nudes|nued|nudity|naked|topless|erotic|erotica|lewd|fetish|sex|sexual|explicit|sensitive|intimate|leak|leaks|leaked|leakd|lek|leks|creampies?|x+|18|18g|r18g?|unreviewed|成人|成人向|成人向け|mega|gofile|pixl|cyberdrop|bunkr)$/u;
+const SAFE_SEARCH_ORDINARY_CONTEXT = /\b(?:news|biograph(?:y|ies)|interviews?|journalism|research|education|educational|medical|medicine|anatomy|health|history|historical|science|museum|art|drawing|painting|sculpture|makeup|lipstick|recipes?|cooking|baking|chicken|peppers?|software|source code|documentation|security|tutorials?)\b/u;
+function safeSearchWords(value) {
+    let text = String(value || "");
+    for (let pass = 0; pass < 3; pass += 1) {
+        try {
+            const decoded = decodeURIComponent(text);
+            if (decoded === text)
+                break;
+            text = decoded;
+        }
+        catch {
+            break;
+        }
+    }
+    return text.normalize("NFKC").replace(/[\u200b-\u200d\ufeff]/gu, "").toLowerCase()
+        .replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie").match(/[\p{L}\p{N}]+/gu) || [];
+}
+function hasSafeSearchContributor(value) {
+    const words = safeSearchWords(value);
+    return words.some(word => SAFE_SEARCH_CONTRIBUTORS.test(word));
+}
+function hasOrdinarySafeSearchContext(value) {
+    return SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).join(" "));
+}
+// Cache exact subjects rather than carrying an unsafe flag to an unrelated
+// search. Strip only media/navigation qualifiers, never part of a person's name.
+function safeSearchSubject(value) {
+    if (SAFE_SEARCH_ORDINARY_CONTEXT.test(safeSearchWords(value).join(" ")))
+        return "";
+    const withoutSites = value.replace(/\bsite:\S+/giu, "");
+    const words = safeSearchWords(withoutSites).filter(word => !SAFE_SEARCH_CONTRIBUTORS.test(word)
+        && !/^(?:a|an|the|and|of|for|in|on|with|free|full|hd|official|nz|io|com|it)$/u.test(word));
+    return words.length >= 1 && words.length <= 6 && words.join(" ").length >= 4 ? words.join(" ") : "";
+}
+function matchesSafeSearchSubject(value, subject) {
+    const text = ` ${safeSearchWords(value).join(" ")} `;
+    return Boolean(subject && text.includes(` ${subject} `));
+}
+function sharedFileDestination(value, baseUrl) {
+    let url;
+    try {
+        url = new URL(value, baseUrl);
+    }
+    catch {
+        return null;
+    }
+    if (!["https:", "http:"].includes(url.protocol))
+        return null;
+    const host = url.hostname.toLowerCase().replace(/\.$/u, "");
+    const onHost = (domain) => host === domain || host.endsWith(`.${domain}`);
+    if ((onHost("mega.nz") || onHost("mega.io")) && /^\/(?:folder|file)\//u.test(url.pathname))
+        return url.href;
+    if (onHost("gofile.io") && /^\/d\//u.test(url.pathname))
+        return url.href;
+    if (onHost("drive.google.com") && /^\/(?:file\/d|drive\/folders)\//u.test(url.pathname))
+        return url.href;
+    if (onHost("dropbox.com") && /^\/(?:s|sh|scl)\//u.test(url.pathname))
+        return url.href;
+    if (["pixl.li", "cyberdrop.me", "cyberdrop.to", "bunkr.is", "bunkr.si", "bunkr.ru", "erome.com"].some(onHost)
+        && /^\/(?:a|album|f|v)\//u.test(url.pathname))
+        return url.href;
+    return null;
+}
+function isAdultMediaDestination(value) {
+    try {
+        const url = new URL(value);
+        const host = url.hostname.toLowerCase().replace(/\.$/u, "");
+        return ["http:", "https:"].includes(url.protocol)
+            && (host === "erome.com" || host.endsWith(".erome.com")) && /^\/a\//u.test(url.pathname);
+    }
+    catch {
+        return false;
+    }
+}
+function isExplicitLinkCollection(destinations, safeSearchEvidence) {
+    const files = [...new Set(destinations.map(value => sharedFileDestination(value)).filter((value) => Boolean(value)))];
+    // Neither cloud storage nor link density alone establishes adult content.
+    return files.length >= 2 && (safeSearchEvidence || files.some(isAdultMediaDestination));
+}
+
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
 const EXPLICIT_SEARCH_PARAMETER_NAMES = new Set([
     "q", "query", "search_query", "search", "searchterm", "search_term",
@@ -213,6 +412,12 @@ const PERSON_NAME_FILLER_WORDS = new Set([
 const SEARCH_ROUTE_PATTERN = /(?:^|[/#])(?:advancedsearch(?:\.php)?|search(?:\.php)?|results?|find|browse)(?:[/?.#]|$)/iu;
 const SEARCH_DESCRIPTOR_PATTERN = /(?:^|[-_\s])(?:search|query|keyword)(?:$|[-_\s])/iu;
 let lastInspectedSearchUrl = location.href;
+const SAFE_SEARCH_EVIDENCE_KEY = "vigil-safe-search-subjects-v1";
+const SAFE_SEARCH_SUBJECT_KEY_PREFIX = `${SAFE_SEARCH_EVIDENCE_KEY}:`;
+const SAFE_SEARCH_EVIDENCE_LIFETIME_MS = 30 * 60 * 1000;
+const safeSearchSubjects = new Map();
+let safeSearchEvidenceUrl = "";
+let safeSearchEvidenceAt = 0;
 function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
     let url;
     try {
@@ -245,7 +450,298 @@ function containsExplicitSearchText(rawValue, hostname = new URL(location.href).
         || EXPLICIT_SEARCH_PATTERN.test(decoded.replace(/\+/gu, " "))
         || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
         || containsExplicitXxxSearchText(decoded)
-        || containsExplicitPersonSearchText(decoded);
+        || containsExplicitPersonSearchText(decoded)
+        || (hasSafeSearchContributor(decoded) && (hasSavedSafeSearchSubject(decoded)
+            || (hasCurrentSafeSearchEvidence() && sameSafeSearchQuery(decoded, currentGoogleSearchQuery()))));
+}
+function currentGoogleSearchQuery() {
+    try {
+        const url = new URL(location.href);
+        return ["http:", "https:"].includes(url.protocol)
+            && GOOGLE_SEARCH_HOSTNAMES.has(url.hostname.toLowerCase().replace(/\.$/u, ""))
+            && url.pathname === "/search" ? url.searchParams.get("q") || "" : "";
+    }
+    catch {
+        return "";
+    }
+}
+function hasSavedSafeSearchSubject(value) {
+    const subject = safeSearchSubject(value);
+    const observedAt = safeSearchSubjects.get(subject) || 0;
+    return Boolean(subject && observedAt > Date.now() - SAFE_SEARCH_EVIDENCE_LIFETIME_MS && observedAt <= Date.now());
+}
+function hasCurrentSafeSearchEvidence() {
+    const now = Date.now();
+    return safeSearchEvidenceUrl === location.href && safeSearchEvidenceAt > now - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
+        && safeSearchEvidenceAt <= now;
+}
+function sameSafeSearchQuery(first, second) {
+    const normalize = (value) => decodeNestedSearchValue(value).normalize("NFKC")
+        .replace(/\+/gu, " ").replace(/[\u200b-\u200d\ufeff]/gu, "").replace(/\s+/gu, " ").trim().toLowerCase();
+    return Boolean(second && normalize(first) === normalize(second));
+}
+function safeSearchContextStorage() {
+    const api = globalThis.browser || globalThis.chrome;
+    return api?.storage?.local;
+}
+function safeSearchSubjectStorageKey(subject, observedAt) {
+    return `${SAFE_SEARCH_SUBJECT_KEY_PREFIX}${Math.floor(observedAt / SAFE_SEARCH_EVIDENCE_LIFETIME_MS)}:${encodeURIComponent(subject)}`;
+}
+function rememberSafeSearchSubject(query) {
+    if (hasCurrentSafeSearchEvidence())
+        return;
+    safeSearchEvidenceUrl = location.href;
+    safeSearchEvidenceAt = Date.now();
+    const subject = safeSearchSubject(query);
+    // The current search is enforceable even when it consists only of an
+    // ambiguous word or has ordinary context. Subject caching is more selective.
+    if (!subject)
+        return;
+    safeSearchSubjects.set(subject, safeSearchEvidenceAt);
+    // Each subject has its own key so a tab's stale snapshot cannot erase
+    // evidence observed by another tab. Buckets allow safe expiry cleanup.
+    const key = safeSearchSubjectStorageKey(subject, safeSearchEvidenceAt);
+    try {
+        void safeSearchContextStorage()?.set({ [key]: { subject, observedAt: safeSearchEvidenceAt } }).catch(() => { });
+    }
+    catch { /* In-memory enforcement remains available without extension storage. */ }
+}
+function visibleContextElement(element) {
+    if (element.closest("[hidden], [aria-hidden='true']"))
+        return false;
+    const style = getComputedStyle(element);
+    return style.display !== "none" && style.visibility !== "hidden" && element.getClientRects().length > 0;
+}
+function observeSafeSearchNotice() {
+    const query = currentGoogleSearchQuery();
+    if (!query)
+        return;
+    const candidates = new Set(document.querySelectorAll("[role='alert'], [role='status'], [role='dialog'], [aria-live], #taw, #taw *, #topstuff, #topstuff *, #botstuff, #botstuff *"));
+    for (const link of document.querySelectorAll("a[href*='safesearch' i]")) {
+        let parent = link;
+        for (let depth = 0; parent && depth < 4; depth += 1, parent = parent.parentElement)
+            candidates.add(parent);
+    }
+    for (const candidate of candidates) {
+        // Search snippets, quoted documentation and hidden settings are not notices.
+        if (candidate.closest("#rso, article, a, h3, pre, code") || candidate.querySelector("h3") || !visibleContextElement(candidate))
+            continue;
+        let resultCard = false;
+        for (let parent = candidate.parentElement; parent && parent !== document.body && parent !== document.documentElement
+            && !["search", "topstuff", "botstuff", "taw"].includes(parent.id); parent = parent.parentElement) {
+            if (parent.querySelector("a h3")) {
+                resultCard = true;
+                break;
+            }
+        }
+        if (resultCard)
+            continue;
+        let notice = "";
+        const walker = document.createTreeWalker(candidate, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node && notice.length <= 600; node = walker.nextNode()) {
+            if (node.parentElement && visibleContextElement(node.parentElement))
+                notice += `${node.textContent || ""} `;
+        }
+        if (isSafeSearchLimitedNotice(notice)) {
+            rememberSafeSearchSubject(query);
+            return;
+        }
+    }
+}
+function readerContextRoots() {
+    const host = new URL(location.href).hostname.toLowerCase();
+    if (host === "scribd.com" || host.endsWith(".scribd.com")) {
+        // Use the document's text layer, excluding suggested documents in sidebars.
+        const roots = Array.from(document.querySelectorAll(".text_layer, .document_scroller, [data-testid='document-viewer'], [role='document']"));
+        return roots.filter(root => !roots.some(other => other !== root && other.contains(root)));
+    }
+    const root = document.querySelector("#article, article, [role='document'], main, #content");
+    const pasteHost = ["justpaste.it", "pastebin.com", "paste.ee", "rentry.co", "rentry.org", "telegra.ph"]
+        .some(domain => host === domain || host.endsWith(`.${domain}`));
+    return root ? [root] : (pasteHost && document.body ? [document.body] : []);
+}
+function readerFileDestinations(roots) {
+    const files = new Set();
+    for (const root of roots) {
+        const excluded = "nav, header, footer, aside, [role='navigation'], [role='complementary']";
+        for (const anchor of root.querySelectorAll("a[href]")) {
+            if (anchor.closest(excluded))
+                continue;
+            const file = sharedFileDestination(anchor.href, location.href);
+            if (file)
+                files.add(file);
+        }
+        // PDFs and pastes can expose URLs as text instead of clickable anchors.
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node.parentElement?.closest(`${excluded}, script, style, noscript`))
+                continue;
+            for (const url of (node.textContent || "").match(/https?:\/\/[^\s<>"']+/gu) || []) {
+                const file = sharedFileDestination(url.replace(/[),.;]+$/u, ""));
+                if (file)
+                    files.add(file);
+            }
+        }
+    }
+    return [...files];
+}
+function contextualLinkIsBlocked(anchor) {
+    const query = currentGoogleSearchQuery();
+    const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
+    const file = sharedFileDestination(anchor.href, location.href);
+    if (query && hasCurrentSafeSearchEvidence() && (hasSafeSearchContributor(label) || file))
+        return true;
+    if (hasOrdinarySafeSearchContext(label) || (!query && hasOrdinarySafeSearchContext(document.title)))
+        return false;
+    if (query && hasSavedSafeSearchSubject(query) && (hasSafeSearchContributor(label) || file))
+        return true;
+    return [...safeSearchSubjects].some(([subject, at]) => at > Date.now() - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
+        && at <= Date.now() && matchesSafeSearchSubject(label, subject) && hasSafeSearchContributor(label));
+}
+function redirectAfterSearchWarning(target, navigation = "replace") {
+    const navigate = () => location[navigation](target);
+    const pending = checkSearchBreakBeforeNavigation();
+    if (!pending) {
+        navigate();
+        return;
+    }
+    const source = location.href;
+    // Give the background time to validate and record the warning while its
+    // current-tab URL still matches. An unavailable authority cannot suspend
+    // the content block indefinitely.
+    let timeout;
+    const deadline = new Promise(resolve => { timeout = setTimeout(() => resolve(false), 1000); });
+    void Promise.race([pending, deadline]).then(blocked => {
+        clearTimeout(timeout);
+        if (!blocked && location.href === source)
+            navigate();
+    });
+}
+function scanSafeSearchContext() {
+    observeSafeSearchNotice();
+    // Cached evidence can arrive after the initial URL/control checks on any
+    // search provider, including pages whose URLs do not change afterward.
+    const redirect = explicitSearchBlockRedirect(location.href);
+    if (redirect) {
+        redirectAfterSearchWarning(redirect);
+        return;
+    }
+    if (scanExistingSearchControls(document))
+        return;
+    const query = currentGoogleSearchQuery();
+    if (query) {
+        if ((hasCurrentSafeSearchEvidence() || hasSavedSafeSearchSubject(query)) && hasSafeSearchContributor(query)) {
+            redirectAfterSearchWarning(vigilBlockedSearchURL());
+            return;
+        }
+    }
+    else {
+        const roots = readerContextRoots();
+        const title = `${document.title} ${document.querySelector("h1")?.textContent || ""}`;
+        const evidence = !hasOrdinarySafeSearchContext(title) && [...safeSearchSubjects].some(([subject, at]) => at > Date.now() - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
+            && at <= Date.now() && matchesSafeSearchSubject(title, subject));
+        if (!hasOrdinarySafeSearchContext(title) && isExplicitLinkCollection(readerFileDestinations(roots), evidence)) {
+            redirectAfterSearchWarning(vigilBlockedSearchURL());
+            return;
+        }
+    }
+}
+function installSafeSearchContextGuard() {
+    if (typeof document === "undefined")
+        return;
+    let scanPending = false;
+    const scheduleScan = () => {
+        if (scanPending)
+            return;
+        scanPending = true;
+        setTimeout(() => { scanPending = false; scanSafeSearchContext(); }, 100);
+    };
+    const start = () => {
+        scanSafeSearchContext();
+        if (typeof MutationObserver === "function" && document.documentElement) {
+            new MutationObserver(scheduleScan).observe(document.documentElement, {
+                childList: true, subtree: true, characterData: true, attributes: true,
+                attributeFilter: ["href", "hidden", "aria-hidden", "role", "class", "style"]
+            });
+        }
+    };
+    if (document.readyState === "loading")
+        document.addEventListener("DOMContentLoaded", start, { once: true });
+    else
+        start();
+    function mergeEvidence(result) {
+        const now = Date.now();
+        for (const [subject, at] of safeSearchSubjects) {
+            if (at <= now - SAFE_SEARCH_EVIDENCE_LIFETIME_MS || at > now)
+                safeSearchSubjects.delete(subject);
+        }
+        const candidates = [];
+        const saved = result[SAFE_SEARCH_EVIDENCE_KEY];
+        if (saved && typeof saved === "object") {
+            // Retain evidence written by previous versions during migration.
+            candidates.push(...Object.entries(saved));
+        }
+        const expiredKeys = [];
+        const oldestBucket = Math.floor((now - SAFE_SEARCH_EVIDENCE_LIFETIME_MS) / SAFE_SEARCH_EVIDENCE_LIFETIME_MS);
+        for (const [key, entry] of Object.entries(result)) {
+            if (!key.startsWith(SAFE_SEARCH_SUBJECT_KEY_PREFIX) || !entry || typeof entry !== "object")
+                continue;
+            const { subject, observedAt } = entry;
+            if (typeof subject !== "string" || typeof observedAt !== "number"
+                || key !== safeSearchSubjectStorageKey(subject, observedAt))
+                continue;
+            candidates.push([subject, observedAt]);
+            // No current observation can write to a completely expired bucket,
+            // including a renewal of the same subject in another tab.
+            if (Math.floor(observedAt / SAFE_SEARCH_EVIDENCE_LIFETIME_MS) < oldestBucket)
+                expiredKeys.push(key);
+        }
+        const valid = candidates.filter((entry) => typeof entry[1] === "number"
+            && entry[1] <= now && entry[1] > now - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
+            && safeSearchSubject(entry[0]) === entry[0]).sort((a, b) => b[1] - a[1]);
+        for (const [subject, at] of valid) {
+            if (!safeSearchSubjects.has(subject) && safeSearchSubjects.size >= 64)
+                continue;
+            safeSearchSubjects.set(subject, Math.max(at, safeSearchSubjects.get(subject) || 0));
+        }
+        return expiredKeys;
+    }
+    async function loadEvidence() {
+        try {
+            const storage = safeSearchContextStorage();
+            const result = await storage?.get(null);
+            if (!result)
+                return;
+            const expiredKeys = mergeEvidence(result);
+            if (expiredKeys.length)
+                void storage?.remove(expiredKeys).catch(() => { });
+            scheduleScan();
+        }
+        catch { /* Local page evidence still enforces this rule. */ }
+    }
+    try {
+        const api = globalThis.browser || globalThis.chrome;
+        // Subscribe before loading the snapshot so observations from other tabs
+        // cannot be missed while the initial storage read is pending.
+        api?.storage?.onChanged?.addListener((changes, area) => {
+            if (area !== "local")
+                return;
+            const evidence = {};
+            for (const [key, change] of Object.entries(changes)) {
+                if ((key === SAFE_SEARCH_EVIDENCE_KEY || key.startsWith(SAFE_SEARCH_SUBJECT_KEY_PREFIX))
+                    && change.newValue !== undefined)
+                    evidence[key] = change.newValue;
+            }
+            if (!Object.keys(evidence).length)
+                return;
+            mergeEvidence(evidence);
+            scheduleScan();
+        });
+    }
+    catch { /* Local page evidence still enforces this rule. */ }
+    void loadEvidence();
+    addEventListener("popstate", scheduleScan, true);
+    addEventListener("hashchange", scheduleScan, true);
 }
 function containsExplicitPersonSearchText(rawValue) {
     const query = decodeNestedSearchValue(rawValue).replace(/\+/gu, " ").normalize("NFKC");
@@ -334,11 +830,12 @@ function enforceGoogleSafeSearchForLink(event) {
     const anchor = target.closest("a[href]");
     if (!anchor)
         return;
+    observeSafeSearchNotice();
     const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
-    if (containsExplicitMediaLabel(label)) {
+    if (containsExplicitMediaLabel(label) || contextualLinkIsBlocked(anchor)) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        location.assign(vigilBlockedSearchURL());
+        redirectAfterSearchWarning(vigilBlockedSearchURL(), "assign");
         return;
     }
     const redirect = alwaysOnSearchRedirect(anchor.href);
@@ -346,7 +843,7 @@ function enforceGoogleSafeSearchForLink(event) {
         return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    location.assign(redirect);
+    redirectAfterSearchWarning(redirect, "assign");
 }
 function enforceGoogleSafeSearchForForm(event) {
     const form = event.target;
@@ -372,7 +869,7 @@ function enforceGoogleSafeSearchForForm(event) {
     if (explicitFormSearch || directBlock) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        location.assign(vigilBlockedSearchURL());
+        redirectAfterSearchWarning(vigilBlockedSearchURL(), "assign");
         return;
     }
     if (method.toLowerCase() !== "get")
@@ -385,7 +882,7 @@ function enforceGoogleSafeSearchForForm(event) {
         return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    location.assign(redirect);
+    redirectAfterSearchWarning(redirect, "assign");
 }
 function formDataEntries(form, submitter) {
     let fields;
@@ -424,7 +921,7 @@ function enforceExplicitSearchControlInteraction(event) {
     if (event.cancelable)
         event.preventDefault();
     event.stopImmediatePropagation();
-    location.assign(vigilBlockedSearchURL());
+    redirectAfterSearchWarning(vigilBlockedSearchURL(), "assign");
     return true;
 }
 function eventTargetElement(event) {
@@ -479,14 +976,16 @@ function explicitSearchTextInContainer(container, includeRedditShorthand = true)
 function scanExistingSearchControls(root) {
     const controls = root.querySelectorAll?.("input[type='search'], [role='searchbox'], input[name], textarea[name], [contenteditable='true']") || [];
     if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, false))) {
-        location.replace(vigilBlockedSearchURL());
+        redirectAfterSearchWarning(vigilBlockedSearchURL());
+        return true;
     }
+    return false;
 }
 function installDynamicSearchGuard() {
     if (typeof document === "undefined")
         return;
     if (containsExplicitMediaLabel(document.title)) {
-        location.replace(vigilBlockedSearchURL());
+        redirectAfterSearchWarning(vigilBlockedSearchURL());
         return;
     }
     scanExistingSearchControls(document);
@@ -494,7 +993,7 @@ function installDynamicSearchGuard() {
         return;
     new MutationObserver((records) => {
         if (containsExplicitMediaLabel(document.title)) {
-            location.replace(vigilBlockedSearchURL());
+            redirectAfterSearchWarning(vigilBlockedSearchURL());
             return;
         }
         for (const record of records) {
@@ -502,7 +1001,7 @@ function installDynamicSearchGuard() {
                 if (node instanceof Element) {
                     if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node), undefined, false))
                         || explicitSearchTextInContainer(node, false)) {
-                        location.replace(vigilBlockedSearchURL());
+                        redirectAfterSearchWarning(vigilBlockedSearchURL());
                         return;
                     }
                 }
@@ -514,6 +1013,8 @@ function checkForSearchUrlChange() {
     if (lastInspectedSearchUrl === location.href)
         return;
     enforceGoogleSafeSearchForCurrentNavigation();
+    if (typeof document !== "undefined")
+        scanSafeSearchContext();
 }
 addEventListener("click", enforceGoogleSafeSearchForLink, true);
 addEventListener("submit", enforceGoogleSafeSearchForForm, true);
@@ -525,6 +1026,6 @@ addEventListener("hashchange", checkForSearchUrlChange, true);
 globalThis.setInterval?.(checkForSearchUrlChange, 250);
 enforceGoogleSafeSearchForCurrentNavigation();
 installDynamicSearchGuard();
-
+installSafeSearchContextGuard();
 
 })();

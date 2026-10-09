@@ -30,11 +30,11 @@ async function main() {
         return {
           panel: shown(document.querySelector('main')),
           heading: shown(document.querySelector('h1')),
-          reason: shown(document.querySelector('.reason')),
+          reasonHidden: !shown(document.querySelector('.reason')),
           back: shown(document.querySelector('#leaveBlockedPage'))
         };
       })()`);
-      assert.deepEqual(visible, { panel: true, heading: true, reason: true, back: true }, label);
+      assert.deepEqual(visible, { panel: true, heading: true, reasonHidden: true, back: true }, label);
       // Filtering must still run on the very same page; a marker is no bypass.
       await win.webContents.executeJavaScript(`document.body.insertAdjacentHTML('beforeend', '<article id="unsafe"><img src="data:," alt="poster"><h2>NSFW videos</h2></article>');`);
       await new Promise(resolve => setTimeout(resolve, 100));

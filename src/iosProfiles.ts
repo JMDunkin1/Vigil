@@ -163,8 +163,8 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
     manageEngineGeneration: normalizeIosManageEngineGeneration(current.manageEngineGeneration)
   };
 
-  if (next.socialContainer && (!next.blockWeb || !next.blockApps)) {
-    throw new Error("Vigil Social requires both supervised app and web restrictions.");
+  if (next.socialContainer && (!next.enabled || !next.hardenRemoval || !next.blockWeb || !next.blockApps)) {
+    throw Object.assign(new Error("Vigil Social requires enabled, non-removable supervised app and web restrictions."), { status: 400 });
   }
   if (next.hardenRemoval && !next.removalPassword) next.removalPassword = randomRemovalPassword();
   if (!next.blockedAppBundleIds.length) next.blockedAppBundleIds = [...DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS];

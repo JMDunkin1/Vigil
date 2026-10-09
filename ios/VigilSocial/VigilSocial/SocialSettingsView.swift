@@ -9,6 +9,11 @@ struct SocialSettingsView: View {
     @State private var wakeDate: Date
     @State private var sleepError: String?
     @State private var postingService = "linkedin"
+    @State private var instagramOnly = false
+    @State private var permanentSocialLock = false
+    @State private var socialLockEnd = Date().addingTimeInterval(24 * 3600)
+    @State private var confirmingSocialLock = false
+    @State private var socialLockError: String?
 
     init(container: SocialContainerStore) {
         self.container = container
@@ -30,6 +35,28 @@ struct SocialSettingsView: View {
                         ForEach(SocialService.allCases) { Text($0.displayName).tag($0.rawValue) }
                     }
                     Toggle("Haptic feedback", isOn: Binding(get: { preferences.hapticsEnabled }, set: preferences.setHapticsEnabled))
+                }
+
+                Section {
+                    ForEach(Array(preferences.socialLocks(at: now).enumerated()), id: \.offset) { _, lock in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(lock.name).font(.headline)
+                            Text(lock.restriction.message).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Picker("Lock", selection: $instagramOnly) {
+                        Text("All Vigil services").tag(false)
+                        Text("Instagram").tag(true)
+                    }
+                    Toggle("Permanent commitment", isOn: $permanentSocialLock)
+                    if !permanentSocialLock {
+                        DatePicker("Until", selection: $socialLockEnd, in: now...now.addingTimeInterval(7 * 24 * 3600))
+                    }
+                    Button("Start social lock", role: .destructive) { confirmingSocialLock = true }
+                        .disabled(preferences.savedScheduleUnreadable)
+                    if let socialLockError { Text(socialLockError).font(.footnote).foregroundStyle(.red) }
+                } header: { Text("Social lock") } footer: {
+                    Text("Lock ordinary browsing, profiles, messages, and playback. A commitment cannot be cancelled or shortened. Reopening, account switching, and changing the date do not unlock it. Restarting the phone may extend a timed lock. Permanent commitments do not expire.")
                 }
 
                 Section {
@@ -113,6 +140,20 @@ struct SocialSettingsView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .onReceive(Timer.publish(every: 1, on: .main, in: .common).autoconnect()) { now = $0 }
             .sheet(item: $editingRoutine) { SocialRoutineEditor(preferences: preferences, routine: $0) }
+            .alert(permanentSocialLock ? "Commit permanently?" : "Start a commitment?", isPresented: $confirmingSocialLock) {
+                Button("Cancel", role: .cancel) {}
+                Button("Lock \(instagramOnly ? "Instagram" : "all services")", role: .destructive) {
+                    if preferences.beginSocialLock(instagramOnly: instagramOnly, until: permanentSocialLock ? nil : socialLockEnd) {
+                        socialLockError = nil
+                        container.enforceRestrictions()
+                        preferences.selectionFeedback()
+                    } else {
+                        socialLockError = "The lock could not be saved, or it would shorten an existing commitment. Existing restrictions remain active."
+                    }
+                }
+            } message: {
+                Text(permanentSocialLock ? "There is no early unlock or expiry for a permanent commitment." : "There is no early unlock. You can only extend this commitment.")
+            }
         }
     }
 

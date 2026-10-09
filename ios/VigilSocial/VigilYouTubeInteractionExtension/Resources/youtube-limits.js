@@ -183,7 +183,11 @@
     panel.hidden = Boolean(document.fullscreenElement || document.webkitFullscreenElement
       || document.querySelector('video')?.webkitDisplayingFullscreen
       || document.querySelector('.html5-video-player.ytp-fullscreen'));
-    if (desktopHeader || panel.hidden) return;
+    if (desktopHeader) {
+      if (panel.style.bottom) panel.style.bottom = '';
+      return;
+    }
+    if (panel.hidden) return;
     const viewport = window.visualViewport;
     const height = window.innerHeight || document.documentElement.clientHeight;
     const visibleBottom = Math.min(height, viewport ? viewport.offsetTop + viewport.height : height);
@@ -199,10 +203,10 @@
         bottom = Math.max(bottom, height - rect.top);
       }
     }
-    const value = `${Math.ceil(bottom)}px`;
-    if (panel.style.getPropertyValue('--vigil-allowance-bottom') !== value) {
-      panel.style.setProperty('--vigil-allowance-bottom', value);
-    }
+    const value = `calc(max(${Math.ceil(bottom)}px, env(safe-area-inset-bottom)) + 8px)`;
+    // This owned panel needs a geometry update, not a custom-property change
+    // that invalidates background/generated media throughout the page.
+    if (panel.style.bottom !== value) panel.style.bottom = value;
   }
   for (const event of ['fullscreenchange', 'webkitfullscreenchange', 'webkitbeginfullscreen', 'webkitendfullscreen']) {
     document.addEventListener(event, positionAllowance, true);
@@ -221,7 +225,7 @@
     panel = document.createElement('aside'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(max(var(--vigil-allowance-bottom,0px),env(safe-area-inset-bottom)) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
+    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
     statusLine = document.createElement('strong'); statusLine.textContent = 'Checking allowance…';
     shadow.append(style, statusLine);
     panel.setAttribute('aria-label', 'YouTube daily allowance');
@@ -303,8 +307,8 @@
     for (const anchor of document.querySelectorAll('a[href*="watch?v="]')) {
       const videoId = idFrom(anchor.href);
       if (!videoId || cards.some(card => card.videoId === videoId)) continue;
-      const container = anchor.closest('ytm-video-with-context-renderer,ytm-rich-item-renderer,ytd-rich-item-renderer,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer');
-      if (!container || (feedName() && container.closest('ytd-watch-flexy,ytm-watch'))) continue;
+      const container = anchor.closest(nativeCardSelector);
+      if (!container || (feedName() && !standardFeedCard(container))) continue;
       const titleNode = container?.querySelector('h3,h4,#video-title,.media-item-headline');
       const title = (titleNode?.textContent || anchor.getAttribute('title') || anchor.getAttribute('aria-label') || anchor.textContent || '').trim();
       if (validTitle(title)) cards.push({ videoId, title });
@@ -332,11 +336,12 @@
     throw new Error('Could not find this video in Watch Later. Open the playlist and try again.');
   }
   function rememberMenuVideo(target) {
-    const card = target.closest('ytm-video-with-context-renderer,ytm-rich-item-renderer,ytd-rich-item-renderer,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer,ytm-playlist-video-renderer,ytd-playlist-video-renderer');
+    const card = target.closest(`${nativeCardSelector},ytm-playlist-video-renderer,ytd-playlist-video-renderer`);
     const anchor = card?.querySelector('a[href*="watch?v="]');
-    const videoId = anchor ? idFrom(anchor.href) : currentID();
+    const videoId = card ? (anchor ? idFrom(anchor.href) : null) : currentID();
     const title = card?.querySelector('h3,h4,#video-title,.media-item-headline')?.textContent?.trim() || document.querySelector('h1')?.textContent?.trim() || document.title;
-    if (videoId) menuVideo = { videoId, title };
+    // Detached Save dialogs keep the selection from the originating card.
+    if (card || videoId) menuVideo = videoId ? { videoId, title } : null;
   }
   async function standardWatchLaterChange(target, remove) {
     const video = menuVideo;
@@ -363,7 +368,44 @@
     } catch (error) { show(error.message); }
   }
   function feedName() { return ['/', '/feed/recommended'].includes(location.pathname) ? 'home' : location.pathname === '/feed/subscriptions' ? 'subscriptions' : ''; }
-  const nativeCardSelector = 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytd-rich-item-renderer,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer';
+  const nativeCardSelector = 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytd-rich-item-renderer,ytd-rich-grid-media,ytm-rich-grid-media,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer,yt-lockup-view-model,ytm-lockup-view-model';
+  // Feed sections are discovery modules, even when they contain ordinary watch
+  // links. Reject the entire module without depending on its translated heading.
+  const feedModuleSelector = [
+    'ytd-rich-section-renderer', 'ytm-rich-section-renderer',
+    'ytd-rich-shelf-renderer', 'ytm-rich-shelf-renderer', 'ytd-shelf-renderer', 'ytm-shelf-renderer',
+    'ytd-reel-shelf-renderer', 'ytm-reel-shelf-renderer',
+    'ytd-brand-video-shelf-renderer', 'ytm-brand-video-shelf-renderer',
+    'ytd-brand-video-singleton-renderer', 'ytm-brand-video-singleton-renderer',
+    'ytd-horizontal-card-list-renderer', 'ytm-horizontal-card-list-renderer',
+    'ytd-horizontal-list-renderer', 'ytm-horizontal-list-renderer',
+    'ytd-feed-nudge-renderer', 'ytm-feed-nudge-renderer',
+    'ytd-feed-filter-chip-bar-renderer', 'ytm-feed-filter-chip-bar-renderer',
+    'ytd-rich-grid-slim-media', 'ytm-rich-grid-slim-media',
+    'ytd-statement-banner-renderer', 'ytm-statement-banner-renderer',
+    'ytd-banner-promo-renderer', 'ytm-banner-promo-renderer',
+    'ytd-video-display-full-buttoned-renderer', 'ytm-video-display-full-buttoned-renderer',
+    'ytd-inline-survey-renderer', 'ytm-inline-survey-renderer',
+    'ytd-in-feed-ad-layout-renderer', 'ytm-in-feed-ad-layout-renderer',
+    'ytd-ad-slot-renderer', 'ytm-ad-slot-renderer',
+    'ytd-display-ad-renderer', 'ytm-display-ad-renderer',
+    'ytd-promoted-sparkles-web-renderer', 'ytm-promoted-sparkles-web-renderer',
+    'ytd-promoted-video-renderer', 'ytm-promoted-video-renderer',
+    'yt-shorts-lockup-view-model', 'ytm-shorts-lockup-view-model'
+  ].join(',');
+  function standardFeedCard(card) {
+    return !card.closest(`${feedModuleSelector},ytd-watch-flexy,ytm-watch`)
+      && !card.querySelector(feedModuleSelector);
+  }
+  function standardFeedItem(item) {
+    if (!item || typeof item !== 'object') return null;
+    const content = item.richItemRenderer?.content || item;
+    // Only a direct video renderer is a feed entry. Recursing through arbitrary
+    // containers would promote music shelves and featured campaigns into slots.
+    if (!['videoRenderer', 'videoWithContextRenderer', 'gridVideoRenderer', 'compactVideoRenderer', 'lockupViewModel']
+      .some(key => content[key])) return null;
+    return videoCards(content).cards[0] || null;
+  }
   let feedSync = false, feedSignature = '', feedEnd;
   const nativeCache = new Map();
   function nativeFeedData(data, append = false) {
@@ -373,13 +415,15 @@
     const key = `vigil-native-feed:${name}`;
     let cached = nativeCache.get(name);
     if (!cached) { try { cached = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* No UI cache yet. */ } }
-    if (!cached || cached.day !== day) cached = { day, items: [] };
+    if (!cached || cached.day !== day || cached.schemaVersion !== 2) cached = { schemaVersion: 2, day, items: [] };
+    cached.items = (Array.isArray(cached.items) ? cached.items : [])
+      .filter(entry => entry?.card && standardFeedItem(entry.item)?.videoId === entry.card.videoId).slice(0, 20);
     const lists = [];
     const scan = value => {
       if (!value || typeof value !== 'object') return;
-      for (const kind of ['richGridRenderer', 'itemSectionRenderer', 'appendContinuationItemsAction', 'reloadContinuationItemsCommand']) {
+      for (const kind of ['richGridRenderer', 'itemSectionRenderer', 'richGridContinuation', 'itemSectionContinuation', 'appendContinuationItemsAction', 'reloadContinuationItemsCommand']) {
         const items = value[kind]?.contents || value[kind]?.continuationItems;
-        if (Array.isArray(items) && items.some(item => videoCards(item).cards.length)) lists.push(items);
+        if (Array.isArray(items)) { lists.push(items); return; }
       }
       for (const child of Object.values(value)) if (child && typeof child === 'object') {
         if (Array.isArray(child)) child.forEach(scan); else scan(child);
@@ -388,7 +432,7 @@
     scan(data);
     if (!lists.length) return data;
     for (const list of lists) for (const item of list) {
-      const card = videoCards(item).cards[0];
+      const card = standardFeedItem(item);
       if (card && cached.items.length < 20 && !cached.items.some(old => old.card.videoId === card.videoId)) cached.items.push({ card, item });
     }
     // Reuse YouTube's own renderer models. YouTube continues to render every
@@ -396,7 +440,7 @@
     let inserted = false;
     const rendered = append ? new Set(domCards().map(card => card.videoId)) : new Set();
     for (const list of lists) {
-      const other = list.filter(item => !videoCards(item).cards.length && !(cached.items.length === 20 && item.continuationItemRenderer));
+      const other = cached.items.length < 20 ? list.filter(item => item.continuationItemRenderer) : [];
       list.splice(0, list.length, ...(inserted ? [] : cached.items.filter(entry => !rendered.has(entry.card.videoId)).map(entry => entry.item)), ...other);
       inserted = true;
     }
@@ -462,12 +506,14 @@
   let lastFilteredFeed = '';
   async function filterNativeFeed() {
     const name = feedName();
+    document.documentElement.toggleAttribute('data-vigil-standard-feed', Boolean(name));
     if (!name) {
       if (!lastFilteredFeed) return;
       lastFilteredFeed = '';
       feedEnd?.remove(); feedEnd = null;
       document.querySelectorAll('[data-vigil-feed-hidden]').forEach(node => node.removeAttribute('data-vigil-feed-hidden'));
       document.documentElement.removeAttribute('data-vigil-feed-complete');
+      document.documentElement.removeAttribute('data-vigil-feed-pending');
       return;
     }
     lastFilteredFeed = name;
@@ -490,13 +536,16 @@
       websiteCards.set(key, selected);
     }
     const allowed = new Set(websiteFeed ? websiteCards.get(`${state.day}:${name}`) || [] : (state.feeds[name] || []).map(card => card.videoId));
+    const visible = new Set();
     let last;
     for (const card of document.querySelectorAll(nativeCardSelector)) {
+      // Rich-item wrappers and their inner video renderer are one visual card.
+      if (card.parentElement?.closest(nativeCardSelector)) continue;
       const anchor = card.querySelector('a[href*="watch?v="]');
       const id = anchor && idFrom(anchor.href);
-      if (!id) continue;
-      card.toggleAttribute('data-vigil-feed-hidden', !allowed.has(id));
-      if (allowed.has(id)) last = card;
+      const showCard = Boolean(id && allowed.has(id) && standardFeedCard(card) && !visible.has(id));
+      card.toggleAttribute('data-vigil-feed-hidden', !showCard);
+      if (showCard) { visible.add(id); last = card; }
     }
     document.documentElement.toggleAttribute('data-vigil-feed-complete', allowed.size === 20);
     if (allowed.size === 20 && last) {
@@ -521,24 +570,17 @@
     'ytd-rich-section-renderer:has(ytd-feed-nudge-renderer)',
     'ytd-feed-nudge-renderer'
   ].join(',');
-  function cleanShelfHeadings() {
-    for (const heading of document.querySelectorAll(':is(ytd-rich-shelf-renderer,ytd-shelf-renderer,ytd-rich-section-renderer,ytd-feed-nudge-renderer) :is(#title,h2,[role=heading])')) {
-      if (!/^(shorts|explore more topics|(?:(?:new|trending|popular|top) )?music videos(?: this week)?)$/i.test((heading.textContent || '').trim())) continue;
-      const shelf = heading.closest('ytd-rich-section-renderer')
-        || heading.closest('ytd-rich-shelf-renderer,ytd-shelf-renderer,ytd-feed-nudge-renderer');
-      if (shelf && !shelf.hasAttribute('data-vigil-shelf-hidden')) shelf.setAttribute('data-vigil-shelf-hidden', '');
-    }
-  }
   function clean() {
     updateHeldPlayer();
     document.documentElement.toggleAttribute('data-vigil-feed-pending', Boolean(feedName() && !state));
     mount();
-    cleanShelfHeadings();
     void filterNativeFeed();
     if (!document.getElementById('vigil-limits-style')) {
       const style = document.createElement('style'); style.id = 'vigil-limits-style';
       style.textContent = `html[data-vigil-feed-pending] :is(${nativeCardSelector}){display:none!important}` + 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
+      style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
+      style.textContent += `html[data-vigil-standard-feed] :is(ytd-rich-item-renderer,ytm-rich-item-renderer):not(:has(:is(ytd-rich-grid-media,ytm-rich-grid-media,ytd-video-renderer,ytm-video-with-context-renderer,ytd-grid-video-renderer,ytm-compact-video-renderer,yt-lockup-view-model,ytm-lockup-view-model))){display:none!important}`;
       if (!topFrame) style.textContent += '.ytp-endscreen-content,.ytp-ce-element,.ytp-cards-button,.ytp-cards-teaser,.ytp-next-button,.ytp-playlist-menu-button,.ytp-pause-overlay,.ytp-suggestion-set,a[href*="feature=endscreen"]{display:none!important}';
       style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}html[data-vigil-playback-held] .ytp-large-play-button,html[data-vigil-playback-held] .ytp-cued-thumbnail-overlay{display:block!important}html[data-vigil-playback-held] .ytp-chrome-bottom{display:block!important;opacity:1!important}';
       style.textContent += 'html[data-vigil-playback-pending] .ytp-large-play-button{display:none!important}';

@@ -1,3 +1,4 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -7,7 +8,7 @@ import { appleContentFilterStatusFromRecord } from "../src/appleContentFilter.js
 import { activeAppLockPolicy, confirmAppLockUnlock, normalizeAppLock, requestAppLockUnlock } from "../src/appLocks.js";
 import { blockedPageDisplayLabel, managedFilterAllowsVigilPages, safeExternalPageUrl } from "../src/blockedPageUrl.js";
 import { contentFilterEnabled, matchContentFilterUrl } from "../src/contentFilters.js";
-import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, defaultState, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEFAULT_ALWAYS_BANNED_URL_PATTERNS, DEFAULT_EXPLICIT_BLOCKED_SITES, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, DEFAULT_EXPLICIT_SEARCH_TERMS, DEFAULT_EXPLICIT_URL_PATTERNS, DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { assertDistanceKey, distanceKeySummary, updateDistanceKeySettings } from "../src/distanceKey.js";
 import { evaluateExtensionCheck, extensionDynamicRuleCount, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock, managedBlockDomains } from "../src/hardening.js";
@@ -20,8 +21,8 @@ import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanc
 import { buildSafariFilterProfile, safariFilterDenyMatch, safariFilterDenyUrls, safariFilterPathDenyUrls, safariFilterPolicySignature, safariUrlFilterEnabled } from "../src/safariFilter.js";
 import { CHROME_PREFERENCE_DOMAINS, buildChromeSafeSearchProfile, chromeSafeSearchStatusFromRecord } from "../src/chromeSafeSearch.js";
 import { applySealVerificationToState, markStateSealed } from "../src/seal.js";
-import { blockedPage, blockedPageResponse, pausePage } from "../src/server/pages.js";
-import { deleteProfile } from "../src/server/policyRoutes.js";
+import { blockedPage, blockedPageResponse } from "../src/server/pages.js";
+import { deleteProfile } from "./fixtures/legacy-policy-routes.mjs";
 import { updateSettings } from "../src/server/settingsRoutes.js";
 import { sanitizeDefaultFocusProfile, sanitizeFullBrickProfile, sanitizeSoftBlockProfile } from "../src/store.js";
 import { recordOpen, recordUsage, syncDeviceUsageSnapshot } from "../src/usage.js";
@@ -774,11 +775,11 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(page, /id="leaveBlockedPage"/);
   assert.match(page, /https:\/\/example\.com\/docs/);
   assert.match(page, /data-vigil-block-page="1"/);
-  assert.match(page, /<p class="eyebrow">Vigil<\/p>/);
+  assert.match(page, /<title>Blocked · Vigil<\/title>/);
   assert.doesNotMatch(page, /document\.referrer/);
   assert.doesNotMatch(page, /history\.go/);
   assert.match(page, /color-scheme: dark/);
-  assert.match(page, /--paper: #101216/);
+  assert.match(page, /class="block-reference"/);
   assert.doesNotMatch(page, /--paper: #eee8dc/);
   assert.doesNotMatch(page, /Adaptive friction/);
   assert.doesNotMatch(page, /Intentional break/);
@@ -876,63 +877,6 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
 
 {
   const state = defaultState();
-  const requestedAt = new Date();
-  state.intentionalUse.pauses.push({
-    id: "minimal-breathing-preview",
-    ruleId: "short-form-intent-template",
-    ruleName: "Short-form pause",
-    status: "pending",
-    requestedAt: requestedAt.toISOString(),
-    eligibleAt: new Date(requestedAt.getTime() + 12_000).toISOString(),
-    expiresAt: new Date(requestedAt.getTime() + 120_000).toISOString(),
-    frictionLevel: "standard",
-    delaySeconds: 12,
-    sessionMinutes: 10,
-    targetType: "site",
-    targetLabel: "x.com",
-    app: "",
-    hostname: "x.com",
-    returnUrl: "https://x.com/",
-    event: "navigation"
-  });
-  const page = pausePage({
-    url: new URL("http://127.0.0.1:8787/pause?requestId=minimal-breathing-preview"),
-    state
-  });
-  assert.match(page, /class="pause-content"/);
-  assert.match(page, /id="breathGuide" class="breath-guide"/);
-  assert.match(page, /id="breathLine" class="breath-line"/);
-  assert.equal((page.match(/class="breath-echo"/g) || []).length, 7);
-  assert.match(page, /lineAnimations = \[breathLine, \.\.\.breathEchoes\]\.map/);
-  assert.match(page, /const echoLagMs = Math\.min\(95, Math\.max\(42, totalDurationMs \/ 140\)\)/);
-  assert.match(page, /duration: totalDurationMs/);
-  assert.match(page, /delay: index \* echoLagMs/);
-  assert.match(page, /animation\.startTime = timerStartedAt/);
-  assert.match(page, /requestAnimationFrame\(renderTimer\)/);
-  assert.match(page, /translate3d\(0, calc\(-100vh \+ var\(--edge\) \+ var\(--edge\) \+ 3px\), 0\)/);
-  assert.match(page, /\.breath-line::before/);
-  assert.match(page, /\.breath-glint/);
-  assert.match(page, /\.breath-echo:nth-of-type\(8\)/);
-  assert.doesNotMatch(page, /height: clamp\(56px, 16vh, 180px\)/);
-  assert.match(page, /Are you sure you want to open x\.com\?/);
-  assert.match(page, /<button id="continue" class="countdown-control"[^>]*disabled>/);
-  assert.match(page, /<span id="continueLabel" aria-hidden="true">Continue<\/span>/);
-  assert.match(page, /\.countdown-control \{[\s\S]*width: 156px;[\s\S]*height: 48px;[\s\S]*border-radius: 9px;/);
-  assert.match(page, /continueButton\.classList\.add\("finishing"\)/);
-  assert.match(page, /continueButton\.classList\.add\("ready"\)/);
-  assert.match(page, /continueButton\.disabled = false/);
-  assert.match(page, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.countdown-control\.finishing \{ animation: none; \}/);
-  assert.doesNotMatch(page, /setInterval/);
-  assert.doesNotMatch(page, /breath-line 6s/);
-  assert.doesNotMatch(page, /top: 50%/);
-  assert.doesNotMatch(page, /What are you here to do/);
-  assert.doesNotMatch(page, /Current state/);
-  assert.doesNotMatch(page, /Choose alternative/);
-  assert.doesNotMatch(page, /Short-form pause<\/span>/);
-}
-
-{
-  const state = defaultState();
   const stale = blockedPageResponse({
     url: new URL("http://127.0.0.1:8787/blocked?site=youtube.com&mode=focus&until=2026-07-15T07%3A09%3A13.730Z&back=https%3A%2F%2Fyoutube.com%2F"),
     state
@@ -1001,7 +945,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     state
   });
   assert.equal(current.status, 200);
-  if (current.status === 200) assert.match(current.body, /example\.com is blocked/);
+  if (current.status === 200) assert.match(current.body, /"target":"example\.com"/);
 }
 
 {

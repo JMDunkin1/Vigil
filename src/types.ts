@@ -131,15 +131,6 @@ export interface AppSettings {
   panicLockDurationMinutes: number;
   intentReasonEnabled: boolean;
   intentReasonMinLength: number;
-  focusSoundEnabled: boolean;
-  focusSoundMode: string;
-  focusSoundActivity: string;
-  focusSoundPreset: string;
-  focusSoundIntensity: string;
-  focusSoundTimerMode: string;
-  focusSoundTimerMinutes: number;
-  focusSoundBreakMinutes: number;
-  focusSoundVolume: number;
   typingChallengeEnabled: boolean;
   interventionEnabled: boolean;
   interventionWindowMinutes: number;
@@ -822,6 +813,8 @@ export interface DeviceControlsState {
 }
 
 export interface VigilState {
+  settingsCleanupVersion?: number;
+  searchBreak?: import("./searchBreak.js").SearchBreakLedger;
   youtubeLimits?: import("./youtubeLimits.js").YouTubeDay;
   version: number;
   createdAt: string;

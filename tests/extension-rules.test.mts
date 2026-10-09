@@ -7,7 +7,7 @@ import { compactExtensionRuleSignature, evaluateExtensionCheck, extensionRuleSna
 import { activePolicy } from "../src/policy.js";
 import { must, now, recordValue, stringValue, TEST_DAYS } from "./test-helpers.mjs";
 
-const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource, blockedPageScriptSource, optionsPageSource] = await Promise.all([
+const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText, extensionManifestText, blockedPageSource, blockedPageScriptSource, optionsPageSource, blockedPageStyles] = await Promise.all([
   readFile(new URL("../extension/background.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/content.js", import.meta.url), "utf8"),
   readFile(new URL("../extension/google-safe-search.js", import.meta.url), "utf8"),
@@ -15,7 +15,8 @@ const [backgroundSource, contentSource, googleSafeSearchSource, staticRulesText,
   readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
   readFile(new URL("../extension/blocked.html", import.meta.url), "utf8"),
   readFile(new URL("../extension/blocked-navigation.js", import.meta.url), "utf8"),
-  readFile(new URL("../extension/options.html", import.meta.url), "utf8")
+  readFile(new URL("../extension/options.html", import.meta.url), "utf8"),
+  readFile(new URL("../extension/blocked.css", import.meta.url), "utf8")
 ]);
 const staticRules = JSON.parse(staticRulesText) as Array<Record<string, unknown>>;
 const extensionManifest = JSON.parse(extensionManifestText) as Record<string, unknown>;
@@ -68,16 +69,17 @@ const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-searc
 const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
 assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
 assert.match(blockedPageSource, /data-vigil-block-page="1"/u);
-assert.match(blockedPageSource, /--primary: #315ae8/u);
-assert.match(blockedPageSource, /<p class="eyebrow">Vigil<\/p>/u);
-assert.match(blockedPageSource, /id="leaveBlockedPage" href="about:blank">Go back/u);
+assert.match(blockedPageStyles, /--primary: #365b41/u);
+assert.match(blockedPageSource, /<h1>Blocked<\/h1>/u);
+assert.match(blockedPageSource, /class="block-reference"/u);
+assert.match(blockedPageSource, /id="leaveBlockedPage" href="about:blank">Back/u);
 assert.match(blockedPageSource, /<script src="blocked-navigation\.js"><\/script>/u);
 assert.match(blockedPageScriptSource, /location\.replace\("about:blank"\)/u);
 assert.doesNotMatch(blockedPageSource, /history\.(?:back|go)/u);
 assert.match(blockedPageScriptSource, /history\.back\(\)/u, "manual Back uses the browser's same-tab history when no verified return is available");
 assert.doesNotMatch(blockedPageScriptSource, /\nexport \{\};?\s*$/u, "the blocked-page script must be emitted as a classic extension script");
-assert.match(optionsPageSource, /--primary: #315ae8/u, "the companion options page must use Vigil's current blue accent");
-assert.match(optionsPageSource, /color-scheme: dark/u, "the companion options page must use the current charcoal surface");
+assert.match(optionsPageSource, /href="blocked\.css"/u, "options share the protection palette");
+assert.match(blockedPageStyles, /color-scheme: dark/u, "the shared palette uses the charcoal surface");
 assert.doesNotMatch(optionsPageSource, /#126a6f|#f6f1e8|#fffcf4/u, "the companion options page must not return to the retired teal theme");
 const webAccessibleResources = extensionManifest.web_accessible_resources as Array<{ resources?: unknown }> | undefined;
 assert.equal(webAccessibleResources?.some((entry) => Array.isArray(entry.resources) && entry.resources.includes("blocked.html")), true);
@@ -108,7 +110,7 @@ assert.match(
   /const generation = \+\+pulseGeneration[\s\S]*?if \(generation !== pulseGeneration\)\s*return;[\s\S]*?handlePulseResult\(result\)/u,
   "stale pulse responses must not release a newer navigation guard"
 );
-assert.match(contentSource, /background: #315ae8/u, "the injected pause overlay must use Vigil's current blue action");
+assert.match(contentSource, /--primary: #365b41/u, "the pause overlay uses the shared green accent");
 assert.doesNotMatch(contentSource, /#18345b|#142238|#d1a94d/u, "the injected pause overlay must not return to the retired navy-and-gold theme");
 assert.match(compactExtensionRuleSignature("large canonical rule payload"), /^sha256:[a-f0-9]{64}$/u);
 assert.equal(
@@ -297,6 +299,7 @@ assert.ok(
     Element: TestElement,
     FormData: TestFormData,
     HTMLFormElement: TestForm,
+    document: { title: "Ordinary search", querySelectorAll: () => [], querySelector: () => null },
     chrome: {
       runtime: {
         getURL(path: string) { return `chrome-extension://vigil/${path}`; }
@@ -889,6 +892,7 @@ assert.ok(
   const tabUpdates: Array<{ tabId: number; change: unknown }> = [];
   const tabMessages: Array<{ tabId: number; message: unknown; options: unknown }> = [];
   let healthListener: (message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean | undefined = () => undefined;
+  const messageListeners: Array<typeof healthListener> = [];
   let windowFocused = true;
   const healthReports: Array<{ url: string }> = [];
   const event = () => ({ addListener() {} });
@@ -984,10 +988,17 @@ assert.ok(
         }
       },
       runtime: {
+        getURL(path: string) { return `chrome-extension://vigil/${path}`; },
         getManifest() { return { version: "0.3.2" }; },
         get lastError() { return runtimeLastError; },
         onInstalled: event(),
-        onMessage: { addListener(listener: typeof healthListener) { healthListener = listener; } },
+        onMessage: { addListener(listener: typeof healthListener) {
+          messageListeners.push(listener);
+          healthListener = (message, sender, reply) => {
+            for (const receive of messageListeners) if (receive(message, sender, reply) === true) return true;
+            return false;
+          };
+        } },
         onStartup: event()
       },
       storage: {

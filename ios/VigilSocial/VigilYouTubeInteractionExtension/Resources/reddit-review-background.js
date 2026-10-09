@@ -345,5 +345,4 @@ reviewApi.runtime.onStartup.addListener(() => {
     });
 });
 
-
 })();

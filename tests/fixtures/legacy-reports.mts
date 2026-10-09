@@ -1,8 +1,8 @@
-import { dateKey } from "./time.js";
-import { appMatchesAppTargets, hostMatchesSiteTargets } from "./policy.js";
-import { intentionalUseSummary } from "./intentionalUse.js";
-import { normalizeUsageDay, usageBlockedSeconds, usageDeviceScreenTimeSeconds, usageOpenCount } from "./usage.js";
-import type { VigilState, UsageBucket, UsageDay, UsageState } from "./types.js";
+import { dateKey } from "../../src/time.js";
+import { appMatchesAppTargets, hostMatchesSiteTargets } from "../../src/policy.js";
+import { intentionalUseSummary } from "../../src/intentionalUse.js";
+import { normalizeUsageDay, usageBlockedSeconds, usageDeviceScreenTimeSeconds, usageOpenCount } from "../../src/usage.js";
+import type { VigilState, UsageBucket, UsageDay, UsageState } from "../../src/types.js";
 
 interface DayReport {
   key: string;

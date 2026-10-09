@@ -1,3 +1,4 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,8 +33,7 @@ import {
 import {
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
   MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS,
-  SOFT_BLOCK_PROFILE_ID,
-  defaultState
+  SOFT_BLOCK_PROFILE_ID
 } from "../src/defaults.js";
 import { evaluateExtensionCheck, extensionRuleSnapshot } from "../src/extensionPolicy.js";
 import { buildHostsBlock } from "../src/hardening.js";
@@ -269,7 +269,7 @@ bad_domain
   assert.deepEqual(normalizeAdultDomainList("www.ExampleAdult.test\nexampleadult.test"), ["exampleadult.test"]);
 
   const state = defaultState();
-  state.settings.adultBlocklistPreloadLimit = 25;
+  state.settings.adultBlocklistPreloadLimit = 250;
   let match = matchAdultBlocklistHost(state, "media.exampleadult.test");
   assert.equal(match?.domain, "exampleadult.test");
   assert.equal(match?.sourceId, testSource.id);

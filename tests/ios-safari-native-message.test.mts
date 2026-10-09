@@ -389,7 +389,8 @@ blockedClickListener?.({
 assert.equal(blockedClickPrevented, true, "a blocked Safari navigation must be intercepted before leaving the allowed page");
 assert.equal(extensionDocumentElement.dataset.vigilBlockPage, "1", "Safari must render Vigil's branded block surface");
 assert.ok(renderedElements.some((element) => element.tag === "style" && element.textContent.includes("radial-gradient")));
-assert.ok(renderedElements.some((element) => element.textContent === "Vigil"));
+assert.ok(renderedElements.some((element) => element.tag === "h1" && element.textContent === "Blocked"));
+assert.ok(renderedElements.some((element) => element.textContent.includes("V1-IOS")), "Vigil Browser preserves the diagnostic reference on its minimal block surface");
 
 extensionHistoryTarget = "";
 extensionReloaded = false;
@@ -407,7 +408,7 @@ assert.equal(extensionReloaded, true,
 assert.equal(trustedRestoreNavigationPrevented, false,
   "the destination-specific restore allowance must prevent recursive cancellation");
 
-const extensionBackButton = renderedElements.find((element) => element.tag === "button" && element.textContent === "Go back");
+const extensionBackButton = renderedElements.find((element) => element.tag === "button" && element.textContent === "Back");
 assert.ok(extensionBackButton, "the Safari block surface must always provide a Back action");
 const extensionBackListener = extensionBackButton.listeners.get("click");
 extensionHistoryTarget = "";
@@ -529,7 +530,7 @@ assert.equal(directRenderCount, 3,
   "isolated-world guarding must recreate a removed document root and restore the block surface");
 assert.ok(directRoot);
 const directBackButton = [...directElements].reverse()
-  .find((element) => element.tag === "button" && element.textContent === "Go back");
+  .find((element) => element.tag === "button" && element.textContent === "Back");
 assert.ok(directBackButton);
 let buttonClickPrevented = false;
 let buttonClickStopped = false;
@@ -600,7 +601,7 @@ vm.runInNewContext(contentSource, {
 });
 await new Promise<void>((resolve) => setImmediate(resolve));
 const unavailableBackButton = unavailableElements
-  .find((element) => element.tag === "button" && element.textContent === "Go back");
+  .find((element) => element.tag === "button" && element.textContent === "Back");
 assert.ok(unavailableBackButton, "failed native rules must expose a neutral escape action");
 let unavailableClickStopped = false;
 const unavailableClickListener = unavailableListeners.get("click");
@@ -792,6 +793,6 @@ mainWorldHistory.pushState({}, "", "../%73horts/blocked-video");
 assert.equal(fallbackOriginalPushes, 2,
   "pre-Navigation-API Safari must synchronously reject page-world History API routes");
 assert.equal(fallbackDocumentElement.dataset.vigilBlockPage, "1");
-assert.ok(fallbackElements.some((element) => element.textContent === "Vigil"));
+assert.ok(fallbackElements.some((element) => element.tag === "h1" && element.textContent === "Blocked"));
 assert.ok(fallbackFrameGuard,
   "older Safari must also verify location changes at the pre-paint frame boundary");

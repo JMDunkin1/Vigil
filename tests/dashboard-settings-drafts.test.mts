@@ -46,35 +46,35 @@ const api = runInNewContext([
   saveIosSettings(): Promise<void>;
 };
 api.bindSettingActions();
-const form = $("#enforcementTimingForm") as unknown as HTMLFormElement;
-const input = $("#appQuitEscalationSeconds");
+const form = $("#accessTimingForm") as unknown as HTMLFormElement;
+const input = $("#panicLockDurationMinutes");
 input.form = form;
-api.setInputValue("#appQuitEscalationSeconds", 10);
+api.setInputValue("#panicLockDurationMinutes", 10);
 assert.equal(input.value, "10");
 input.value = "25";
 form.dispatchEvent(new Event("input"));
-api.setInputValue("#appQuitEscalationSeconds", 10);
+api.setInputValue("#panicLockDurationMinutes", 10);
 assert.equal(input.value, "25", "polling must retain a draft after focus leaves its control");
 
-const save = api.saveSettings({}, "saved", "#enforcementTimingForm");
+const save = api.saveSettings({}, "saved", "#accessTimingForm");
 input.value = "30";
 form.dispatchEvent(new Event("input"));
 resolvePost();
 await save;
-api.setInputValue("#appQuitEscalationSeconds", 25);
+api.setInputValue("#panicLockDurationMinutes", 25);
 assert.equal(input.value, "30", "edits made while the previous revision saves must survive its refresh");
-const saveLatest = api.saveSettings({}, "saved", "#enforcementTimingForm");
+const saveLatest = api.saveSettings({}, "saved", "#accessTimingForm");
 resolvePost();
 await saveLatest;
-api.setInputValue("#appQuitEscalationSeconds", 30);
+api.setInputValue("#panicLockDurationMinutes", 30);
 assert.equal(formHasUnsavedChanges(form), false);
 
 input.value = "40";
 form.dispatchEvent(new Event("input"));
-const failed = api.saveSettings({}, "saved", "#enforcementTimingForm");
+const failed = api.saveSettings({}, "saved", "#accessTimingForm");
 rejectPost(new Error("maintenance required"));
 await failed;
-api.setInputValue("#appQuitEscalationSeconds", 30);
+api.setInputValue("#panicLockDurationMinutes", 30);
 assert.equal(input.value, "40", "failed protected saves must retain the draft");
 
 const keyholder = $("#keyholderForm") as unknown as HTMLFormElement;
@@ -89,10 +89,10 @@ assert.equal($("#keyholderPasscode").value, "second", "an earlier save must not 
 
 api.bindDeviceActions();
 const iosForm = $("#iosForm") as unknown as HTMLFormElement;
-$("#iosBlockWeb").checked = true;
+$("#iosAllowSafariHistoryClearing").checked = true;
 iosForm.dispatchEvent(new Event("change"));
 const iosSave = api.saveIosSettings();
-$("#iosBlockApps").checked = true;
+$("#iosRestrictInstallErase").checked = true;
 iosForm.dispatchEvent(new Event("change"));
 resolvePost();
 await iosSave;
@@ -107,53 +107,3 @@ rejectPost(new Error("maintenance required"));
 await iosSaveFailed;
 assert.equal(formHasUnsavedChanges(iosForm), true, "a rejected policy save must retain the iPhone draft");
 
-const profileForm = $("#profileForm") as unknown as HTMLFormElement;
-trackFormChanges(profileForm);
-const profileFields = new Map<string, { value: string }>();
-const profileField = (_form: HTMLFormElement, name: string) => {
-  let field = profileFields.get(name);
-  if (!field) { field = { value: "" }; profileFields.set(name, field); }
-  return field;
-};
-let completeProfile!: (result: { profile: { id: string } }) => void;
-let failBaselineUpdate = false;
-let profileCloses = 0;
-const profileApi = runInNewContext(`let profileEditorGeneration = 0;\n${functionSource("saveProfile")}\n({ saveProfile, openAnotherEditor() { profileEditorGeneration += 1; } });`, {
-  $, formInput: profileField, formRevision, markFormSavedAtRevision,
-  lines: (value: string) => value.split("\n").filter(Boolean),
-  post: (path: string) => {
-    if (path === "/api/profile") return new Promise((resolve) => { completeProfile = resolve; });
-    return failBaselineUpdate ? Promise.reject(new Error("maintenance required")) : Promise.resolve();
-  },
-  closeProfileEditor: () => { profileCloses += 1; },
-  ui: {}, toast() {}, refresh: async () => {}, handleMutationError() {}
-}) as { saveProfile(): Promise<void>; openAnotherEditor(): void };
-profileField(profileForm, "name").value = "First draft";
-profileForm.dispatchEvent(new Event("input"));
-const profileSave = profileApi.saveProfile();
-profileField(profileForm, "name").value = "A newer draft";
-profileForm.dispatchEvent(new Event("input"));
-completeProfile({ profile: { id: "created-profile" } });
-await profileSave;
-assert.equal(profileCloses, 0, "a completed profile save must not close an editor containing newer changes");
-assert.equal(profileField(profileForm, "id").value, "created-profile", "the next save must update the newly created profile rather than duplicate it");
-assert.equal(formHasUnsavedChanges(profileForm), true);
-const nextProfileSave = profileApi.saveProfile();
-completeProfile({ profile: { id: "created-profile" } });
-await nextProfileSave;
-assert.equal(profileCloses, 1, "saving the current revision may close the editor");
-
-const staleProfileSave = profileApi.saveProfile();
-profileApi.openAnotherEditor();
-profileField(profileForm, "id").value = "another-profile";
-completeProfile({ profile: { id: "created-profile" } });
-await staleProfileSave;
-assert.equal(profileCloses, 1, "an old save must not close a subsequently opened editor");
-assert.equal(profileField(profileForm, "id").value, "another-profile");
-
-profileField(profileForm, "id").value = "";
-failBaselineUpdate = true;
-const partialProfileSave = profileApi.saveProfile();
-completeProfile({ profile: { id: "saved-before-baseline-failed" } });
-await partialProfileSave;
-assert.equal(profileField(profileForm, "id").value, "saved-before-baseline-failed", "a failed baseline update must not cause duplicate profile creation on retry");

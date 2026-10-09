@@ -73,7 +73,7 @@ for (const query of ["x rated", "adult vids", "spicy clips", "cream pie videos",
 console.log("iOS Safari desktop search parity, navigation, input, benign searches and bundled freshness passed.");
 
 assert.deepEqual(page("https://example.org/search?q=porn", false).redirects, ["about:blank"], "missing extension APIs still leave the blocked page");
-assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html"], matches: ["http://*/*", "https://*/*"] }]);
+assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html", "search-break.html"], matches: ["http://*/*", "https://*/*"] }]);
 
 for (const query of ["x", "xx", "Xbox", "X-Men", "x axis"]) {
   const typing = page("https://www.reddit.com/");

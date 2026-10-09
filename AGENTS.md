@@ -18,3 +18,7 @@ Help develop and update Vigil without weakening its restrictions. Never terminat
 4. Verify `IsSupervised=true`, pair using the supervisor keybag, install the signed non-removable profile, verify the exact live policy fingerprint, and launch-test every companion before reporting success or re-enabling Find My.
 
 Never restore the full checkpoint (`backup2 restore --system`) or run standalone Home Screen restore on a supervised phone: these clear supervision. While a verified checkpoint exists, do not start new enrollment, repeat restores, or ask the user to rebuild the Home Screen.
+
+## Minimal block-page diagnostics
+
+Block pages show only “Blocked” and “Back”. The small corner code uses `V1-SOURCE-KIND-FINGERPRINT`; it is a diagnostic label, never an authorization token. Sources: `MAC` = Vigil's companion server, `CHR` = Chrome content guard, `SAF` = Safari content guard, `IOS` = Vigil Browser, `EXT` = a static extension fallback. Native phone access gates use `V1-SOC-SERVICE-CATEGORY` and retain the full restriction in their accessibility hint. Kind labels and the stable target/policy fingerprint are defined in `src/blockPageDiagnostics.ts`. For a screenshot, read that code to identify the surface and block category. Full target, rule ID, expiry, and explanation remain in `#vigilBlockDetails` JSON; correlate with existing local blocked-event logs when more context is needed. Do not infer a specific target from a screenshot code alone when its metadata or matching local evidence is unavailable.

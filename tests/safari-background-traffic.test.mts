@@ -6,7 +6,10 @@ import { runInNewContext } from 'node:vm';
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = basename(runtimeRoot) === 'runtime' ? dirname(dirname(runtimeRoot)) : runtimeRoot;
-const source = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js'), 'utf8');
+// The separately tested global search-break engine may check its own commitment;
+// this regression covers the absence of per-page browser-health polling.
+const source = (await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js'), 'utf8'))
+  .replace(/\/\/ BEGIN GENERATED SEARCH BREAK[\s\S]*?\/\/ END GENERATED SEARCH BREAK/gu, '');
 type Navigation = { tabId: number; frameId: number; url: string; transitionType?: string };
 function event<T>() {
   const listeners: Array<(value: T) => void> = [];
@@ -27,11 +30,12 @@ runInNewContext(source, {
   setInterval: noConnectionWork,
   browser: {
     runtime: {
+      getURL: (path: string) => `safari-web-extension://vigil/${path}`,
       onMessage: { addListener: (listener: typeof receive) => { receive = listener; } },
       sendNativeMessage: async (_host: string, message: Record<string, unknown>) => { native.push(message); return { ok: true }; }
     },
     windows: { onFocusChanged: focus, get: noConnectionWork },
-    tabs: { onActivated: activated, onRemoved: removed, get: noConnectionWork, query: noConnectionWork, sendMessage: noConnectionWork },
+    tabs: { onActivated: activated, onRemoved: removed, get: async () => ({ id: 12, url: 'https://www.google.com/search?q=library' }), query: noConnectionWork, sendMessage: noConnectionWork },
     webNavigation: { onBeforeNavigate: before, onCommitted: committed, onErrorOccurred: error, getFrame: noConnectionWork },
     storage: { local: {
       get: async (keys: string | string[]) => Object.fromEntries(

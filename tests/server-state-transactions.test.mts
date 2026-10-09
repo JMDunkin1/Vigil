@@ -43,9 +43,9 @@ try {
   });
 
   await withStateWriteFailure(async () => {
-    const response = await post("/api/settings", { browserNoiseBlockingEnabled: !initialSettings.browserNoiseBlockingEnabled });
+    const response = await post("/api/settings", { sketchySiteMaxAgeDays: Number(initialSettings.sketchySiteMaxAgeDays) + 1 });
     assert.equal(response.status, 500);
-    assert.equal(recordValue((await currentState()).settings).browserNoiseBlockingEnabled, initialSettings.browserNoiseBlockingEnabled);
+    assert.equal(recordValue((await currentState()).settings).sketchySiteMaxAgeDays, initialSettings.sketchySiteMaxAgeDays);
   });
 
   await withStateWriteFailure(async () => {
@@ -79,14 +79,14 @@ try {
 
   assert.equal((await post("/api/session/end", { deviceTargets: ["computer"] })).status, 200);
   const [first, second] = await Promise.all([
-    post("/api/settings", { browserNoiseBlockingEnabled: false }),
-    post("/api/settings", { siteRedirectEnabled: false })
+    post("/api/settings", { panicLockDurationMinutes: 5 }),
+    post("/api/settings", { sketchySiteMaxAgeDays: 20 })
   ]);
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
   const finalSettings = recordValue((await currentState()).settings);
-  assert.equal(finalSettings.browserNoiseBlockingEnabled, false);
-  assert.equal(finalSettings.siteRedirectEnabled, false, "serialized drafts must preserve concurrent updates");
+  assert.equal(finalSettings.panicLockDurationMinutes, 5);
+  assert.equal(finalSettings.sketchySiteMaxAgeDays, 20, "serialized drafts must preserve concurrent updates");
 
   await runtime.stop();
   await assert.rejects(runtime.request({ path: "/api/state" }), /not accepting|not initialized/u);

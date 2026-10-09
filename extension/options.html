@@ -4,29 +4,16 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Vigil Companion Options</title>
+  <link rel="stylesheet" href="blocked.css">
   <style>
-    :root {
-      color-scheme: dark;
-      --paper: #101216;
-      --paper-2: #14171d;
-      --surface: #22262e;
-      --ink: #f4f6fa;
-      --muted: #a4adb8;
-      --line: #30343d;
-      --line-strong: #485265;
-      --primary: #315ae8;
-      --primary-strong: #244bc9;
-  --blue: #89abff;
-      --focus: rgba(137, 171, 255, .24);
-    }
-
     body {
+      display: block;
       margin: 0;
       min-width: 280px;
       min-height: 100vh;
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
       background:
-        radial-gradient(circle at 78% -8%, rgba(49, 90, 232, .08), transparent 34rem),
+        radial-gradient(circle at 78% -8%, rgba(141, 179, 154, .08), transparent 34rem),
         linear-gradient(180deg, var(--paper), var(--paper-2));
       color: var(--ink);
     }
@@ -39,7 +26,7 @@
 
     h1 {
       margin: 0 0 24px;
-      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+      font-family: var(--font-display);
       font-size: 2rem;
       font-weight: 600;
       letter-spacing: -.035em;
@@ -67,7 +54,7 @@
       border: 1px solid var(--line-strong);
       border-radius: 9px;
       padding: 0 12px;
-      background: var(--surface);
+      background: var(--paper-2);
       color: var(--ink);
       font: inherit;
     }
@@ -143,7 +130,7 @@
       border: 1px dashed var(--line);
       border-radius: 9px;
       padding: 8px 10px;
-      background: var(--surface);
+      background: var(--paper-2);
       color: var(--ink);
       font-size: 0.82rem;
       line-height: 1.35;
@@ -156,7 +143,7 @@
 </head>
 <body>
   <main>
-    <img src="icons/icon-128.png" width="44" height="44" alt="" style="display:block;margin-bottom:24px">
+    <div class="brand-lockup"><span class="brand-mark" aria-hidden="true"></span><p class="eyebrow">Vigil</p></div>
     <h1>Vigil Companion</h1>
     <form id="settings">
       <label>
