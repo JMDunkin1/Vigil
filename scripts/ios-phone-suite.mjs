@@ -61,6 +61,7 @@ const PHONE_SOURCE_FILES = [
   "extension/google-safe-search.ts",
   "src/contextualExplicitSearch.ts",
   "src/explicitMediaContext.ts",
+  "src/safeSearchContext.ts",
   "scripts/generate-ios-safari-guard.mts",
   "scripts/copy-assets.mts",
   "scripts/apply-ios-usb-profile.mjs",
@@ -1679,7 +1680,7 @@ export async function verifyBundledYouTubeInteractionExtension(appPath, parentBu
   const manifestPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.manifestName);
   const scriptPath = join(extensionPath, YOUTUBE_INTERACTION_EXTENSION.scriptName);
   const blockedPageBytes = [];
-  for (const name of ["blocked.html", "blocked.css"]) {
+  for (const name of ["blocked.html", "blocked.css", "search-break.html", "search-break-page.js"]) {
     const bytes = await readFile(join(extensionPath, name));
     const source = await readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
     if (!bytes.equals(source)) throw new Error(`Stale Safari blocked-page resource: ${name}`);
@@ -1778,9 +1779,9 @@ export function validYouTubeInteractionManifest(manifest) {
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
   return manifest?.manifest_version === 3
     && JSON.stringify(manifest.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
-    && JSON.stringify(manifest.permissions) === JSON.stringify(["nativeMessaging", "webNavigation", "storage"])
+    && JSON.stringify(manifest.permissions) === JSON.stringify(["nativeMessaging", "webNavigation", "storage", "tabs"])
     && JSON.stringify(manifest.background) === JSON.stringify({ scripts: ["reddit-review-background.js", "youtube-background.js"] })
-    && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html"], matches: ["http://*/*", "https://*/*"] }])
+    && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html", "search-break.html"], matches: ["http://*/*", "https://*/*"] }])
     && scripts.length === 6
     && scripts.every((script, index) => script?.run_at === "document_start" && (index === 5 ? script.world === "MAIN" : script.world === undefined))
     && JSON.stringify(scripts[5]?.matches) === JSON.stringify([...expectedHosts.slice(0, 3), "https://youtube-nocookie.com/*", "https://www.youtube-nocookie.com/*"])

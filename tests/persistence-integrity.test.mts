@@ -1,3 +1,4 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -8,7 +9,7 @@ const dataDir = await mkdtemp(join(tmpdir(), "vigil-persistence-integrity-"));
 await chmod(dataDir, 0o755);
 process.env.VIGIL_DATA_DIR = dataDir;
 
-const [{ defaultState }, { integrityLockdownActive }, { dateKey }, store, seal] = await Promise.all([
+const [, { integrityLockdownActive }, { dateKey }, store, seal] = await Promise.all([
   import("../src/defaults.js"),
   import("../src/integrityLockdown.js"),
   import("../src/time.js"),
@@ -17,10 +18,12 @@ const [{ defaultState }, { integrityLockdownActive }, { dateKey }, store, seal] 
 ]);
 
 try {
+  await store.saveState(defaultState());
   const state = await store.loadState();
   assert.equal(state.integrity.stateSeal.tamperDetectedAt, null);
   assert.equal(state.integrity.usageSeal.required, false);
 
+  await store.saveState(state);
   const migrationTransition = structuredClone(state);
   migrationTransition.integrity.usageSeal = {
     required: true,

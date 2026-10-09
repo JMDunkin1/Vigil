@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { truthy } from "../booleans.js";
 import { assertTypingChallenge, attachTypingChallenge } from "../challenge.js";
 import { assertDistanceKey } from "../distanceKey.js";
-import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID } from "../defaults.js";
+import { BRICK_MODE_PROFILE_ID, DEVICE_TARGETS, PANIC_LOCK_PROFILE_ID, SOFT_BLOCK_PROFILE_ID } from "../defaults.js";
 import { assertIntentReason } from "../intentReason.js";
 import { emergencyDelaySeconds, interventionSummary } from "../intervention.js";
 import { completeIntentionalPlanBlock } from "../intentionalUse.js";
@@ -28,7 +28,7 @@ import {
 } from "../policy.js";
 import { addEvent, saveState } from "../store.js";
 import { clampNumber, cooldownExpiresAt, weekKey } from "../time.js";
-import type { ActivePolicy, ActivePolicyContributor, DeviceTarget, EmergencyPolicyContributor, EmergencyRequest, LimitBlock, LockLevel, Profile, VigilState, Session, SessionCycle, UnknownRecord } from "../types.js";
+import type { ActivePolicy, ActivePolicyContributor, DeviceTarget, EmergencyPolicyContributor, EmergencyRequest, LimitBlock, LockLevel, Profile, VigilState, Session, UnknownRecord } from "../types.js";
 import { commitmentLockError } from "./pages.js";
 import { errorStatus, readBody, sendJson, serializeError } from "./http.js";
 
@@ -417,8 +417,10 @@ async function previewManualSessionForRequest(
 function manualSessionDraft(state: VigilState, body: UnknownRecord, options: ManualSessionDraftOptions = {}): ManualSessionDraft {
   const now = options.now || new Date();
   const deviceTargets = normalizeSessionDeviceTargets(body);
-  const cycle = normalizeSessionCycle(body);
-  const durationMinutes = cycle ? cycleDurationMinutes(cycle) : clampNumber(body.durationMinutes, 1, 60 * 24 * 45, 25);
+  if (body.cycle || truthy(body.cycleEnabled) || body.mode === "soft-block" || body.profileId === SOFT_BLOCK_PROFILE_ID) {
+    throw Object.assign(new Error("Work/break cycles and Soft Lock have been retired."), { status: 410 });
+  }
+  const durationMinutes = clampNumber(body.durationMinutes, 1, 60 * 24 * 45, 25);
   const ends = new Date(now.getTime() + durationMinutes * 60 * 1000);
   const lockLevel = normalizeLockLevel(body.lockLevel, state.settings.strictByDefault ? "deep" : "light");
   const mode = stringValue(body.mode, "focus");
@@ -437,8 +439,7 @@ function manualSessionDraft(state: VigilState, body: UnknownRecord, options: Man
     emergencyUnlocksAllowed: !commitmentLock,
     source: "manual",
     deviceTargets,
-    profileSnapshot: snapshotProfile(profile),
-    ...(cycle ? { cycle } : {})
+    profileSnapshot: snapshotProfile(profile)
   };
   return {
     session,
@@ -590,23 +591,6 @@ function policyUsesAppTargets(profile: Profile): boolean {
 
 function policyUsesWebTargets(profile: Profile): boolean {
   return profile.mode === "allowlist" || Boolean((profile.blockedSites || []).length || (profile.blockedUrlPatterns || []).length);
-}
-
-function normalizeSessionCycle(body: UnknownRecord): (SessionCycle & { enabled: true; workMinutes: number; breakMinutes: number; rounds: number }) | null {
-  if (!truthy(body.cycleEnabled)) return null;
-  const workMinutes = clampNumber(body.cycleWorkMinutes, 1, 240, 25);
-  const breakMinutes = clampNumber(body.cycleBreakMinutes, 1, 120, 5);
-  const rounds = clampNumber(body.cycleRounds, 1, 24, 4);
-  return {
-    enabled: true,
-    workMinutes,
-    breakMinutes,
-    rounds
-  };
-}
-
-function cycleDurationMinutes(cycle: SessionCycle & { workMinutes: number; breakMinutes: number; rounds: number }): number {
-  return cycle.workMinutes * cycle.rounds + cycle.breakMinutes * Math.max(0, cycle.rounds - 1);
 }
 
 function emergencyRemaining(state: VigilState): number {

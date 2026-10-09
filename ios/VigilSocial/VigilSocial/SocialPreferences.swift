@@ -1,7 +1,8 @@
 import Combine
-import Darwin
 import Foundation
 import UIKit
+import Security
+import Darwin
 
 struct SocialAccount: Codable, Identifiable, Equatable {
     let id: UUID
@@ -41,8 +42,10 @@ struct SocialAccount: Codable, Identifiable, Equatable {
 struct SocialRestriction: Equatable {
     let name: String
     let until: Date?
+    var permanent = false
 
     var message: String {
+        if permanent { return "This service is permanently locked." }
         guard let until else { return "Your saved schedule could not be read. Access stays paused." }
         return "\(name) pauses this service until \(until.formatted(date: .abbreviated, time: .shortened))."
     }
@@ -141,6 +144,7 @@ final class SocialPreferences: ObservableObject {
     @Published private(set) var postingService: SocialService?
     @Published private(set) var postingUntil: Date?
     private let defaults: UserDefaults
+    private let commitments: SocialCommitmentStore
     private let monotonicNow: () -> TimeInterval
     private var sleepDeadline: SleepDeadline?
 
@@ -180,8 +184,9 @@ final class SocialPreferences: ObservableObject {
         var postingUntil: Date?
     }
 
-    init(defaults: UserDefaults = .standard, monotonicNow: @escaping () -> TimeInterval = SocialPreferences.continuousSeconds) {
+    init(defaults: UserDefaults = .standard, commitmentStorage: SocialCommitmentStorage = KeychainSocialCommitmentStorage(), monotonicNow: @escaping () -> TimeInterval = SocialPreferences.continuousSeconds) {
         self.defaults = defaults
+        commitments = SocialCommitmentStore(storage: commitmentStorage)
         self.monotonicNow = monotonicNow
         guard let data = defaults.data(forKey: Self.storageKey) else { return }
         guard let record = try? JSONDecoder().decode(Record.self, from: data), record.version == 1,
@@ -239,7 +244,7 @@ final class SocialPreferences: ObservableObject {
     @discardableResult
     func addAccount(for service: SocialService, name: String) -> UUID? {
         let trimmed = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
-        guard service != .instagram, !trimmed.isEmpty, !savedScheduleUnreadable else { return nil }
+        guard service != .instagram, !trimmed.isEmpty, !savedScheduleUnreadable, !isBlocked(for: service) else { return nil }
         let account = SocialAccount(service: service, name: trimmed)
         accounts.append(account)
         persist()
@@ -247,7 +252,7 @@ final class SocialPreferences: ObservableObject {
     }
 
     func selectAccount(_ id: UUID?, for service: SocialService) {
-        guard service != .instagram, !savedScheduleUnreadable,
+        guard service != .instagram, !savedScheduleUnreadable, !isBlocked(for: service),
               id == nil || accounts(for: service).contains(where: { $0.id == id }) else { return }
         selectedAccounts[service.rawValue] = id
         persist()
@@ -262,6 +267,7 @@ final class SocialPreferences: ObservableObject {
     }
 
     func blockingReason(for service: SocialService, at now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> SocialRestriction? {
+        if let committed = commitments.restriction(for: service, at: now) { return committed }
         if savedScheduleUnreadable { return SocialRestriction(name: "Saved schedule", until: nil) }
         var reasons: [SocialRestriction] = []
         if let sleep = sleepRestriction(at: now) { reasons.append(sleep) }
@@ -282,6 +288,18 @@ final class SocialPreferences: ObservableObject {
 
     func isBlocked(for service: SocialService, at now: Date = Date(), calendar: Calendar = .autoupdatingCurrent) -> Bool {
         blockingReason(for: service, at: now, calendar: calendar) != nil
+    }
+
+    @discardableResult
+    func beginSocialLock(instagramOnly: Bool, until end: Date?, at now: Date = Date()) -> Bool {
+        guard !savedScheduleUnreadable else { return false }
+        let saved = commitments.begin(scope: instagramOnly ? "instagram" : "all", until: end, at: now)
+        objectWillChange.send()
+        return saved
+    }
+
+    func socialLocks(at now: Date = Date()) -> [(name: String, restriction: SocialRestriction)] {
+        commitments.active(at: now)
     }
 
     @discardableResult
@@ -355,5 +373,166 @@ final class SocialPreferences: ObservableObject {
                             postingUntil: postingUntil)
         guard let data = try? JSONEncoder().encode(record) else { return }
         defaults.set(data, forKey: Self.storageKey)
+    }
+}
+
+protocol SocialCommitmentStorage {
+    func load() throws -> Data?
+    func save(_ data: Data) throws
+}
+
+struct KeychainSocialCommitmentStorage: SocialCommitmentStorage {
+    private var query: [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: "tech.caseline.vigil.social-commitment.v1",
+         kSecAttrAccount as String: "commitments"]
+    }
+
+    func load() throws -> Data? {
+        var query = query
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return nil }
+        guard status == errSecSuccess, let data = result as? Data else { throw CommitmentError.storage }
+        return data
+    }
+
+    func save(_ data: Data) throws {
+        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecSuccess { return }
+        guard status == errSecItemNotFound else { throw CommitmentError.storage }
+        var item = query
+        item[kSecValueData as String] = data
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw CommitmentError.storage }
+    }
+}
+
+private enum CommitmentError: Error { case storage }
+
+/// Separate from preferences and web accounts; reinstalling the app cannot reset a commitment.
+/// No method deletes a lock, shortens its time, or grants an early unlock.
+final class SocialCommitmentStore {
+    struct Clock {
+        var boot: String
+        var seconds: TimeInterval
+
+        private static let bootIdentity: String = {
+            // A process-local identity is a conservative fallback: reopening can
+            // extend a lock when the kernel identity is unavailable, never shorten it.
+            let fallback = UUID().uuidString
+            var size = 0
+            guard sysctlbyname("kern.bootsessionuuid", nil, &size, nil, 0) == 0, size > 1 else {
+                return fallback
+            }
+            var bytes = [CChar](repeating: 0, count: size)
+            guard sysctlbyname("kern.bootsessionuuid", &bytes, &size, nil, 0) == 0 else {
+                return fallback
+            }
+            return String(decoding: bytes.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        }()
+        private static let ticksToSeconds: Double = {
+            var scale = mach_timebase_info_data_t()
+            mach_timebase_info(&scale)
+            guard scale.denom != 0 else { return 0 }
+            return Double(scale.numer) / Double(scale.denom) / 1_000_000_000
+        }()
+        static func current() -> Clock {
+            Clock(boot: bootIdentity, seconds: Double(mach_continuous_time()) * ticksToSeconds)
+        }
+    }
+
+    private struct Lock: Codable {
+        var remaining: TimeInterval? // nil means permanent
+    }
+    private struct Record: Codable {
+        var version = 1
+        var boot: String
+        var seconds: TimeInterval
+        var locks: [String: Lock]
+    }
+    private let storage: SocialCommitmentStorage
+    private let clock: () -> Clock
+    private var record: Record?
+    private var savedAt: TimeInterval = 0
+    private(set) var unreadable = false
+
+    init(storage: SocialCommitmentStorage, clock: @escaping () -> Clock = Clock.current) {
+        self.storage = storage
+        self.clock = clock
+        do {
+            if let bytes = try storage.load() {
+                let decoded = try JSONDecoder().decode(Record.self, from: bytes)
+                guard decoded.version == 1, decoded.seconds.isFinite, decoded.seconds >= 0,
+                      decoded.locks.keys.allSatisfy({ ["all", "instagram"].contains($0) }),
+                      decoded.locks.values.allSatisfy({ $0.remaining == nil || ($0.remaining!.isFinite && $0.remaining! >= 0) }) else {
+                    throw CommitmentError.storage
+                }
+                record = decoded
+                savedAt = decoded.seconds
+            }
+        } catch { unreadable = true }
+    }
+
+    private func reconcile() {
+        guard !unreadable, var next = record else { return }
+        let observed = clock()
+        // A missing boot identity freezes the timer rather than releasing access.
+        guard !observed.boot.isEmpty, observed.seconds.isFinite, observed.seconds >= 0 else { return }
+        let elapsed = next.boot == observed.boot ? max(0, observed.seconds - next.seconds) : 0
+        let rebooted = next.boot != observed.boot
+        let hadActive = next.locks.values.contains { ($0.remaining ?? .infinity) > 0 }
+        for key in next.locks.keys {
+            if let remaining = next.locks[key]?.remaining { next.locks[key]?.remaining = max(0, remaining - elapsed) }
+        }
+        next.boot = observed.boot
+        next.seconds = observed.seconds
+        record = next
+        let expired = hadActive && !next.locks.values.contains { ($0.remaining ?? .infinity) > 0 }
+        // Continuous time includes sleep and cannot be advanced by changing the date.
+        // After a reboot, retain the last saved remaining time conservatively.
+        if rebooted || expired || observed.seconds - savedAt >= 60 {
+            do { try persist(next) } catch { unreadable = true }
+        }
+    }
+
+    private func persist(_ next: Record) throws {
+        try storage.save(JSONEncoder().encode(next))
+        savedAt = next.seconds
+        record = next
+    }
+
+    func begin(scope: String, until end: Date?, at now: Date) -> Bool {
+        reconcile()
+        guard !unreadable, ["all", "instagram"].contains(scope) else { return false }
+        let remaining = end.map { $0.timeIntervalSince(now) }
+        if let remaining, !remaining.isFinite || remaining <= 0 || remaining > 7 * 24 * 3600 { return false }
+        let observed = clock()
+        guard !observed.boot.isEmpty else { return false }
+        var next = record ?? Record(boot: observed.boot, seconds: observed.seconds, locks: [:])
+        if let existing = next.locks[scope], (existing.remaining ?? .infinity) > (remaining ?? .infinity) { return false }
+        next.locks[scope] = Lock(remaining: remaining)
+        do { try persist(next); return true } catch { unreadable = true; return false }
+    }
+
+    func restriction(for service: SocialService, at now: Date) -> SocialRestriction? {
+        reconcile()
+        if unreadable { return SocialRestriction(name: "Saved social lock", until: nil) }
+        let applicable = [record?.locks["all"], service == .instagram ? record?.locks["instagram"] : nil].compactMap { $0 }
+        if applicable.contains(where: { $0.remaining == nil }) { return SocialRestriction(name: "Social lock", until: nil, permanent: true) }
+        guard let remaining = applicable.compactMap(\.remaining).max(), remaining > 0 else { return nil }
+        return SocialRestriction(name: "Social lock", until: now.addingTimeInterval(remaining))
+    }
+
+    func active(at now: Date) -> [(name: String, restriction: SocialRestriction)] {
+        reconcile()
+        if unreadable { return [("Saved social lock", SocialRestriction(name: "Saved social lock", until: nil))] }
+        return ["all", "instagram"].compactMap { scope in
+            guard let lock = record?.locks[scope], (lock.remaining ?? .infinity) > 0 else { return nil }
+            return (scope == "all" ? "All services" : "Instagram",
+                    SocialRestriction(name: "Social lock", until: lock.remaining.map { now.addingTimeInterval($0) }, permanent: lock.remaining == nil))
+        }
     }
 }

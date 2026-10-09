@@ -1,7 +1,7 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
-import { defaultState } from "../src/defaults.js";
 import { hardeningDriftAttestationRequired } from "../src/integrityLockdown.js";
 import { queueIosMdmPolicyRefresh } from "../src/iosMdm.js";
 import { hotUsageCheckpointFingerprint, hotUsageCheckpointRetryDelayMs, MONITOR_ACTIVITY_ACCOUNTING_DELAY_MS, MONITOR_FULL_CHECKPOINT_INTERVAL_MS, MONITOR_HOT_CHECKPOINT_MAX_RETRY_MS, Monitor, wifiEnvironmentObservationRequired } from "../src/monitor.js";

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vigil Focused Web Controls",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Keeps Reddit limited to one externally searched post, preserves explicit-content protection, and adds focused YouTube controls.",
   "host_permissions": [
     "https://youtube.com/*",
@@ -109,7 +109,8 @@
       "resources": [
         "blocked.html",
         "blocked.css",
-        "reddit-review-blocked.html"
+        "reddit-review-blocked.html",
+        "search-break.html"
       ],
       "matches": [
         "http://*/*",
@@ -120,7 +121,8 @@
   "permissions": [
     "nativeMessaging",
     "webNavigation",
-    "storage"
+    "storage",
+    "tabs"
   ],
   "background": {
     "scripts": [

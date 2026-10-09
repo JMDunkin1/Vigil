@@ -19,9 +19,6 @@ import { now } from "./test-helpers.mjs";
 {
   const state = defaultState();
   assert.equal(intentReasonSummary(state).enabled, true);
-  assert.equal(state.settings.focusSoundEnabled, false);
-  assert.equal(state.settings.focusSoundPreset, "brown-noise");
-  assert.equal(state.settings.focusSoundVolume, 35);
   assert.throws(() => assertIntentReason(state, "too short", "Emergency unlock"), /at least 20/);
   assert.equal(
     assertIntentReason(state, "  I need to unblock this briefly for a real task.  ", "Emergency unlock"),

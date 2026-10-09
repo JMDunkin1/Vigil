@@ -352,5 +352,4 @@ function installReviewReader(post) {
     setInterval(scan, 1000);
 }
 
-
 })();

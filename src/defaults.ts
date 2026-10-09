@@ -7,7 +7,7 @@ export { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED
 
 export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || 8787);
-export const REQUIRED_EXTENSION_VERSION = "0.3.13";
+export const REQUIRED_EXTENSION_VERSION = "0.3.14";
 export const BUILT_IN_CHROME_EXTENSION_ID = "pioggnehmhgehdlncoddbhcbcjmmcpge";
 export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "blocklistproject-porn";
 export const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
@@ -537,6 +537,7 @@ export const DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS = [
 export function defaultState(): VigilState {
   return {
     version: 1,
+    settingsCleanupVersion: 1,
     createdAt: new Date().toISOString(),
     settings: {
       pollIntervalMs: 15000,
@@ -548,22 +549,13 @@ export function defaultState(): VigilState {
       panicLockDurationMinutes: 3,
       intentReasonEnabled: true,
       intentReasonMinLength: 20,
-      focusSoundEnabled: false,
-      focusSoundMode: "focus",
-      focusSoundActivity: "deep-work",
-      focusSoundPreset: "brown-noise",
-      focusSoundIntensity: "medium",
-      focusSoundTimerMode: "infinite",
-      focusSoundTimerMinutes: 50,
-      focusSoundBreakMinutes: 5,
-      focusSoundVolume: 35,
       typingChallengeEnabled: true,
       interventionEnabled: true,
       interventionWindowMinutes: 10,
       interventionThreshold: 3,
       interventionExtraDelaySeconds: 45,
       interventionMaxExtraDelaySeconds: 300,
-      intentionalUseEnabled: true,
+      intentionalUseEnabled: false,
       baselineDailyMinutes: 300,
       focusScoreGoal: 80,
       activeProfileId: "default",
@@ -580,8 +572,7 @@ export function defaultState(): VigilState {
       browserNoiseBlockingEnabled: true,
       appQuitEnabled: true,
       strictBypassProtectionEnabled: true,
-      // Enabled after both maintained browser extensions have been deployed.
-      protectedBrowsersOnly: false,
+      protectedBrowsersOnly: true,
       processSweepEnabled: true,
       processSweepIntervalSeconds: 15,
       systemSleepLockEnabled: false,
@@ -663,218 +654,20 @@ export function defaultState(): VigilState {
         allowedSites: [...DEFAULT_ALLOWED_SITES]
       }
     ],
-    schedules: [
-      {
-        id: "sleep-template",
-        name: "Sleep wind-down",
-        enabled: false,
-        mode: "sleep",
-        profileId: "default",
-        lockLevel: "deep",
-        days: [0, 1, 2, 3, 4, 5, 6],
-        start: "22:30",
-        end: "07:00",
-        wifiNetworks: []
-      }
-    ],
-    limitRules: [
-      {
-        id: "instagram-20-20-template",
-        name: "Instagram 20/20",
-        enabled: true,
-        type: "time",
-        lockLevel: "deep",
-        days: [0, 1, 2, 3, 4, 5, 6],
-        apps: ["Instagram", "com.burbn.instagram", "tech.caseline.vigil.instagram"],
-        sites: ["instagram.com"],
-        limitMinutes: 20,
-        unlocksAllowed: 0,
-        blockMinutes: 20,
-        excludedProfileIds: [SOFT_BLOCK_PROFILE_ID]
-      },
-      {
-        id: "soft-lock-youtube-20-20-template",
-        name: "Soft Lock YouTube 20/20",
-        enabled: true,
-        type: "time",
-        lockLevel: "deep",
-        days: [0, 1, 2, 3, 4, 5, 6],
-        apps: ["YouTube", "com.google.ios.youtube", "tech.caseline.vigil.youtube"],
-        sites: ["youtube.com"],
-        limitMinutes: 20,
-        unlocksAllowed: 0,
-        blockMinutes: 20,
-        requiredProfileId: SOFT_BLOCK_PROFILE_ID
-      },
-      {
-        id: "social-open-template",
-        name: "Social open limit",
-        enabled: false,
-        type: "open",
-        lockLevel: "deep",
-        days: [0, 1, 2, 3, 4, 5, 6],
-        apps: [],
-        sites: DEFAULT_BLOCKED_SITES,
-        limitMinutes: 45,
-        unlocksAllowed: 5,
-        blockMinutes: 0
-      }
-    ],
+    schedules: [],
+    limitRules: [],
     limitBlocks: [],
-    appLocks: [
-      {
-        id: "social-app-lock-template",
-        name: "Locked socials",
-        enabled: false,
-        lockLevel: "deep",
-        days: [0, 1, 2, 3, 4, 5, 6],
-        apps: [],
-        sites: DEFAULT_BLOCKED_SITES,
-        unlocksAllowed: 2,
-        unlockMinutes: 10,
-        delaySeconds: 30
-      }
-    ],
+    appLocks: [],
     appLockUnlocks: [],
     appLockRequests: [],
     appLockLedger: {},
+    // Minimal legacy shape for archive and active-commitment recovery.
     intentionalUse: {
-      goal: {
-        statement: "Use screens on purpose, not by reflex.",
-        values: ["Deep work", "Sleep", "Real relationships"],
-        replacements: [
-          "Write the next tiny task",
-          "Take ten slow breaths",
-          "Stand up and get water",
-          "Open Notes instead"
-        ],
-        updatedAt: null
-      },
-      rules: [
-        {
-          id: "short-form-intent-template",
-          name: "Short-form pause",
-          enabled: true,
-          frictionLevel: "standard",
-          days: [0, 1, 2, 3, 4, 5, 6],
-          start: "00:00",
-          end: "23:59",
-          apps: [],
-          sites: [
-            "instagram.com",
-            "tiktok.com",
-            "x.com",
-            "twitter.com"
-          ],
-          urlPatterns: [
-            "reddit.com/r/all",
-            "reddit.com/r/popular",
-            "youtube.com/shorts",
-            "m.youtube.com/shorts"
-          ],
-          delaySeconds: 12,
-          sessionMinutes: 10,
-          dailyBudgetMinutes: 30,
-          budgetWarningPercent: 50,
-          askMood: true
-        }
-      ],
-      pauses: [],
-      grants: [],
-      ledger: {},
-      outcomes: [],
-      behaviors: [
-        {
-          id: "habit-chastity",
-          name: "Chastity",
-          description: "Remain free from masturbation and pornography today.",
-          direction: "build",
-          unit: "yes-no",
-          weeklyTarget: 7,
-          ruleIds: [],
-          replacement: "Pray, move to a public room, and begin the next good action.",
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: "habit-rosary",
-          name: "Pray the Rosary",
-          description: "Pray five decades with attention.",
-          direction: "build",
-          unit: "yes-no",
-          weeklyTarget: 7,
-          ruleIds: [],
-          replacement: "Begin with one decade rather than skipping the day.",
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: "habit-reading",
-          name: "Reading",
-          description: "Read attentively each day.",
-          direction: "build",
-          unit: "yes-no",
-          weeklyTarget: 7,
-          ruleIds: [],
-          replacement: "Read for ten minutes rather than skipping the day.",
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: "habit-exercise",
-          name: "Exercise",
-          description: "Train the body with deliberate movement.",
-          direction: "build",
-          unit: "yes-no",
-          weeklyTarget: 5,
-          ruleIds: [],
-          replacement: "Take a brisk ten-minute walk.",
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }
-      ],
-      behaviorCheckIns: [],
-      journalEntries: [],
-      journalVault: {
-        passwordSalt: "",
-        passwordHash: "",
-        passwordSetAt: null,
-        autoLockMinutes: 0,
-        autoLockVersion: 1
-      },
-      planLists: [
-        {
-          id: "todo",
-          name: "To Do",
-          kind: "todo",
-          description: "Tasks and commitments to do soon.",
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: "watchlist",
-          name: "Watchlist",
-          kind: "watch",
-          description: "Movies and shows to watch later.",
-          active: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }
-      ],
-      planItems: [],
-      planBlocks: [],
-      recoveryCheckIns: [],
-      sosSessions: [],
-      accountability: {
-        enabled: false,
-        partnerName: "",
-        cadence: "weekly"
-      }
+      goal: { statement: "", values: [], replacements: [], updatedAt: null },
+      rules: [], pauses: [], grants: [], ledger: {}, outcomes: [],
+      behaviors: [], behaviorCheckIns: [], journalEntries: [],
+      journalVault: { passwordSalt: "", passwordHash: "", passwordSetAt: null, autoLockMinutes: 0, autoLockVersion: 1 },
+      planLists: [], planItems: [], planBlocks: [], recoveryCheckIns: [], sosSessions: [], accountability: {}
     },
     extension: {
       lastSeenAt: null,

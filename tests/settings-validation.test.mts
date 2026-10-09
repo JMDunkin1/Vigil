@@ -7,8 +7,8 @@ import { updateSettings } from "../src/server/settingsRoutes.js";
   const before = structuredClone(state.settings);
   assert.throws(
     () => updateSettings(state.settings, {
-      focusSoundVolume: before.focusSoundVolume === 17 ? 18 : 17,
-      focusSoundMode: "not-a-focus-sound-mode"
+      sketchySiteMaxAgeDays: before.sketchySiteMaxAgeDays === 17 ? 18 : 17,
+      adultBlocklistSourceId: "not-a-source"
     }, state.profiles.map((profile) => profile.id)),
     isValidationError
   );
@@ -20,7 +20,7 @@ import { updateSettings } from "../src/server/settingsRoutes.js";
   const before = structuredClone(state.settings);
   assert.throws(
     () => updateSettings(state.settings, {
-      focusSoundVolume: before.focusSoundVolume === 23 ? 24 : 23,
+      sketchySiteMaxAgeDays: before.sketchySiteMaxAgeDays === 23 ? 24 : 23,
       activeProfileId: "missing-profile"
     }, state.profiles.map((profile) => profile.id)),
     isValidationError

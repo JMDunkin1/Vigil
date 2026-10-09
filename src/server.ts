@@ -1,3 +1,4 @@
+import { retiredFeaturePath, SETTINGS_CLEANUP_VERSION } from "./retiredFeatures.js";
 import { completeSketchySiteLookup, lookupDomainRegistration } from "./sketchySites.js";
 import type { RegistrationLookup } from "./sketchySites.js";
 import { ensureYouTubeConnection, youtubeTokenMatches } from "./youtubeConnection.js";
@@ -24,17 +25,15 @@ import { detectClockTamper, detectRuntimeInterruption } from "./integrityLockdow
 import { quarantineRuntimeInterruption, readRuntimeInterruption } from "./runtimeReady.js";
 import { quarantineRuntimeUsageCheckpoint, recoverRuntimeUsageCheckpoint, runtimeUsageCheckpointPath } from "./runtimeUsageCheckpoint.js";
 import { assertDistanceKey, updateDistanceKeySettings } from "./distanceKey.js";
-import { authorizeIosMdmDeviceRequest, authorizeIosMdmRequest, buildIosMdmEnrollmentProfile, handleIosMdmCheckIn, handleIosMdmConnect, markIosMdmEnrollmentGenerated, pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
-import { buildIosConfigurationProfile, ensureIosRemovalPassword, markIosProfileGenerated } from "./iosProfiles.js";
-import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
+import { pushIosMdmQueuedCommands, queueIosMdmPolicyRefresh } from "./iosMdm.js";
+import { ensureIosRemovalPassword } from "./iosProfiles.js";
 import { exportManageEngineIosProfile } from "./manageEngineExport.js";
-import { parsePlist } from "./plist.js";
 import { normalizeLockLevel, profileById } from "./policy.js";
 import { assertProtectedEditAllowed, confirmMaintenanceWindow, requestMaintenanceWindow } from "./protection.js";
 import { assertKeyholderPasscode, updateKeyholderSettings } from "./keyholder.js";
-import { discardRequestBody, errorStatus, readBody, readTextBody, sendDownload, sendEmpty, sendHtml, sendJson, sendMdmPlist, serializeError, serveStatic, mdmHeaders } from "./server/http.js";
+import { discardRequestBody, errorStatus, readBody, readTextBody, sendEmpty, sendHtml, sendJson, serializeError, serveStatic } from "./server/http.js";
 import { createLocalScriptRunner } from "./server/localScripts.js";
-import { blockedPageResponse, companionPage, pausePage } from "./server/pages.js";
+import { blockedPageResponse, companionPage } from "./server/pages.js";
 import { isExtensionApiPath, matchApiRoute } from "./server/apiRoutes.js";
 import { handleAppUpdateApiRoute } from "./server/appUpdateRoutes.js";
 import { handleAccountApiRoute } from "./server/accountRoutes.js";
@@ -45,7 +44,6 @@ import { handleDeviceApiRoute } from "./server/deviceRoutes.js";
 import type { IosMdmPushResult } from "./server/deviceRoutes.js";
 import { handleExtensionApiRoute } from "./server/extensionApi.js";
 import { handleHardeningApiRoute } from "./server/hardeningRoutes.js";
-import { handleIntentionalUseApiRoute } from "./server/intentionalUseRoutes.js";
 import { handlePolicyApiRoute } from "./server/policyRoutes.js";
 import { handleRuleSimulatorApiRoute } from "./server/ruleSimulatorRoutes.js";
 import { handleSettingsApiRoute } from "./server/settingsRoutes.js";
@@ -313,6 +311,11 @@ export async function recoverStartupContinuity(
     keyPath: STATE_SEAL_KEY_PATH,
     now
   });
+  // Recover general usage counters without bringing retired pause allowances back.
+  if (recoveredState.settingsCleanupVersion === SETTINGS_CLEANUP_VERSION && !recoveredState.settings.intentionalUseEnabled) {
+    recoveredState.intentionalUse.ledger = {};
+    recoveredState.intentionalUse.grants = [];
+  }
   const checkpointChanged = checkpoint.status === "recovered" && (
     !isDeepStrictEqual(recoveredUsage, usageBeforeCheckpoint)
     || !isDeepStrictEqual({
@@ -593,18 +596,7 @@ async function prepareMutationRequest(
   method: string,
   path: string
 ): Promise<{ handled: boolean; prepared: PreparedMutationRequest }> {
-  if (["PUT", "POST"].includes(method) && ["/mdm/checkin", "/mdm/connect"].includes(path)) {
-    try {
-      return {
-        handled: false,
-        prepared: { mdmBody: parsePlist(await readTextBody(request)) as UnknownRecord }
-      };
-    } catch (error) {
-      sendJson(response, errorStatus(error), serializeError(error));
-      return { handled: true, prepared: {} };
-    }
-  }
-
+  if (retiredFeaturePath(path)) { discardRequestBody(request); return { handled: false, prepared: {} }; }
   if (["POST", "PUT", "PATCH"].includes(method)) {
     try {
       // Buffer request bytes before mutation admission. Route handlers parse
@@ -743,8 +735,8 @@ async function dispatchRequest(
       return;
     }
 
-    if (url.pathname.startsWith("/mdm/")) {
-      await handleMdm(request, response, url, requestState, afterCommit, prepared.mdmBody);
+    if (retiredFeaturePath(url.pathname)) {
+      sendJson(response, 410, { error: "This feature has been retired. Use Vigil Social commitments and the verified local phone update." });
       return;
     }
 
@@ -769,11 +761,6 @@ async function dispatchRequest(
       } else {
         sendHtml(response, page.body);
       }
-      return;
-    }
-
-    if (url.pathname === "/pause") {
-      sendHtml(response, pausePage({ url, state: requestState, port: activePort }));
       return;
     }
 
@@ -1025,84 +1012,6 @@ async function scheduleIosMdmPush(reason: string, options: UnknownRecord = {}): 
   return effect;
 }
 
-async function handleMdm(
-  request: IncomingMessage,
-  response: ServerResponse,
-  url: URL,
-  requestState: VigilState,
-  afterCommit: AfterCommit,
-  preparedBody?: UnknownRecord
-): Promise<void> {
-  const method = request.method || "GET";
-  const path = url.pathname;
-
-  if ((method === "PUT" || method === "POST") && (path === "/mdm/checkin" || path === "/mdm/connect")) {
-    const body = preparedBody || parsePlist(await readTextBody(request)) as UnknownRecord;
-    if (!authorizeIosMdmDeviceRequest(requestState, url, body)) {
-      sendEmpty(response, 403);
-      return;
-    }
-
-    if (path === "/mdm/checkin") {
-      const result = handleIosMdmCheckIn(requestState, body);
-      addEvent(requestState, "ios_mdm_checkin", {
-        messageType: result.messageType,
-        udid: result.udid,
-        ok: result.ok
-      });
-      await saveState(requestState);
-      sendEmpty(response, 200, mdmHeaders());
-      if (result.messageType === "TokenUpdate" && result.udid) {
-        const payload = { reason: "checkin", force: true, udids: [result.udid] };
-        afterCommit(
-          () => scheduleIosMdmPush("checkin", payload),
-          { ...durableEffect("mdm-push", payload), awaitAttempt: false },
-          (effect, committedState) => completeIosMdmPush(effect, committedState),
-          (error, committedState) => completeFailedIosMdmPush(error, committedState)
-        );
-      }
-      return;
-    }
-
-    const result = handleIosMdmConnect(requestState, body);
-    addEvent(requestState, "ios_mdm_connect", {
-      status: result.status,
-      udid: result.udid,
-      command: result.command?.requestType || "none"
-    });
-    await saveState(requestState);
-    if (result.empty) sendEmpty(response, 200, mdmHeaders());
-    else sendMdmPlist(response, 200, result.body);
-    return;
-  }
-
-  if (!authorizeIosMdmRequest(requestState, url)) {
-    sendEmpty(response, 403);
-    return;
-  }
-
-  if (method === "GET" && path === "/mdm/enroll.mobileconfig") {
-    const profile = buildIosMdmEnrollmentProfile(requestState);
-    markIosMdmEnrollmentGenerated(requestState);
-    addEvent(requestState, "ios_mdm_enrollment_generated", { bytes: Buffer.byteLength(profile) });
-    await saveState(requestState);
-    sendDownload(response, 200, profile, "vigil-iphone-mdm.mobileconfig", "application/x-apple-aspen-config");
-    return;
-  }
-
-  if (method === "GET" && path === "/mdm/policy.mobileconfig") {
-    ensureIosRemovalPassword(requestState);
-    const profile = buildIosConfigurationProfile(requestState, new Date(), configuredIosPhoneProfileOptions(DATA_DIR));
-    markIosProfileGenerated(requestState);
-    addEvent(requestState, "ios_public_profile_generated", { bytes: Buffer.byteLength(profile) });
-    await saveState(requestState);
-    sendDownload(response, 200, profile, "vigil-iphone-lock.mobileconfig", "application/x-apple-aspen-config");
-    return;
-  }
-
-  sendEmpty(response, 404);
-}
-
 async function handleApi(
   request: IncomingMessage,
   response: ServerResponse,
@@ -1132,7 +1041,14 @@ async function handleApi(
     return;
   }
 
-  if (await handleExtensionApiRoute(request, response, url, { state: requestState, usage: requestUsage, requestPersistence })) {
+  if (await handleExtensionApiRoute(request, response, url, {
+    state: requestState, usage: requestUsage, requestPersistence,
+    schedulePolicyEnforcement: (reason) => afterCommit(
+      () => schedulePolicyEnforcement(reason),
+      durableEffect("policy-enforcement", { reason, eventId: requestState.events[0]?.id || "state" }),
+      (result, committedState) => addEvent(committedState, "policy_immediate_enforcement", { reason, ok: true, result })
+    )
+  })) {
     return;
   }
 
@@ -1290,18 +1206,6 @@ async function handleApi(
   }
 
   if (await handleDeviceApiRoute(request, response, url, { state: requestState, usage: requestUsage, recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit) })) {
-    return;
-  }
-
-  if (await handleIntentionalUseApiRoute(request, response, url, {
-    state: requestState,
-    recordIosMdmPolicyQueue: (reason) => recordIosMdmPolicyQueue(requestState, reason, afterCommit),
-    schedulePolicyEnforcement: (reason) => afterCommit(
-      () => schedulePolicyEnforcement(reason),
-      durableEffect("policy-enforcement", { reason, eventId: requestState.events[0]?.id || "state" }),
-      (result, committedState) => addEvent(committedState, "policy_immediate_enforcement", { reason, ok: true, result })
-    )
-  })) {
     return;
   }
 

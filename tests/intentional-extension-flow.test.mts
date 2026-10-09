@@ -1,5 +1,6 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
-import { defaultState, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
+import { REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "../src/defaults.js";
 import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
 import { accountabilityDigest, confirmIntentionalPause, intentionalUseDecision, intentionalUseSummary, recordIntentionalUseTime, skipIntentionalPause } from "../src/intentionalUse.js";
 import { dateKey } from "../src/time.js";

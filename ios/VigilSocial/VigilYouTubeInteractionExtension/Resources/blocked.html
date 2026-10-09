@@ -8,18 +8,15 @@
   <title>Blocked by Vigil</title>
   <link rel="stylesheet" href="blocked.css">
 </head>
-<body data-vigil-block-page="1">
-  <main>
-    <div class="brand-lockup">
-      <img class="brand-mark" src="icons/icon-128.png" width="44" height="44" alt="">
-      <p class="eyebrow">Vigil</p>
-    </div>
-    <h1>This search is blocked.</h1>
-    <p class="message">Explicit sexual content is not allowed, regardless of age.<br>Start a new search, or close this tab.</p>
+<body data-vigil-block-page="1" data-vigil-block-kind="explicit-content">
+  <main aria-label="Blocked by Vigil">
+    <h1>Blocked</h1>
     <div class="escape-actions">
-      <a id="leaveBlockedPage" href="about:blank">Go back</a>
+      <a id="leaveBlockedPage" href="about:blank">Back</a>
     </div>
   </main>
+  <p id="vigilBlockDiagnostic" class="block-reference" title="Vigil explicit-content browser guard">V1-EXT-CONTENT</p>
+  <script id="vigilBlockDetails" type="application/json">{"schema":1,"source":"EXT","kind":"explicit-content","detail":"Vigil explicit-content browser guard"}</script>
   <script src="blocked-navigation.js"></script>
 </body>
 </html>

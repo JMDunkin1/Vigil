@@ -1,5 +1,6 @@
 import { matchSketchySite } from "../sketchySites.js";
-import { browserNavigationDocument, browserPageNeedsProtection, browserProtectionDiagnostic, unsupportedBrowser } from "../browserProtection.js";
+import { browserNavigationDocument, browserPageNeedsProtection, browserProtectionDiagnostic, knownBrowser, unsupportedBrowser } from "../browserProtection.js";
+import { activeSearchBreakUntil, SEARCH_BREAK_DURATION_MS } from "../searchBreak.js";
 import { activeAppLockPolicy } from "../appLocks.js";
 import { matchAdultBlocklistHost } from "../adultBlocklist.js";
 import { matchContentFilterUrl } from "../contentFilters.js";
@@ -37,6 +38,17 @@ export type EnforcedPolicy = ActivePolicy & {
 };
 
 export function policyForSample(state: VigilState, usage: UsageState, sample: UsageSample, now = new Date(), options: { observeBrowserProtection?: boolean } = {}): EnforcedPolicy | null {
+  const breakUntil = activeSearchBreakUntil(state, now.getTime());
+  if (breakUntil && knownBrowser(sample.app || "")) {
+    const endsAt = new Date(breakUntil).toISOString();
+    return {
+      kind: "browser-control", endsAt,
+      session: { id: `search-break:${breakUntil}`, title: "Take a browser break", mode: "search-break", profileId: "search-break",
+        lockLevel: "deep", startedAt: new Date(breakUntil - SEARCH_BREAK_DURATION_MS).toISOString(), endsAt, canEndEarly: false },
+      profile: { id: "search-break", name: "Search warning break", mode: "blocklist", blockedApps: [sample.app || ""],
+        blockedSites: [], blockedUrlPatterns: [], allowedApps: [], allowedSites: [] }
+    };
+  }
   // Safari does not require a page heartbeat. Its native page lifecycle can
   // suspend or delay extension work while all actual filtering remains active.
   const requirePageHealth = sample.app !== "Safari";
@@ -134,6 +146,7 @@ export function sweepBlockedApps(state: VigilState, usage: UsageState, apps: str
 
 export function shouldQuitAppForPolicy(state: VigilState, policy: EnforcedPolicy | null | undefined, appName: string): boolean {
   if (!policy?.profile) return false;
+  if (policy.profile.id === "search-break") return knownBrowser(appName);
   if (policy.profile.id === "apple-content-filter-recovery") {
     return appMatchesAppTargets(appName, FULL_BRICK_BLOCKED_APPS);
   }

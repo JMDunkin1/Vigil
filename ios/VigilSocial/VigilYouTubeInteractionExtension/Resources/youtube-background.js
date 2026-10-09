@@ -162,7 +162,7 @@ browser.webNavigation.onCommitted.addListener(details => {
     // Safari omits transitionType for native-app links. A fresh top-level tab
     // without a YouTube opener is a direct entry; reused YouTube tabs and
     // recommendation tabs keep their discovery gate.
-    if (isYouTube(details.url) && previous === undefined && browser.tabs.get) {
+    if (previous === undefined && browser.tabs.get) {
       const tab = await browser.tabs.get(details.tabId);
       if (tab.openerTabId !== undefined) {
         const openerSource = (await browser.storage.local.get(`youtube-source:${tab.openerTabId}`))[`youtube-source:${tab.openerTabId}`];
@@ -206,3 +206,113 @@ browser.webNavigation.onCreatedNavigationTarget?.addListener(details => {
 browser.tabs.onRemoved.addListener(tabId => {
   void browser.storage.local.remove([`youtube-source:${tabId}`, `youtube-handoff:${tabId}`]).catch(() => {});
 });
+
+// BEGIN GENERATED SEARCH BREAK
+(() => {
+function limitedSearchWarning(value) {
+    return typeof value === "string" && value.length <= 240
+        && /^(?:some\s+)?results\s+are\s+limited\s+by\s+(?:safe\s*search|search)\s*[.!]?$/iu.test(value.replace(/\s+/gu, " ").trim());
+}
+function limitedSearchPage(value) {
+    try {
+        const url = new URL(String(value));
+        return url.protocol === "https:" && !url.username && !url.password && (!url.port || url.port === "443")
+            && ["google.com", "www.google.com", "images.google.com"].includes(url.hostname)
+            && url.pathname === "/search" && Boolean(url.searchParams.get("q"));
+    }
+    catch {
+        return false;
+    }
+}
+
+(() => {
+    const api = globalThis.browser || chrome;
+    const safari = api.runtime.getURL("").startsWith("safari-web-extension:");
+    const page = api.runtime.getURL("search-break.html");
+    const cacheKey = "vigil-search-break-until";
+    let queue = Promise.resolve(undefined);
+    let lastSweepUntil = 0;
+    let status;
+    async function action(body) {
+        const now = Date.now();
+        if (body.action === "search-break-status" && status && now >= status.at && now - status.at < 500)
+            return status.result;
+        try {
+            const result = safari
+                ? await api.runtime.sendNativeMessage("tech.caseline.vigil", body)
+                : await (await globalThis.fetchVigil("/api/extension/youtube", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+            if (!result?.ok)
+                throw new Error("Search break authority unavailable");
+            await api.storage.local.set({ [cacheKey]: result.until || 0 });
+            status = { at: now, result };
+            return result;
+        }
+        catch {
+            const until = Number((await api.storage.local.get(cacheKey))[cacheKey] || 0);
+            if (until > now)
+                return { ok: true, blocked: true, until, remainingMs: until - now, serverTime: now };
+            return { ok: false };
+        }
+    }
+    async function sweep(result) {
+        const until = Number(result.until || 0);
+        if (!result.blocked || lastSweepUntil === until)
+            return;
+        const tabs = await api.tabs.query({});
+        await Promise.allSettled(tabs.filter(tab => tab.id !== undefined && /^https?:/u.test(tab.url || ""))
+            .map(tab => api.tabs.update(tab.id, { url: page })));
+        lastSweepUntil = until;
+    }
+    api.runtime.onMessage.addListener((message, sender, reply) => {
+        if (message?.type !== "VIGIL_SEARCH_BREAK" || sender.frameId && sender.frameId !== 0)
+            return false;
+        const work = async () => {
+            if (!["search-break-warning", "search-break-status"].includes(message.action))
+                return { ok: false };
+            const body = { action: message.action };
+            if (message.action === "search-break-warning") {
+                if (!limitedSearchPage(sender.url) || !limitedSearchWarning(message.warning) || sender.tab?.id === undefined
+                    || typeof message.id !== "string" || !/^[a-f0-9-]{36}$/u.test(message.id))
+                    return { ok: false };
+                const tab = await api.tabs.get(sender.tab.id);
+                if (!tab.active || tab.url !== message.url || !limitedSearchPage(tab.url))
+                    return { ok: false };
+                Object.assign(body, { id: `${sender.tab.id}:${message.id}`, url: tab.url, warning: message.warning });
+            }
+            else if (!sender.url || (!/^https?:/u.test(sender.url) && sender.url !== page))
+                return { ok: false };
+            const result = await action(body);
+            await sweep(result);
+            return result;
+        };
+        const next = queue.then(work, work);
+        queue = next.catch(() => { });
+        void next.then(reply).catch(() => reply({ ok: false }));
+        return true;
+    });
+    async function guard(tabId, url) {
+        if (!/^https?:/u.test(url || ""))
+            return;
+        const work = async () => {
+            const result = await action({ action: "search-break-status" });
+            if (result.blocked) {
+                const tab = await api.tabs.get(tabId);
+                if (/^https?:/u.test(tab.url || ""))
+                    await api.tabs.update(tabId, { url: page });
+            }
+        };
+        const next = queue.then(work, work);
+        queue = next.catch(() => { });
+        await next;
+    }
+    api.webNavigation.onCommitted.addListener(details => {
+        if (details.frameId === 0)
+            void guard(details.tabId, details.url).catch(() => { });
+    });
+    api.tabs.onActivated.addListener(({ tabId }) => {
+        void api.tabs.get(tabId).then(tab => guard(tabId, tab.url)).catch(() => { });
+    });
+})();
+
+})();
+// END GENERATED SEARCH BREAK

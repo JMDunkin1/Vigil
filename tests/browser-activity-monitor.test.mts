@@ -1,8 +1,9 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { PORT, defaultState } from "../src/defaults.js";
+import { PORT } from "../src/defaults.js";
 import { intentionalUseDecision } from "../src/intentionalUse.js";
 import { HUMAN_ACTIVITY_RESTART_DELAYS_MS, humanActivityHelperArguments } from "../src/macos.js";
 import type { BrowserActivitySignal } from "../src/macos.js";

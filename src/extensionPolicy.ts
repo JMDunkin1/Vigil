@@ -1,4 +1,5 @@
 import { matchSketchySite } from "./sketchySites.js";
+import { activeSearchBreakUntil } from "./searchBreak.js";
 import { PORT, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
 import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
@@ -231,6 +232,14 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
 
   const event = sanitizeEvent(input.event);
   const hostname = normalizeHost(parsed.url.hostname);
+  const searchBreakUntil = activeSearchBreakUntil(state, now.getTime());
+  if (searchBreakUntil) return {
+    ok: true, blocked: true, ignored: false, reason: "search-break", hostname, event, recorded: false,
+    redirectUrl: `http://127.0.0.1:${PORT}/blocked?site=Browser%20break&kind=browser-control&until=${new Date(searchBreakUntil).toISOString()}`,
+    contentFilterEnabled: true, browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+    focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+    focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
+  };
   const sample = {
     app: EXTENSION_APP_NAME,
     hostname,

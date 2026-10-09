@@ -6,23 +6,13 @@ const baseUrl = String(process.env.VIGIL_URL || `http://127.0.0.1:${process.env.
 
 const resources = Object.freeze({
   settings: "/api/settings",
-  profile: "/api/profile",
   schedule: "/api/schedule",
-  limit: "/api/limit",
-  appLock: "/api/app-lock",
-  intentionalGoal: "/api/intentional-use/goal",
-  intentionalRule: "/api/intentional-use/rule",
-  accountability: "/api/intentional-use/accountability",
-  grayscaleSettings: "/api/grayscale/settings",
-  grayscaleSchedule: "/api/grayscale/schedule",
-  iosSettings: "/api/devices/ios/settings",
-  iosMdmSettings: "/api/devices/ios/mdm/settings",
-  journalSecurity: "/api/intentional-use/journal/security"
+  iosSettings: "/api/devices/ios/settings"
 });
 
 const contract = Object.freeze({
   name: "Vigil agent configuration interface",
-  version: 2,
+  version: 3,
   baseUrl,
   safety: [
     "All changes use Vigil's local HTTP API.",
@@ -45,8 +35,8 @@ const contract = Object.freeze({
   },
   applyShape: {
     operations: [
-      { resource: "settings", values: { intentionalUseEnabled: true } },
-      { resource: "limit", values: { id: "optional-existing-id", name: "Social", type: "time", limitMinutes: 20, days: [0, 1, 2, 3, 4, 5, 6], apps: ["Instagram"], sites: ["instagram.com"], enabled: true } }
+      { resource: "settings", values: { sketchySiteMaxAgeDays: 14 } },
+      { resource: "iosSettings", values: { allowSafariHistoryClearing: true } }
     ]
   },
   resources
@@ -454,14 +444,7 @@ function configurationSnapshot(data) {
       settings: data.state?.settings || {},
       profiles: data.state?.profiles || [],
       schedules: data.state?.schedules || [],
-      grayscale: data.state?.grayscale || {},
-      limits: data.limits?.rules || [],
-      appLocks: data.appLocks?.rules || [],
-      intentionalUse: {
-        goal: data.intentionalUse?.goal || {},
-        rules: data.intentionalUse?.rules || [],
-        accountability: data.intentionalUse?.accountability || {}
-      },
+      permanentBlocks: (data.appLocks?.rules || []).filter(rule => rule.enabled && rule.unlocksAllowed === 0),
       devices: data.devices || {}
     }
   };

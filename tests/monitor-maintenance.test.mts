@@ -70,10 +70,13 @@ checkpointMonitor.runtimeUsageCheckpointEnabled = false;
 assert.equal(checkpointMonitor.maintenanceTickRequired(now, 30_000), false,
   "permanently disabled compact checkpoints must not cause a retry loop");
 
-for (const mode of ["protected-browsers", "full-lockout", "ordinary"] as const) {
+for (const mode of ["fresh-required", "legacy-full-lockout", "legacy-ordinary"] as const) {
   const sweepState = defaultState();
-  if (mode === "protected-browsers") sweepState.settings.protectedBrowsersOnly = true;
-  if (mode === "full-lockout") {
+  assert.equal(sweepState.settings.protectedBrowsersOnly, true);
+  // Legacy fixtures isolate the full-lockout and ordinary retry paths from the
+  // continuous browser sweep that every fresh state now requires.
+  if (mode !== "fresh-required") sweepState.settings.protectedBrowsersOnly = false;
+  if (mode === "legacy-full-lockout") {
     sweepState.activeSession = {
       id: "light-full-lockout",
       title: "Full lockout",
@@ -99,8 +102,9 @@ for (const mode of ["protected-browsers", "full-lockout", "ordinary"] as const) 
   assert.equal(sweepMonitor.maintenanceTickRequired(retryAt), true,
     `${mode}: failed enumeration must retry without input or prior blocked-app history`);
   await sweepMonitor.sweepBlockedProcesses(retryAt, { runningApps: { ok: true, apps: [] } });
-  assert.equal(sweepMonitor.maintenanceTickRequired(sweepMonitor.nextProcessSweepAt), mode !== "ordinary",
+  assert.equal(sweepMonitor.maintenanceTickRequired(sweepMonitor.nextProcessSweepAt), mode !== "legacy-ordinary",
     `${mode}: only mandatory continuous sweeps should continue after recovery`);
+  // A fully disabled legacy fixture still needs to clear stale retry state.
   sweepState.settings.processSweepEnabled = false;
   sweepState.settings.appQuitEnabled = false;
   sweepState.settings.protectedBrowsersOnly = false;

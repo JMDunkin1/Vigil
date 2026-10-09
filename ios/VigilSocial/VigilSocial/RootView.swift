@@ -29,7 +29,8 @@ struct SocialContainerView: View {
                         if service != .instagram { serviceNavigation(service) }
                         SocialServiceAccessView(store: store,
                                                 isServiceVisible: container.selectedService == service,
-                                                restriction: preferences.blockingReason(for: service, at: now))
+                                                restriction: preferences.blockingReason(for: service, at: now),
+                                                onBack: returnHome)
                     }
                     .id(ObjectIdentifier(store))
                     .opacity(container.selectedService == service ? 1 : 0)
@@ -255,6 +256,7 @@ private struct SocialServiceAccessView: View {
     @ObservedObject var store: SocialWebViewStore
     let isServiceVisible: Bool
     let restriction: SocialRestriction?
+    let onBack: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @State private var accessConfirmed = false
     @State private var checking = true
@@ -266,21 +268,32 @@ private struct SocialServiceAccessView: View {
                 .allowsHitTesting(accessConfirmed && restriction == nil)
                 .accessibilityHidden(!accessConfirmed || restriction != nil)
             if !accessConfirmed || restriction != nil {
-                VStack(spacing: 16) {
-                    if checking && restriction == nil { ProgressView() }
-                    Text(restriction != nil ? "\(store.fixedService.displayName) is paused" :
-                         (checking ? "Opening \(store.fixedService.displayName)…" : "\(store.fixedService.displayName) is unavailable"))
-                        .font(.headline)
-                    if let restriction { Text(restriction.message).font(.subheadline).foregroundStyle(.secondary) }
-                    else if !checking {
-                        Text("Vigil could not confirm access under the current web policy. This will retry automatically when access and your connection are available.")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                VStack(spacing: 8) {
+                    if checking && restriction == nil {
+                        ProgressView()
+                        Text("Opening \(store.fixedService.displayName)…").font(.subheadline)
+                    } else {
+                        Text("Blocked").font(.system(size: 30, weight: .regular))
+                        Button("Back", action: onBack)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Color(red: 141.0 / 255.0, green: 179.0 / 255.0, blue: 154.0 / 255.0))
+                            .frame(minWidth: 44, minHeight: 44)
+                            .buttonStyle(.plain)
                     }
                 }
                 .multilineTextAlignment(.center).padding(28)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .foregroundStyle(Color.white)
-                .background(Color.black.ignoresSafeArea())
+                .foregroundStyle(Color(white: 0.76))
+                .background(Color(red: 24.0 / 255.0, green: 26.0 / 255.0, blue: 28.0 / 255.0).ignoresSafeArea())
+                .overlay(alignment: .bottomTrailing) {
+                    if !checking || restriction != nil {
+                        Text("V1-SOC-\(store.fixedService.rawValue.uppercased())-\(restriction != nil ? (restriction?.permanent == true ? "LOCK" : "ROUTINE") : "CONNECTION")")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(Color(white: 0.46))
+                            .padding(16)
+                            .accessibilityHint(restriction?.message ?? "Vigil could not confirm access under the current web policy.")
+                    }
+                }
                 .environment(\.colorScheme, .dark)
             }
         }
@@ -381,13 +394,13 @@ struct RootView: View {
         let isDark = (service == .instagram ? nil : store.reportedChromeIsDark(for: service))
             ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
-        // Instagram, Snapchat, and LinkedIn stay inside the native safe area. YouTube keeps
-        // its original system-managed top inset and extends only beneath the
-        // home indicator; extending beneath the status area can strand its
-        // header above the visible viewport until the user scrolls.
-        let webViewSafeAreaEdges: Edge.Set = service == .instagram || service == .snapchat || service == .linkedin
-            ? []
-            : .bottom
+        // Keep service canvases inside the native safe areas. Extending a
+        // canvas beneath the bottom safe area after adding the service toolbar
+        // makes WebKit alternate automatic insets as short pages fit/unfit the
+        // viewport. Retained hidden services can trigger that same resize loop.
+        // Native backgrounds still fill the status/home-indicator areas, and
+        // the established top inset and home gesture remain unchanged.
+        let webViewSafeAreaEdges: Edge.Set = []
         let defaultSurfaceColor = service == .instagram && isDark
             ? Self.instagramDarkSurface
             : (isDark ? (service == .youtube ? Self.youtubeDarkSurface : Color.black) : Color.white)

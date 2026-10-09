@@ -1,5 +1,5 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
-import { defaultState } from "../src/defaults.js";
 import {
   accountabilityDigest,
   applyPornRecoverySetup,

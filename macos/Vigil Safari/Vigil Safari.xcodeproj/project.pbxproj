@@ -8,6 +8,8 @@
 
 /* Begin PBXBuildFile section */
 		ABCE00000000000000000009 /* youtube-player-response.js in Resources */ = {isa = PBXBuildFile; fileRef = ABCE0000000000000000000A /* youtube-player-response.js */; };
+		ABD000000000000000000002 = {isa = PBXBuildFile; fileRef = ABD100000000000000000002; };
+		ABD000000000000000000001 = {isa = PBXBuildFile; fileRef = ABD100000000000000000001; };
 		ABCE00000000000000000007 = {isa = PBXBuildFile; fileRef = ABCE00000000000000000008; };
 		ABCE00000000000000000005 = {isa = PBXBuildFile; fileRef = ABCE00000000000000000006; };
 		ABCE00000000000000000003 = {isa = PBXBuildFile; fileRef = ABCE00000000000000000004; };
@@ -64,6 +66,8 @@
 
 /* Begin PBXFileReference section */
 		ABCE0000000000000000000A /* youtube-player-response.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/youtube-player-response.js"; sourceTree = SOURCE_ROOT; };
+		ABD100000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/search-break-page.js"; sourceTree = SOURCE_ROOT; };
+		ABD100000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.html; path = "Vigil Safari Extension/Resources/search-break.html"; sourceTree = SOURCE_ROOT; };
 		ABCE00000000000000000008 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/blocked-navigation.js"; sourceTree = SOURCE_ROOT; };
 		ABCE00000000000000000006 = {isa = PBXFileReference; lastKnownFileType = text.html; path = "Vigil Safari Extension/Resources/reddit-review-blocked.html"; sourceTree = SOURCE_ROOT; };
 		ABCE00000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/reddit-review-guard.js"; sourceTree = SOURCE_ROOT; };
@@ -279,7 +283,7 @@
 		4E7932313056217D00E63426 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (ABCE00000000000000000009 /* youtube-player-response.js in Resources */, ABCE00000000000000000001, ABCE00000000000000000007, ABCE00000000000000000005, ABCE00000000000000000003, ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001,
+			files = (ABCE00000000000000000009 /* youtube-player-response.js in Resources */, ABD000000000000000000002, ABD000000000000000000001, ABCE00000000000000000001, ABCE00000000000000000007, ABCE00000000000000000005, ABCE00000000000000000003, ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001,
 				4E79324D3056217D00E63426 /* youtube-limits.js in Resources */,
 				4E79324C3056217D00E63426 /* youtube-parity.js in Resources */,
 				4E79324E3056217D00E63426 /* manifest.json in Resources */,

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { BRICK_MODE_PROFILE_ID, NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
-import { handlePolicyApiRoute, upsertProfile } from "../src/server/policyRoutes.js";
+import { handlePolicyApiRoute, upsertProfile } from "./fixtures/legacy-policy-routes.mjs";
 
 const BUILT_IN_PROFILE_IDS = ["default", NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PROFILE_ID];
 

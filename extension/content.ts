@@ -1,3 +1,7 @@
+import { PROTECTION_THEME_CSS } from "../src/protectionAppearance.js";
+import { installYouTubeCommentAvatarMask } from "../src/youtubeCommentAvatars.js";
+
+installYouTubeCommentAvatarMask();
 let lastPulseAt = Date.now();
 let pulseGeneration = 0;
 let activePauseOverlay: PauseOverlayState | null = null;
@@ -249,6 +253,11 @@ function showPauseOverlay(value: unknown): boolean {
 function pauseOverlayContent(decision: PauseOverlayDecision): HTMLElement {
   const backdrop = element("div", "backdrop");
   const panel = element("main", "panel");
+  const brand = element("div", "brand-lockup");
+  const mark = element("span", "brand-mark");
+  mark.setAttribute("aria-hidden", "true");
+  brand.append(mark, element("p", "brand-name", "Vigil"));
+  panel.append(brand);
   const eyebrow = element("p", "eyebrow", "Intentional Use");
   const title = element("h1", "", `Before ${decision.targetLabel}.`);
   const lead = element("p", "lead", decision.goalStatement);
@@ -485,7 +494,7 @@ function injectPageGuardStyle(): void {
       position: fixed;
       inset: 0;
       z-index: 2147483646;
-      background: #101216;
+      background: #181a1c;
       pointer-events: auto;
       visibility: visible !important;
     }
@@ -622,9 +631,10 @@ function errorMessage(error: unknown): string {
 
 function pauseOverlayCss() {
   return `
+    ${PROTECTION_THEME_CSS}
     :host {
       color-scheme: dark;
-      font-family: Inter, "Avenir Next", Avenir, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: var(--font-body);
     }
     * {
       box-sizing: border-box;
@@ -637,24 +647,27 @@ function pauseOverlayCss() {
       place-items: center;
       padding: 24px;
       background:
-        radial-gradient(circle at 78% -8%, rgba(49, 90, 232, .08), transparent 34rem),
-        radial-gradient(circle at 28% 106%, rgba(157, 124, 88, .04), transparent 30rem),
-        linear-gradient(180deg, #101216, #191c22);
+        radial-gradient(circle at 78% -8%, rgba(141, 179, 154, .08), transparent 34rem),
+        radial-gradient(circle at 28% 106%, rgba(141, 179, 154, .04), transparent 30rem),
+        linear-gradient(180deg, var(--paper), var(--paper-2));
     }
     .panel {
       width: min(720px, 100%);
       max-height: min(760px, calc(100vh - 48px));
       overflow: auto;
-      border: 1px solid #30343d;
+      border: 1px solid var(--line);
       border-radius: 12px;
-      background: rgba(28, 29, 28, .96);
-      color: #f4f6fa;
+      background: rgba(32, 34, 37, .96);
+      color: var(--ink);
       box-shadow: 0 28px 84px rgba(0, 0, 0, .44);
       padding: 28px;
     }
+    .brand-lockup { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+    .brand-mark { width: 44px; height: 44px; flex: 0 0 auto; background: url("${chrome.runtime.getURL("icons/icon-128.png")}") center / contain no-repeat; }
+    .brand-name { margin: 0; color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
     .eyebrow {
       margin: 0 0 8px;
-      color: #89abff;
+      color: var(--accent);
       font: 800 12px "SFMono-Regular", "SF Mono", Menlo, Monaco, Consolas, monospace;
       text-transform: uppercase;
       letter-spacing: .12em;
@@ -668,7 +681,7 @@ function pauseOverlayCss() {
     }
     .lead {
       margin: 12px 0 20px;
-      color: #a4adb8;
+      color: var(--muted);
       font-size: 16px;
       line-height: 1.45;
     }
@@ -677,10 +690,10 @@ function pauseOverlayCss() {
       place-items: center;
       min-height: 120px;
       margin: 0 0 18px;
-      border: 1px solid rgba(137, 171, 255, .52);
+      border: 1px solid rgba(141, 179, 154, .52);
       border-radius: 12px;
-      background: radial-gradient(circle, rgba(49, 90, 232, .18), rgba(34, 35, 33, .88) 70%);
-      box-shadow: 0 18px 56px rgba(0, 0, 0, .28), 0 0 42px rgba(49, 90, 232, .08);
+      background: radial-gradient(circle, rgba(141, 179, 154, .18), rgba(41, 43, 46, .88) 70%);
+      box-shadow: 0 18px 56px rgba(0, 0, 0, .28), 0 0 42px rgba(141, 179, 154, .08);
     }
     .timer strong {
       display: block;
@@ -689,7 +702,7 @@ function pauseOverlayCss() {
     }
     .timer span {
       display: block;
-      color: #a4adb8;
+      color: var(--muted);
       font-size: 12px;
       font-weight: 800;
       text-transform: uppercase;
@@ -701,7 +714,7 @@ function pauseOverlayCss() {
     }
     section {
       min-width: 0;
-      border-top: 1px solid #30343d;
+      border-top: 1px solid var(--line);
       padding-top: 14px;
     }
     h2 {
@@ -714,17 +727,17 @@ function pauseOverlayCss() {
       width: 100%;
       min-height: 44px;
       margin: 0 0 10px;
-      border: 1px solid #485265;
+      border: 1px solid var(--line-strong);
       border-radius: 9px;
-      background: #151616;
-      color: #f4f6fa;
+      background: var(--paper-2);
+      color: var(--ink);
       font: inherit;
       padding: 10px 12px;
     }
     input:focus-visible,
     select:focus-visible,
     button:focus-visible {
-      outline: 3px solid rgba(137, 171, 255, .24);
+      outline: 3px solid rgba(141, 179, 154, .24);
       outline-offset: 2px;
     }
     .choices {
@@ -747,16 +760,16 @@ function pauseOverlayCss() {
     }
     .choice {
       width: 100%;
-      border-color: #485265;
-      background: #22262e;
-      color: #f4f6fa;
+      border-color: var(--line-strong);
+      background: var(--surface-strong);
+      color: var(--ink);
       text-align: left;
       padding: 10px 12px;
     }
     .choice.selected {
-      border-color: #89abff;
-      background: rgba(49, 90, 232, .16);
-      color: #f4f6fa;
+      border-color: var(--accent);
+      background: rgba(141, 179, 154, .16);
+      color: var(--ink);
     }
     .meta {
       display: flex;
@@ -765,10 +778,10 @@ function pauseOverlayCss() {
       margin: 18px 0;
     }
     .meta span {
-      border: 1px solid #30343d;
+      border: 1px solid var(--line);
       border-radius: 999px;
-      background: rgba(34, 35, 33, .72);
-      color: #a4adb8;
+      background: rgba(41, 43, 46, .72);
+      color: var(--muted);
       font-size: 12px;
       font-weight: 750;
       padding: 7px 10px;
@@ -780,37 +793,37 @@ function pauseOverlayCss() {
       gap: 10px;
     }
     .primary {
-      background: #315ae8;
+      background: var(--primary);
       color: #ffffff;
       padding: 10px 16px;
     }
-    .primary:hover:not(:disabled) { background: #244bc9; }
+    .primary:hover:not(:disabled) { background: var(--primary-strong); }
     .secondary {
-      border-color: #485265;
-      background: #22262e;
-      color: #f4f6fa;
+      border-color: var(--line-strong);
+      background: var(--surface-strong);
+      color: var(--ink);
       padding: 10px 14px;
     }
     .status {
       min-height: 22px;
       margin: 14px 0 0;
-      color: #a4adb8;
+      color: var(--muted);
       font-size: 14px;
       line-height: 1.4;
     }
     blockquote {
       margin: 14px 0 22px;
       padding: 11px 14px;
-      border-left: 2px solid rgba(137, 171, 255, .52);
-      background: rgba(49, 90, 232, .06);
-      color: #d7d0c5;
+      border-left: 2px solid rgba(141, 179, 154, .52);
+      background: rgba(141, 179, 154, .06);
+      color: var(--ink);
       font-style: italic;
       line-height: 1.45;
     }
     blockquote cite {
       display: block;
       margin-top: 6px;
-      color: #a4adb8;
+      color: var(--muted);
       font-size: 12px;
       font-style: normal;
     }
@@ -926,10 +939,10 @@ function injectMatureContentStyle(): void {
       box-sizing: border-box !important;
       margin: 8px 0 !important;
       padding: 14px 16px !important;
-      border: 1px solid rgba(49, 90, 232, 0.55) !important;
+      border: 1px solid rgba(141, 179, 154, 0.55) !important;
       border-radius: 10px !important;
-      background: #211d1a !important;
-      color: #eadfd7 !important;
+      background: #202225 !important;
+      color: #e7e8ea !important;
       font: 600 14px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
       text-align: center !important;
     }

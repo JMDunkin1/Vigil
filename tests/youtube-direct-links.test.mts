@@ -8,7 +8,9 @@ const runtime = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = resolve(runtime, '../..');
 const content = await readFile(join(runtime, 'extension/content.js'), 'utf8');
 const background = await readFile(join(runtime, 'extension/background.js'), 'utf8');
-const safari = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js'), 'utf8');
+// Search-break messaging has its own tests; isolate the YouTube navigation engine.
+const safari = (await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js'), 'utf8'))
+  .replace(/\/\/ BEGIN GENERATED SEARCH BREAK[\s\S]*?\/\/ END GENERATED SEARCH BREAK/gu, '');
 const popup = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/status.js'), 'utf8');
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 const video = 'abcdefghijk';
@@ -76,7 +78,7 @@ test('Safari keeps search/shared-link eligibility separate from discovery during
   const storage = { async get(keys:string|string[]) { return Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key,values[key]])); },
     async set(next:Record<string,unknown>) { Object.assign(values,next); }, async remove() {} };
   vm.runInNewContext(safari, { URL, browser:{
-    runtime:{onMessage:event('message'),async sendNativeMessage(_app:string, body:{action:string}) { requests.push(body); return {ok:true}; }},
+    runtime:{getURL:(path:string)=>`safari-web-extension://vigil/${path}`,onMessage:event('message'),async sendNativeMessage(_app:string, body:{action:string}) { requests.push(body); return {ok:true}; }},
     storage:{local:storage},tabs:{onRemoved:event('removed')},
     webNavigation:{onCommitted:event('committed'),onHistoryStateUpdated:event('history'),onCreatedNavigationTarget:event('created')}
   }});
@@ -130,7 +132,7 @@ test('Safari grants an external embed before starting playback and rejects a cha
       async get(keys: string | string[]) { return Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, values[key]])); },
       async set(items: Record<string, unknown>) { Object.assign(values, items); }, async remove() {}
     } },
-    runtime: { onMessage: { addListener(callback: typeof listeners[number]) { listeners.push(callback); } },
+    runtime: { getURL: (path:string) => `safari-web-extension://vigil/${path}`, onMessage: { addListener(callback: typeof listeners[number]) { listeners.push(callback); } },
       async sendNativeMessage(_app: string, body: { action: string }) { actions.push(body.action); return { ok: true }; } },
     tabs: { onRemoved: event('removed') },
     webNavigation: { onCommitted: event('committed'), onHistoryStateUpdated: event('history'),

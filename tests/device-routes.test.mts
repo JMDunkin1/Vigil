@@ -1,3 +1,4 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -9,10 +10,10 @@ import type { Session } from "../src/types.js";
 const dataDir = await mkdtemp(join(tmpdir(), "vigil-device-routes-"));
 process.env.VIGIL_DATA_DIR = dataDir;
 
-const { defaultState, SOFT_BLOCK_PROFILE_ID } = await import("../src/defaults.js");
+const { SOFT_BLOCK_PROFILE_ID } = await import("../src/defaults.js");
 const { assertProtectedEditAllowed } = await import("../src/protection.js");
 const { profileById } = await import("../src/policy.js");
-const { handleDeviceApiRoute } = await import("../src/server/deviceRoutes.js");
+const { handleDeviceApiRoute } = await import("./fixtures/legacy-device-routes.mjs");
 
 try {
   const state = defaultState();

@@ -1,45 +1,30 @@
-* {
-    -webkit-user-select: none;
-    -webkit-user-drag: none;
-    cursor: default;
-}
-
+/* Vigil companion setup matches the protection pages and main app. */
 :root {
-    color-scheme: light dark;
-
-    --spacing: 20px;
+  color-scheme: dark;
+  --spacing: 20px;
+  --paper: #181a1c;
+  --ink: #e7e8ea;
+  --muted: #9c9fa5;
+  --primary: #365b41;
+  --primary-strong: #2c4d35;
+  --accent: #8db39a;
 }
-
-html {
-    height: 100%;
-}
-
+* { box-sizing: border-box; -webkit-user-select: none; -webkit-user-drag: none; }
+html { height: 100%; background: var(--paper); }
 body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-direction: column;
-
-    gap: var(--spacing);
-    margin: 0 calc(var(--spacing) * 2);
-    height: 100%;
-
-    font: -apple-system-short-body;
-    text-align: center;
+  display: flex; align-items: center; justify-content: center; flex-direction: column;
+  gap: var(--spacing); margin: 0; padding: 40px; height: 100%;
+  background: var(--paper); color: var(--ink);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  text-align: center;
 }
-
-body:not(.state-on, .state-off) :is(.state-on, .state-off) {
-    display: none;
-}
-
-body.state-on :is(.state-off, .state-unknown) {
-    display: none;
-}
-
-body.state-off :is(.state-on, .state-unknown) {
-    display: none;
-}
-
+p { max-width: 46ch; margin: 0; color: var(--muted); }
+body:not(.state-on, .state-off) :is(.state-on, .state-off),
+body.state-on :is(.state-off, .state-unknown),
+body.state-off :is(.state-on, .state-unknown) { display: none; }
 button {
-    font-size: 1em;
+  min-height: 44px; padding: 10px 18px; border: 1px solid transparent; border-radius: 9px;
+  background: var(--primary); color: #fff; font: 600 14px -apple-system, sans-serif; cursor: pointer;
 }
+button:hover { background: var(--primary-strong); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }

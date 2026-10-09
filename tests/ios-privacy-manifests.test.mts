@@ -10,17 +10,19 @@ const projectRoot = existsSync(join(process.cwd(), "ios")) ? process.cwd() : res
 
 async function readPlist(path: string): Promise<unknown> {
   const { stdout } = await execFileAsync("/usr/bin/plutil", ["-convert", "json", "-o", "-", path], { encoding: "utf8" });
-  return JSON.parse(stdout);
+  const parsed = JSON.parse(stdout) as { NSPrivacyAccessedAPITypes?: Array<{ NSPrivacyAccessedAPIType: string }> };
+  parsed.NSPrivacyAccessedAPITypes?.sort((a, b) => b.NSPrivacyAccessedAPIType.localeCompare(a.NSPrivacyAccessedAPIType));
+  return parsed;
 }
 
 const socialManifestPath = join(projectRoot, "ios", "VigilSocial", "VigilSocial", "PrivacyInfo.xcprivacy");
 assert.deepEqual(await readPlist(socialManifestPath), {
   NSPrivacyAccessedAPITypes: [{
-    NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime",
-    NSPrivacyAccessedAPITypeReasons: ["35F9.1"]
-  }, {
     NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategoryUserDefaults",
     NSPrivacyAccessedAPITypeReasons: ["CA92.1"]
+  }, {
+    NSPrivacyAccessedAPIType: "NSPrivacyAccessedAPICategorySystemBootTime",
+    NSPrivacyAccessedAPITypeReasons: ["35F9.1"]
   }],
   NSPrivacyCollectedDataTypes: [],
   NSPrivacyTracking: false,

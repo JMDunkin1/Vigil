@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState } from "../src/defaults.js";
 import { buildDiagnosticExport, diagnosticExportFilename } from "../src/server/diagnosticExportRoutes.js";
-import { externalNetworkBlockSummary } from "../src/externalNetworkBlock.js";
 import { hardeningActions, hardeningAudit, hostsDetail, launchAgentDetail } from "../src/server/hardeningSummary.js";
 import { hardeningResultHttpStatus } from "../src/server/hardeningRoutes.js";
 import { contentType, resolvePublicPath, securityHeaders, transpilePublicTypescript } from "../src/server/http.js";
@@ -581,16 +580,7 @@ assert.equal(actions.adultBlocklistRefresh.command, "cmd:refresh-adult-blocklist
 assert.equal(actions.sourceSeal.command, "cmd:seal-source.mjs:seal:source:user");
 assert.equal(actions.extensionLoad.path, "/resources/extension");
 
-const externalNetworkState = defaultState();
-externalNetworkState.settings.externalNetworkBlockEnabled = true;
-const externalNetwork = externalNetworkBlockSummary(externalNetworkState);
-assert.equal(externalNetwork.provider, "manual");
-assert.equal(externalNetwork.ready, true);
-assert.equal(externalNetwork.current, false);
-assert.ok(externalNetwork.targetDomainCount > 0);
-assert.equal(externalNetwork.targetDomainCount, externalNetwork.targetDomains.length);
-assert.equal(externalNetwork.targetDomains.includes("pornhub.com"), true);
-assert.match(externalNetwork.signature, /^[a-f0-9]{16}$/);
+
 
 assert.equal(shellQuote("it's here"), "'it'\\''s here'");
 assert.equal(appleScriptString('say "hi" \\ now'), '"say \\"hi\\" \\\\ now"');

@@ -42,20 +42,22 @@ class ElementStub {
 function page(title: string) {
   const redirects: string[] = [];
   const listeners = new Map<string, (event: unknown) => void>();
-  let mutation = () => {};
-  const document = { title, documentElement: {}, querySelectorAll: () => [] };
+  const mutations: Array<(records: unknown[]) => void> = [];
+  const document = { title, documentElement: {}, querySelectorAll: () => [], querySelector: () => null };
   runInNewContext(desktop, {
     URL, URLSearchParams, document, Element: ElementStub,
     location: { href: "https://www.google.com/search?q=Jane+Example&safe=active", hostname: "www.google.com", replace: (url: string) => redirects.push(url), assign: (url: string) => redirects.push(url) },
     chrome: { runtime: { getURL: (path: string) => `chrome-extension://vigil/${path}` } },
     MutationObserver: class {
-      constructor(callback: () => void) { mutation = callback; }
+      constructor(callback: (records: unknown[]) => void) { mutations.push(callback); }
       observe() {}
     },
     addEventListener: (event: string, callback: (event: unknown) => void) => listeners.set(event, callback),
-    setInterval() {}
+    setInterval() {},
+    setTimeout(callback: () => void) { callback(); return 1; },
+    clearTimeout() {}
   });
-  return { redirects, listeners, document, mutate: () => mutation() };
+  return { redirects, listeners, document, mutate: () => mutations.forEach(callback => callback([])) };
 }
 const nameSearch = page("Jane Example - Google Search");
 assert.deepEqual(nameSearch.redirects, [], "name-only search stays available");

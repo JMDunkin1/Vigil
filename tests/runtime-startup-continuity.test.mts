@@ -12,7 +12,7 @@ const [
   store,
   runtimeReady,
   runtimeCheckpoint,
-  { dateKey },
+  { dateKey, weekKey },
   { syncDeviceUsageSnapshot }
 ] = await Promise.all([
   import("../src/defaults.js"),
@@ -42,6 +42,9 @@ try {
   const durableUsage = usageSnapshot(now, 10);
   await store.saveRuntimeSnapshot(durableState, durableUsage);
 
+  durableState.intentionalUse.ledger[day] = {
+    weekKey: weekKey(now), rules: { retired: { seconds: 20, pauses: 1, continued: 0, skipped: 0, targets: {} } }
+  };
   const checkpointUsage = usageSnapshot(now, 120);
   await runtimeCheckpoint.saveRuntimeUsageCheckpoint(durableState, checkpointUsage, {
     checkpointPath: runtimeCheckpoint.runtimeUsageCheckpointPath(dataDir),
@@ -70,6 +73,8 @@ try {
   assert.equal(recovery.checkpointChanged, true);
   assert.equal(recovery.snapshotPersisted, true);
   assert.equal(recoveredUsage[day]?.devices?.computer?.totalSeconds, 120, "startup must recover newer authenticated hot usage");
+  assert.deepEqual(recoveredState.intentionalUse.ledger, {}, "old checkpoints cannot resurrect retired pause history");
+  assert.deepEqual(recoveredState.intentionalUse.grants, []);
   assert.equal(recoveredState.integrity.runtime.lastInterruptionId, interruption.id);
   assert.ok(recoveredState.integrity.runtime.downtimeDetectedAt, "a supervised interruption during a protected lock must fail closed");
   assert.equal(recoveredState.events.some((event) => event.type === "runtime_downtime_lockdown"), true);

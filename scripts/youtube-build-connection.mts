@@ -6,10 +6,12 @@ import { youtubeConnectionPath } from "../src/youtubeConnection.js";
 // is needed by the phone. A migration seed is used only on its first local run.
 export async function youtubeLocalEngine(): Promise<string> {
   const compiled = await readFile(new URL("../src/youtubeLimits.js", import.meta.url), "utf8");
+  const searchBreak = (await readFile(new URL("../src/searchBreak.js", import.meta.url), "utf8")).replace(/^export /gmu, "");
   return 'var structuredClone = value => JSON.parse(JSON.stringify(value));\n'
     + compiled.replace(/import \{ randomUUID \} from "node:crypto";/u, 'const randomUUID = () => __uuid();')
       .replace(/^export /gmu, "")
-    + '\nfunction vigilLocalAction(state, body) { const value = JSON.parse(state); const reply = youtubeAction(value, JSON.parse(body)); return JSON.stringify({state:value,reply}); }\n';
+    + searchBreak
+    + '\nfunction vigilLocalAction(state, body) { const value = JSON.parse(state); const input = JSON.parse(body); if (!value.youtubeLimits) youtubeAction(value, {action:"status"}); const reply = /^search-break-(warning|status)$/.test(input.action) ? searchBreakAction(value, input) : youtubeAction(value, input); return JSON.stringify({state:value,reply}); }\n';
 }
 export async function youtubeBuildConfiguration(): Promise<string> {
   const folder = dirname(youtubeConnectionPath());

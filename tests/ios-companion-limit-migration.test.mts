@@ -1,3 +1,4 @@
+import { legacyState as defaultState } from "./fixtures/legacy-settings.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,7 +8,6 @@ const dataDir = await mkdtemp(join(tmpdir(), "vigil-ios-companion-limit-migratio
 process.env.VIGIL_DATA_DIR = dataDir;
 
 try {
-  const { defaultState } = await import("../src/defaults.js");
   const legacy = defaultState();
   const instagram = legacy.limitRules.find((rule) => rule.id === "instagram-20-20-template");
   const youtube = legacy.limitRules.find((rule) => rule.id === "soft-lock-youtube-20-20-template");

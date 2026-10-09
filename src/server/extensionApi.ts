@@ -1,18 +1,18 @@
 import { browserFilterHealthSummary, recordBrowserFilterHealth, recordBrowserNavigationProof } from "../browserProtection.js";
 import { youtubeTokenMatches } from "../youtubeConnection.js";
 import { youtubeAction } from "../youtubeLimits.js";
+import { limitedSearchPage, searchBreakAction } from "../searchBreak.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { apiRequestGuard, extensionCorsHeaders, extensionTrustSummary, isTrustedExtensionRequest } from "../apiSecurity.js";
 import type { RequestTransportContext } from "../apiSecurity.js";
 import { truthy } from "../booleans.js";
 import { REQUIRED_EXTENSION_VERSION } from "../defaults.js";
 import { compactExtensionRuleSignature, safeBackUrl, evaluateExtensionCheck, extensionDynamicRuleCount, extensionDynamicRuleSignature, extensionRuleSnapshot } from "../extensionPolicy.js";
-import { confirmIntentionalPause, skipIntentionalPause } from "../intentionalUse.js";
 import { addEvent, saveState, saveUsage } from "../store.js";
 import { clampNumber } from "../time.js";
 import type { VigilState, UsageState } from "../types.js";
 import { isExtensionApiPath } from "./apiRoutes.js";
-import { errorStatus, readBody, sendEmpty, sendJson, serializeError } from "./http.js";
+import { readBody, sendEmpty, sendJson } from "./http.js";
 
 interface GuardResult {
   ok: boolean;
@@ -24,6 +24,7 @@ interface ExtensionApiContext {
   state: VigilState;
   usage: UsageState;
   requestPersistence?: () => void;
+  schedulePolicyEnforcement?: (reason: string) => void;
 }
 
 interface ExtensionPersistenceTargets {
@@ -83,6 +84,21 @@ export async function handleExtensionApiRoute(
       return true;
     }
     const body = await readBody(request);
+    if (body.action === "search-break-status" || body.action === "search-break-warning") {
+      if (body.action === "search-break-warning" && !limitedSearchPage(body.url)) {
+        sendJson(response, 400, { ok: false }, extensionResponseCorsHeaders(request));
+        return true;
+      }
+      const before = JSON.stringify(state.searchBreak);
+      const result = searchBreakAction(state, body);
+      if (result.triggered) {
+        addEvent(state, "search_break_started", { until: result.until, durationSeconds: 150 });
+        context.schedulePolicyEnforcement?.("search-break");
+      }
+      if (JSON.stringify(state.searchBreak) !== before) await persistExtensionChanges(context, true, { state: true });
+      sendJson(response, 200, result, extensionResponseCorsHeaders(request));
+      return true;
+    }
     const previousLedger = JSON.stringify(state.youtubeLimits);
     const result = youtubeAction(state, body);
     // Status reads and rejected/no-op actions must not rewrite the entire
@@ -111,16 +127,6 @@ export async function handleExtensionApiRoute(
 
   if (method === "POST" && path === "/api/extension/rules/sync") {
     await handleExtensionRulesSync(request, response, context);
-    return true;
-  }
-
-  if (method === "POST" && path === "/api/extension/pause/continue") {
-    await handleExtensionPauseContinue(request, response, context);
-    return true;
-  }
-
-  if (method === "POST" && path === "/api/extension/pause/skip") {
-    await handleExtensionPauseSkip(request, response, context);
     return true;
   }
 
@@ -301,66 +307,6 @@ async function handleExtensionRulesSync(
   sendJson(response, 200, { ok, count, expectedCount }, extensionResponseCorsHeaders(request));
 }
 
-async function handleExtensionPauseContinue(
-  request: IncomingMessage,
-  response: ServerResponse,
-  context: ExtensionApiContext
-): Promise<void> {
-  const { state } = context;
-  const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/continue", request);
-  if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
-    return;
-  }
-
-  try {
-    const body = await readBody(request);
-    const result = confirmIntentionalPause(state, String(body.requestId || ""), body);
-    addEvent(state, "intentional_pause_continued", {
-      pauseId: result.pause.id,
-      ruleId: result.pause.ruleId,
-      target: result.pause.targetLabel,
-      until: result.grant.until,
-      source: "extension-overlay"
-    });
-    markExtensionActionSeen(request, state, "pause-continue");
-    await persistExtensionChanges(context, true, { state: true });
-    sendJson(response, 200, { ok: true, ...result }, extensionResponseCorsHeaders(request));
-  } catch (error) {
-    sendJson(response, errorStatus(error), serializeError(error), extensionResponseCorsHeaders(request));
-  }
-}
-
-async function handleExtensionPauseSkip(
-  request: IncomingMessage,
-  response: ServerResponse,
-  context: ExtensionApiContext
-): Promise<void> {
-  const { state } = context;
-  const extensionGuard = extensionRouteGuard(request.method || "POST", "/api/extension/pause/skip", request);
-  if (!extensionGuard.ok) {
-    sendJson(response, extensionGuard.status || 403, { error: extensionGuard.error || "Forbidden" }, extensionResponseCorsHeaders(request));
-    return;
-  }
-
-  try {
-    const body = await readBody(request);
-    const result = skipIntentionalPause(state, String(body.requestId || ""), body);
-    addEvent(state, "intentional_pause_skipped", {
-      pauseId: result.pause.id,
-      ruleId: result.pause.ruleId,
-      target: result.pause.targetLabel,
-      replacement: result.pause.replacement,
-      source: "extension-overlay"
-    });
-    markExtensionActionSeen(request, state, "pause-skip");
-    await persistExtensionChanges(context, true, { state: true });
-    sendJson(response, 200, { ok: true, ...result }, extensionResponseCorsHeaders(request));
-  } catch (error) {
-    sendJson(response, errorStatus(error), serializeError(error), extensionResponseCorsHeaders(request));
-  }
-}
-
 async function persistExtensionChanges(
   context: ExtensionApiContext,
   durableMutation: boolean,
@@ -391,17 +337,6 @@ function dynamicRulesDurabilityFingerprint(state: VigilState): string {
 function normalizedRuleCount(value: unknown): number {
   const count = Number(value);
   return Number.isFinite(count) ? count : 0;
-}
-
-function markExtensionActionSeen(request: IncomingMessage, state: VigilState, event: string): void {
-  if (!trustedExtensionRequest(request)) return;
-  state.extension = {
-    ...(state.extension || {}),
-    lastSeenAt: new Date().toISOString(),
-    lastVersion: state.extension?.lastVersion || null,
-    lastEvent: event,
-    lastHost: state.extension?.lastHost || null
-  };
 }
 
 function publicExtensionStatus(state: VigilState) {

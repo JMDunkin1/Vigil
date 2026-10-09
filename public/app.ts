@@ -3,7 +3,7 @@ import { createAccountUi } from "./account-ui.js";
 import { applyProtectionLevelPresentation, normalizedProtectionLevel } from "./protection-level.js";
 import { createAppUpdatePanel } from "./app-update.js";
 import { startDashboardRefresh } from "./dashboard-refresh.js";
-import { formHasUnsavedChanges, formRevision, markFormSaved, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
+import { formHasUnsavedChanges, formRevision, markFormSavedAtRevision, trackFormChanges } from "./form-state.js";
 import { daysText, formatDuration, lines } from "./format.js";
 import { nextSchedule, nextScheduleLabel, protectionStatus } from "./home-state.js";
 import { $, $$, errorMessage, initTheme, setTheme, themePreference } from "./ui-shell.js";
@@ -14,14 +14,13 @@ import type {
   DashboardData,
   DashboardItem,
   DashboardState,
-  GrayscaleSchedule,
   Schedule,
   SessionStartResponse,
   UnknownRecord
 } from "./app-model.js";
 
 type Profile = DashboardState["profiles"][number];
-type ScheduleKind = "lock" | "grayscale";
+type ScheduleKind = "lock";
 
 interface ScheduleEntry {
   kind: ScheduleKind;
@@ -33,16 +32,11 @@ interface ScheduleEntry {
   end: string;
   deviceTargets: string[];
   lock?: Schedule;
-  grayscale?: GrayscaleSchedule;
 }
 
 interface PendingResponse extends UnknownRecord {
   pending?: { id?: string };
   activeWindow?: UnknownRecord;
-}
-
-interface ProfileSaveResponse extends UnknownRecord {
-  profile?: Profile;
 }
 
 interface VigilAppearanceBridge {
@@ -60,13 +54,11 @@ interface VigilAppUpdateNavigationWindow extends Window {
   };
 }
 
-const BUILT_IN_PROFILE_IDS = new Set(["default", "normal", "soft-block", "brick-mode"]);
 const ACTIVE_STATE_POLL_MS = 3_000;
 
 const ui = {
   data: null as DashboardData | null,
   activeView: "home",
-  selectedProfileId: null as string | null,
   pendingEmergencyId: null as string | null,
   pendingMaintenanceId: null as string | null
 };
@@ -74,9 +66,7 @@ const ui = {
 let refreshCycle: Promise<void> | null = null;
 let refreshRequested = false;
 let protectionRequestInFlight = false;
-let profileEditorGeneration = 0;
 let resumeScheduleAfterMaintenance = false;
-let selectedAppLockRequestId: string | null = null;
 let toastTimer: number | null = null;
 
 const appUpdatePanel = createAppUpdatePanel({ $, get, post, toast, errorMessage });
@@ -94,8 +84,6 @@ function boot(): void {
   bindConfigurationNavigation();
   bindProtectionActions();
   bindScheduleActions();
-  bindProfileActions();
-  bindLimitActions();
   bindSettingActions();
   bindDeviceActions();
   bindMaintenanceActions();
@@ -213,9 +201,7 @@ function render(): void {
   const data = ui.data;
   if (!data) return;
   renderSchedules(data);
-  renderProfiles(data.state);
-  renderLimits(data.limits.rules);
-  renderAppLocks(data.appLocks.rules);
+  renderSocialProtection(data);
   renderSettings(data);
   renderDevice(data);
   renderHealth(data);
@@ -430,33 +416,25 @@ function openNewSchedule(kind: ScheduleKind): void {
   scheduleField<HTMLInputElement>("id").value = "";
   scheduleField<HTMLInputElement>("id").dataset.lockLevel = "deep";
   scheduleField<HTMLSelectElement>("kind").value = kind;
-  scheduleField<HTMLInputElement>("name").value = kind === "lock" ? "Focus block" : "Night grayscale";
-  scheduleField<HTMLSelectElement>("mode").value = "focus";
-  scheduleField<HTMLInputElement>("start").value = kind === "lock" ? "09:00" : "21:00";
-  scheduleField<HTMLInputElement>("end").value = kind === "lock" ? "17:00" : "07:00";
+  scheduleField<HTMLInputElement>("name").value = "Social pause";
+  scheduleField<HTMLSelectElement>("mode").value = "brick";
+  scheduleField<HTMLInputElement>("start").value = "09:00";
+  scheduleField<HTMLInputElement>("end").value = "17:00";
   scheduleField<HTMLInputElement>("enabled").checked = false;
   scheduleField<HTMLInputElement>("commitmentLock").checked = false;
-  setScheduleDays(kind === "lock" ? [1, 2, 3, 4, 5] : [0, 1, 2, 3, 4, 5, 6]);
+  setScheduleDays([1, 2, 3, 4, 5]);
   setScheduleDevices(["computer", "phone"]);
   scheduleField<HTMLTextAreaElement>("wifiNetworks").value = "";
-  fillScheduleProfileOptions(ui.data?.state);
-  const baseline = baselineProfileId(ui.data?.state);
+  fillScheduleProfileOptions(ui.data?.state, "");
+  const baseline = "brick-mode";
   if (baseline) $("#scheduleProfileId").value = baseline;
-  $("#scheduleEditorTitle").textContent = kind === "lock" ? "New protection schedule" : "New grayscale routine";
+  $("#scheduleEditorTitle").textContent = "New protection schedule";
   $("#scheduleValidation").hidden = true;
   syncScheduleKindFields();
   document.querySelector<HTMLDialogElement>("#scheduleEditor")?.showModal();
 }
 
 function openScheduleTemplate(template: string): void {
-  if (template === "grayscale") {
-    openNewSchedule("grayscale");
-    scheduleField<HTMLInputElement>("name").value = "Night grayscale";
-    scheduleField<HTMLInputElement>("start").value = "21:00";
-    scheduleField<HTMLInputElement>("end").value = "07:00";
-    scheduleField<HTMLInputElement>("enabled").checked = true;
-    return;
-  }
   openNewSchedule("lock");
   scheduleField<HTMLInputElement>("enabled").checked = true;
   if (template === "evening") {
@@ -519,18 +497,14 @@ async function saveSchedule(): Promise<void> {
     enabled: scheduleField<HTMLInputElement>("enabled").checked
   };
   try {
-    if (kind === "grayscale") {
-      await post("/api/grayscale/schedule", shared);
-    } else {
-      await post("/api/schedule", {
+    await post("/api/schedule", {
         ...shared,
         mode: scheduleField<HTMLSelectElement>("mode").value,
         profileId: $("#scheduleProfileId").value,
         lockLevel: scheduleField<HTMLInputElement>("id").dataset.lockLevel || "deep",
         commitmentLock: scheduleField<HTMLInputElement>("commitmentLock").checked,
         wifiNetworks: lines(scheduleField<HTMLTextAreaElement>("wifiNetworks").value)
-      });
-    }
+    });
     toast("Schedule saved");
     closeScheduleEditor();
     await refresh();
@@ -567,29 +541,11 @@ function renderSchedules(data: DashboardData): void {
 }
 
 function allScheduleEntries(data: DashboardData): ScheduleEntry[] {
-  const locks = data.state.schedules.map((schedule) => ({
-    kind: "lock" as const,
-    id: schedule.id,
-    name: schedule.name,
-    enabled: Boolean(schedule.enabled),
-    days: schedule.days || [],
-    start: schedule.start,
-    end: schedule.end,
-    deviceTargets: schedule.deviceTargets || ["computer", "phone"],
-    lock: schedule
+  return data.state.schedules.map((schedule) => ({
+    kind: "lock", id: schedule.id, name: schedule.name, enabled: Boolean(schedule.enabled),
+    days: schedule.days || [], start: schedule.start, end: schedule.end,
+    deviceTargets: schedule.deviceTargets || ["computer", "phone"], lock: schedule
   }));
-  const grayscale = (data.state.grayscale?.schedules || []).map((schedule) => ({
-    kind: "grayscale" as const,
-    id: schedule.id,
-    name: schedule.name,
-    enabled: Boolean(schedule.enabled),
-    days: schedule.days || [],
-    start: schedule.start,
-    end: schedule.end,
-    deviceTargets: schedule.deviceTargets || ["computer", "phone"],
-    grayscale: schedule
-  }));
-  return [...locks, ...grayscale];
 }
 
 function compareScheduleEntries(left: ScheduleEntry, right: ScheduleEntry): number {
@@ -618,7 +574,7 @@ function scheduleRow(entry: ScheduleEntry): HTMLElement {
   title.textContent = entry.name;
   const type = document.createElement("span");
   type.className = "schedule-type";
-  type.textContent = entry.kind === "grayscale" ? "Color" : scheduleModeLabel(entry.lock?.mode || "focus");
+  type.textContent = scheduleModeLabel(entry.lock?.mode || "focus");
   titleRow.append(dot, title, type);
   const detail = document.createElement("small");
   const profile = entry.lock ? profileName(entry.lock.profileId) : "Grayscale";
@@ -655,6 +611,7 @@ function editSchedule(entry: ScheduleEntry): void {
   setScheduleDevices(entry.deviceTargets);
   if (entry.lock) {
     scheduleField<HTMLSelectElement>("mode").value = entry.lock.mode;
+    fillScheduleProfileOptions(ui.data?.state, entry.lock.profileId);
     $("#scheduleProfileId").value = entry.lock.profileId;
     scheduleField<HTMLInputElement>("commitmentLock").checked = Boolean(entry.lock.commitmentLock);
     scheduleField<HTMLTextAreaElement>("wifiNetworks").value = (entry.lock.wifiNetworks || []).join("\n");
@@ -666,7 +623,6 @@ function editSchedule(entry: ScheduleEntry): void {
 async function toggleSchedule(entry: ScheduleEntry): Promise<void> {
   try {
     if (entry.lock) await post("/api/schedule", lockSchedulePayload(entry.lock, !entry.enabled));
-    if (entry.grayscale) await post("/api/grayscale/schedule", grayscaleSchedulePayload(entry.grayscale, !entry.enabled));
     toast(entry.enabled ? "Schedule turned off" : "Schedule turned on");
     await refresh();
   } catch (error) {
@@ -677,7 +633,7 @@ async function toggleSchedule(entry: ScheduleEntry): Promise<void> {
 async function deleteSchedule(entry: ScheduleEntry): Promise<void> {
   if (!window.confirm(`Delete “${entry.name}”?`)) return;
   try {
-    const path = entry.kind === "grayscale" ? "/api/grayscale/schedule/" : "/api/schedule/";
+    const path = "/api/schedule/";
     await del(`${path}${encodeURIComponent(entry.id)}`);
     toast("Schedule deleted");
     await refresh();
@@ -703,29 +659,21 @@ function lockSchedulePayload(schedule: Schedule, enabled: boolean): UnknownRecor
   };
 }
 
-function grayscaleSchedulePayload(schedule: GrayscaleSchedule, enabled: boolean): UnknownRecord {
-  return {
-    id: schedule.id,
-    name: schedule.name,
-    enabled,
-    deviceTargets: schedule.deviceTargets || ["computer", "phone"],
-    days: schedule.days,
-    start: schedule.start,
-    end: schedule.end
-  };
-}
-
-function fillScheduleProfileOptions(appState: DashboardState | null | undefined): void {
+function fillScheduleProfileOptions(appState: DashboardState | null | undefined, retainedProfileId?: string): void {
   if (!appState) return;
   const select = $("#scheduleProfileId") as unknown as HTMLSelectElement;
+  if (retainedProfileId !== undefined) select.dataset.retainedProfileId = retainedProfileId;
   const current = select.value;
-  const signature = appState.profiles.map((profile) => `${profile.id}:${profile.name}`).join("|");
+  const profiles = appState.profiles.filter(profile => ["normal", "brick-mode"].includes(profile.id)
+    || profile.id === select.dataset.retainedProfileId);
+  const signature = profiles.map((profile) => `${profile.id}:${profile.name}`).join("|");
   if (select.dataset.signature !== signature) {
-    select.replaceChildren(...appState.profiles.map(profileOption));
+    select.replaceChildren(...profiles.map(profileOption));
     select.dataset.signature = signature;
   }
-  const fallback = baselineProfileId(appState);
-  select.value = appState.profiles.some((profile) => profile.id === current) ? current : fallback;
+  const baseline = baselineProfileId(appState);
+  const fallback = profiles.some((profile) => profile.id === baseline) ? baseline : profiles[0]?.id || "";
+  select.value = profiles.some((profile) => profile.id === current) ? current : fallback;
 }
 
 function profileOption(profile: Profile): HTMLOptionElement {
@@ -765,577 +713,31 @@ function clockLabel(value: string): string {
   return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function bindProfileActions(): void {
-  const form = $("#profileForm") as unknown as HTMLFormElement;
-  trackFormChanges(form);
-  form.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void saveProfile();
-  });
-  $("#profileSelect").addEventListener("change", () => void selectBaselineProfile());
-  $("#newProfile").addEventListener("click", openNewProfile);
-  $("#editProfile").addEventListener("click", openSelectedProfile);
-  $("#cancelProfileEdit").addEventListener("click", closeProfileEditor);
-  $("#deleteProfile").addEventListener("click", () => void deleteSelectedProfile());
-}
-
-function renderProfiles(appState: DashboardState): void {
-  const select = $("#profileSelect") as unknown as HTMLSelectElement;
-  const signature = appState.profiles.map((profile) => `${profile.id}:${profile.name}`).join("|");
-  if (select.dataset.signature !== signature) {
-    select.replaceChildren(...appState.profiles.map(profileOption));
-    select.dataset.signature = signature;
-  }
-  const baseline = baselineProfileId(appState);
-  if (!ui.selectedProfileId || !appState.profiles.some((profile) => profile.id === ui.selectedProfileId)) {
-    ui.selectedProfileId = baseline;
-  }
-  if (document.activeElement !== select) select.value = baseline;
-  const profile = appState.profiles.find((item) => item.id === ui.selectedProfileId) || appState.profiles.find((item) => item.id === baseline);
-  if (!profile) return;
-  ui.selectedProfileId = profile.id;
-  const custom = !BUILT_IN_PROFILE_IDS.has(profile.id);
-  $("#editProfile").disabled = !custom;
-  $("#editProfile").textContent = custom ? "Edit custom profile" : "Built-in profile";
-  $("#rulesConfigStatus").textContent = profile.id === "brick-mode" ? "Brick" : profile.name;
-  $("#managedBlocklistSummary").textContent = custom
-    ? `${(profile.blockedApps || []).length} apps · ${(profile.blockedSites || []).length} sites. Vigil’s unsafe-content blocklist also applies.`
-    : `Built-in ruleset. Create a custom profile to edit app and site rules.`;
-  const form = $("#profileForm") as unknown as HTMLFormElement;
-  if (!form.hidden && !formHasUnsavedChanges(form) && formInput(form, "id").value === profile.id) fillProfileForm(profile);
-}
-
-async function selectBaselineProfile(): Promise<void> {
-  const id = $("#profileSelect").value;
-  try {
-    await post("/api/settings", { baselineProfileId: id });
-    ui.selectedProfileId = id;
-    closeProfileEditor();
-    toast("Baseline ruleset changed");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-    await refresh();
-  }
-}
-
-function openNewProfile(): void {
-  profileEditorGeneration += 1;
-  const form = $("#profileForm") as unknown as HTMLFormElement;
-  form.hidden = false;
-  form.reset();
-  formInput(form, "id").value = "";
-  formInput(form, "name").value = "Custom focus";
-  formInput(form, "mode").value = "blocklist";
-  $("#deleteProfile").hidden = true;
-  markFormSaved(form);
-  formInput(form, "name").focus();
-}
-
-function openSelectedProfile(): void {
-  const profile = selectedProfile();
-  if (!profile || BUILT_IN_PROFILE_IDS.has(profile.id)) {
-    toast("Built-in rules stay protected. Create a custom profile to edit targets.");
-    return;
-  }
-  const form = $("#profileForm") as unknown as HTMLFormElement;
-  profileEditorGeneration += 1;
-  form.hidden = false;
-  fillProfileForm(profile);
-  markFormSaved(form);
-  $("#deleteProfile").hidden = false;
-  formInput(form, "name").focus();
-}
-
-function fillProfileForm(profile: Profile): void {
-  const form = $("#profileForm") as unknown as HTMLFormElement;
-  formInput(form, "id").value = profile.id;
-  formInput(form, "name").value = profile.name;
-  formInput(form, "mode").value = profile.mode;
-  formInput(form, "blockedApps").value = (profile.blockedApps || []).join("\n");
-  formInput(form, "blockedSites").value = (profile.blockedSites || []).join("\n");
-  formInput(form, "blockedUrlPatterns").value = (profile.blockedUrlPatterns || []).join("\n");
-  formInput(form, "allowedApps").value = (profile.allowedApps || []).join("\n");
-  formInput(form, "allowedSites").value = (profile.allowedSites || []).join("\n");
-}
-
-function formInput(form: HTMLFormElement, name: string): HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement {
-  const control = form.elements.namedItem(name);
-  if (!(control instanceof HTMLElement)) throw new Error(`Missing profile field: ${name}`);
-  return control as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-}
-
-function closeProfileEditor(): void {
-  profileEditorGeneration += 1;
-  $("#profileForm").hidden = true;
-  markFormSaved($("#profileForm") as unknown as HTMLFormElement);
-}
-
-function selectedProfile(): Profile | null {
-  return ui.data?.state.profiles.find((profile) => profile.id === ui.selectedProfileId) || null;
-}
-
-async function saveProfile(): Promise<void> {
-  const form = $("#profileForm") as unknown as HTMLFormElement;
-  const id = formInput(form, "id").value;
-  const revision = formRevision(form);
-  const generation = profileEditorGeneration;
-  try {
-    const result = await post<ProfileSaveResponse>("/api/profile", {
-      ...(id ? { id } : {}),
-      name: formInput(form, "name").value.trim(),
-      mode: formInput(form, "mode").value,
-      blockedApps: lines(formInput(form, "blockedApps").value),
-      blockedSites: lines(formInput(form, "blockedSites").value),
-      blockedUrlPatterns: lines(formInput(form, "blockedUrlPatterns").value),
-      allowedApps: lines(formInput(form, "allowedApps").value),
-      allowedSites: lines(formInput(form, "allowedSites").value)
-    });
-    const savedId = result.profile?.id || id;
-    // Retain the new profile's identity even if the baseline update fails or
-    // the user continues editing while this save completes.
-    if (generation === profileEditorGeneration && savedId) formInput(form, "id").value = savedId;
-    if (savedId) {
-      await post("/api/settings", { baselineProfileId: savedId });
-      ui.selectedProfileId = savedId;
-    }
-    if (generation === profileEditorGeneration && markFormSavedAtRevision(form, revision)) closeProfileEditor();
-    toast("Profile saved");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-async function deleteSelectedProfile(): Promise<void> {
-  const profile = selectedProfile();
-  if (!profile || BUILT_IN_PROFILE_IDS.has(profile.id)) return;
-  if (!window.confirm(`Delete “${profile.name}”?`)) return;
-  try {
-    await del(`/api/profile/${encodeURIComponent(profile.id)}`);
-    ui.selectedProfileId = null;
-    closeProfileEditor();
-    toast("Profile deleted");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-function bindLimitActions(): void {
-  const limitForm = $("#limitForm") as unknown as HTMLFormElement;
-  const appLockForm = $("#appLockForm") as unknown as HTMLFormElement;
-  $("#newLimit").addEventListener("click", openNewLimit);
-  $("#cancelLimitEdit").addEventListener("click", () => { limitForm.hidden = true; });
-  $("#newAppLock").addEventListener("click", openNewAppLock);
-  $("#cancelAppLockEdit").addEventListener("click", () => { appLockForm.hidden = true; });
-  ruleField<HTMLSelectElement>(limitForm, "type").addEventListener("change", syncLimitTypeFields);
-  limitForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void saveLimit();
-  });
-  appLockForm.addEventListener("submit", (event) => {
-    event.preventDefault();
-    void saveAppLock();
-  });
-}
-
-function ruleField<T extends HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(form: HTMLFormElement, name: string): T {
-  const control = form.elements.namedItem(name);
-  if (!(control instanceof HTMLElement)) throw new Error(`Missing rule field: ${name}`);
-  return control as T;
-}
-
-function selectedRuleDays(rootSelector: string): number[] {
-  return [...$$<HTMLInputElement>(`${rootSelector} input:checked`)].map((input) => Number(input.value));
-}
-
-function setRuleDays(rootSelector: string, days: readonly number[]): void {
-  const selected = new Set(days);
-  for (const input of $$<HTMLInputElement>(`${rootSelector} input`)) input.checked = selected.has(Number(input.value));
-}
-
-function openNewLimit(): void {
-  const form = $("#limitForm") as unknown as HTMLFormElement;
-  form.hidden = false;
-  form.reset();
-  ruleField<HTMLInputElement>(form, "id").value = "";
-  ruleField<HTMLInputElement>(form, "name").value = "Daily boundary";
-  ruleField<HTMLSelectElement>(form, "type").value = "time";
-  ruleField<HTMLInputElement>(form, "limitMinutes").value = "20";
-  ruleField<HTMLInputElement>(form, "unlocksAllowed").value = "5";
-  ruleField<HTMLInputElement>(form, "blockMinutes").value = "20";
-  ruleField<HTMLSelectElement>(form, "lockLevel").value = "deep";
-  ruleField<HTMLInputElement>(form, "enabled").checked = true;
-  setRuleDays("#limitDays", [0, 1, 2, 3, 4, 5, 6]);
-  syncLimitTypeFields();
-  ruleField<HTMLInputElement>(form, "name").focus();
-}
-
-function editLimit(rule: DashboardItem): void {
-  openNewLimit();
-  const form = $("#limitForm") as unknown as HTMLFormElement;
-  ruleField<HTMLInputElement>(form, "id").value = rule.id;
-  ruleField<HTMLInputElement>(form, "name").value = rule.name;
-  ruleField<HTMLSelectElement>(form, "type").value = rule.type || "time";
-  ruleField<HTMLInputElement>(form, "limitMinutes").value = String(rule.limitMinutes || 20);
-  ruleField<HTMLInputElement>(form, "unlocksAllowed").value = String(rule.unlocksAllowed ?? 5);
-  ruleField<HTMLInputElement>(form, "blockMinutes").value = String(rule.blockMinutes ?? 20);
-  ruleField<HTMLSelectElement>(form, "lockLevel").value = rule.lockLevel || "deep";
-  ruleField<HTMLTextAreaElement>(form, "apps").value = (rule.apps || []).join("\n");
-  ruleField<HTMLTextAreaElement>(form, "sites").value = (rule.sites || []).join("\n");
-  ruleField<HTMLInputElement>(form, "enabled").checked = Boolean(rule.enabled);
-  setRuleDays("#limitDays", rule.days || []);
-  syncLimitTypeFields();
-}
-
-function syncLimitTypeFields(): void {
-  const form = $("#limitForm") as unknown as HTMLFormElement;
-  const type = ruleField<HTMLSelectElement>(form, "type").value;
-  for (const field of $$<HTMLElement>("#limitForm [data-limit-field]")) field.hidden = field.dataset.limitField !== type;
-}
-
-async function saveLimit(): Promise<void> {
-  const form = $("#limitForm") as unknown as HTMLFormElement;
-  const days = selectedRuleDays("#limitDays");
-  if (!days.length) {
-    toast("Choose at least one day for this limit.");
-    return;
-  }
-  try {
-    await post("/api/limit", {
-      id: ruleField<HTMLInputElement>(form, "id").value,
-      name: ruleField<HTMLInputElement>(form, "name").value.trim(),
-      type: ruleField<HTMLSelectElement>(form, "type").value,
-      lockLevel: ruleField<HTMLSelectElement>(form, "lockLevel").value,
-      limitMinutes: Number(ruleField<HTMLInputElement>(form, "limitMinutes").value),
-      unlocksAllowed: Number(ruleField<HTMLInputElement>(form, "unlocksAllowed").value),
-      blockMinutes: Number(ruleField<HTMLInputElement>(form, "blockMinutes").value),
-      apps: lines(ruleField<HTMLTextAreaElement>(form, "apps").value),
-      sites: lines(ruleField<HTMLTextAreaElement>(form, "sites").value),
-      enabled: ruleField<HTMLInputElement>(form, "enabled").checked,
-      days
-    });
-    form.hidden = true;
-    toast("Limit saved");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-async function deleteLimit(rule: DashboardItem): Promise<void> {
-  if (!window.confirm(`Delete “${rule.name}”?`)) return;
-  try {
-    await del(`/api/limit/${encodeURIComponent(rule.id)}`);
-    toast("Limit deleted");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-function renderLimits(rules: DashboardItem[]): void {
-  const list = $("#limitList");
+function renderSocialProtection(data: DashboardData): void {
+  $("#rulesConfigStatus").textContent = "Always on";
+  const list = $("#permanentLockList");
   list.replaceChildren();
-  if (!rules.length) {
-    list.append(ruleEmptyState("No daily limits configured."));
-  } else {
-    for (const rule of rules) {
-      const used = rule.type === "open" ? Number(rule.progress?.opens || 0) : Number(rule.progress?.seconds || 0);
-      const cap = rule.type === "open" ? Number(rule.unlocksAllowed || 0) : Number(rule.limitMinutes || 0) * 60;
-      const progress = rule.type === "open" ? `${used}/${cap} opens` : `${formatDuration(used)} of ${rule.limitMinutes || 0}m`;
-      const detail = `${progress} · ${daysText(rule.days || [])} · ${rule.enabled ? "on" : "off"}${rule.activeBlock ? " · locked now" : ""}`;
-      list.append(ruleRow(rule.name, detail, [
-        ruleAction("Edit", () => editLimit(rule)),
-        ruleAction("Delete", () => void deleteLimit(rule), true)
-      ]));
-    }
-  }
-  renderLimitsConfigurationStatus(rules, ui.data?.appLocks.rules || []);
-}
-
-function openNewAppLock(): void {
-  const form = $("#appLockForm") as unknown as HTMLFormElement;
-  form.hidden = false;
-  form.reset();
-  ruleField<HTMLInputElement>(form, "id").value = "";
-  ruleField<HTMLInputElement>(form, "name").value = "Locked socials";
-  ruleField<HTMLSelectElement>(form, "lockLevel").value = "deep";
-  ruleField<HTMLInputElement>(form, "unlocksAllowed").value = "2";
-  ruleField<HTMLInputElement>(form, "unlockMinutes").value = "10";
-  ruleField<HTMLInputElement>(form, "delaySeconds").value = "30";
-  ruleField<HTMLInputElement>(form, "enabled").checked = false;
-  setRuleDays("#appLockDays", [0, 1, 2, 3, 4, 5, 6]);
-  ruleField<HTMLInputElement>(form, "name").focus();
-}
-
-function editAppLock(rule: DashboardItem): void {
-  openNewAppLock();
-  const form = $("#appLockForm") as unknown as HTMLFormElement;
-  ruleField<HTMLInputElement>(form, "id").value = rule.id;
-  ruleField<HTMLInputElement>(form, "name").value = rule.name;
-  ruleField<HTMLSelectElement>(form, "lockLevel").value = rule.lockLevel || "deep";
-  ruleField<HTMLInputElement>(form, "unlocksAllowed").value = String(rule.unlocksAllowed ?? 2);
-  ruleField<HTMLInputElement>(form, "unlockMinutes").value = String(rule.unlockMinutes ?? 10);
-  ruleField<HTMLInputElement>(form, "delaySeconds").value = String(rule.delaySeconds ?? 30);
-  ruleField<HTMLTextAreaElement>(form, "apps").value = (rule.apps || []).join("\n");
-  ruleField<HTMLTextAreaElement>(form, "sites").value = (rule.sites || []).join("\n");
-  ruleField<HTMLInputElement>(form, "enabled").checked = Boolean(rule.enabled);
-  setRuleDays("#appLockDays", rule.days || []);
-}
-
-async function saveAppLock(): Promise<void> {
-  const form = $("#appLockForm") as unknown as HTMLFormElement;
-  const days = selectedRuleDays("#appLockDays");
-  if (!days.length) {
-    toast("Choose at least one day for this app lock.");
-    return;
-  }
-  try {
-    await post("/api/app-lock", {
-      id: ruleField<HTMLInputElement>(form, "id").value,
-      name: ruleField<HTMLInputElement>(form, "name").value.trim(),
-      lockLevel: ruleField<HTMLSelectElement>(form, "lockLevel").value,
-      unlocksAllowed: Number(ruleField<HTMLInputElement>(form, "unlocksAllowed").value),
-      unlockMinutes: Number(ruleField<HTMLInputElement>(form, "unlockMinutes").value),
-      delaySeconds: Number(ruleField<HTMLInputElement>(form, "delaySeconds").value),
-      apps: lines(ruleField<HTMLTextAreaElement>(form, "apps").value),
-      sites: lines(ruleField<HTMLTextAreaElement>(form, "sites").value),
-      enabled: ruleField<HTMLInputElement>(form, "enabled").checked,
-      days
-    });
-    form.hidden = true;
-    toast("App lock saved");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-async function deleteAppLock(rule: DashboardItem): Promise<void> {
-  if (!window.confirm(`Delete “${rule.name}”?`)) return;
-  try {
-    await del(`/api/app-lock/${encodeURIComponent(rule.id)}`);
-    if (rule.pendingRequest?.id === selectedAppLockRequestId) selectedAppLockRequestId = null;
-    toast("App lock deleted");
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-function renderAppLocks(rules: DashboardItem[]): void {
-  const list = $("#appLockList");
-  list.replaceChildren();
-  const pendingRules = rules.filter((rule) => Boolean(rule.pendingRequest?.id));
-  const selectedRule = pendingRules.find((rule) => rule.pendingRequest?.id === selectedAppLockRequestId) || pendingRules[0] || null;
-  const nextRequestId = selectedRule?.pendingRequest?.id ? String(selectedRule.pendingRequest.id) : null;
-  const selectionChanged = nextRequestId !== selectedAppLockRequestId;
-  selectedAppLockRequestId = nextRequestId;
-  if (selectionChanged) $("#appLockChallengeInput").value = "";
-  const selectedChallenge = selectedRule?.pendingRequest?.challenge as ChallengeSummary | null;
-  renderTypingChallenge("#appLockChallenge", "#appLockChallengeInput", selectedChallenge);
-  if (selectedChallenge?.text) $("#appLockChallenge").textContent = `${selectedRule?.name || "App lock"} — type: ${selectedChallenge.text}`;
-  $("#appLockUnlockPanel").hidden = !rules.some((rule) => rule.enabled);
-  $("#appLockUnlockTitle").textContent = selectedRule ? selectedRule.name : "Choose an app lock to unlock";
-
-  if (!rules.length) {
-    list.append(ruleEmptyState("No app locks configured."));
-  } else {
-    for (const rule of rules) {
-      const detail = `${rule.usedToday || 0}/${rule.unlocksAllowed || 0} unlocks used · ${rule.unlockMinutes || 0}m each · ${daysText(rule.days || [])} · ${rule.enabled ? "on" : "off"}`;
-      const edit = ruleAction("Edit", () => editAppLock(rule));
-      const unlock = ruleAction("Unlock", () => {});
-      configureAppLockUnlockButton(unlock, rule, {
-        selected: rule.pendingRequest?.id === selectedAppLockRequestId,
-        select: () => {
-          selectedAppLockRequestId = rule.pendingRequest?.id ? String(rule.pendingRequest.id) : null;
-          $("#appLockChallengeInput").value = "";
-          renderAppLocks(rules);
-          if (rule.pendingRequest?.challenge?.text) $("#appLockChallengeInput").focus();
-        }
-      });
-      list.append(ruleRow(rule.name, detail, [
-        edit,
-        unlock,
-        ruleAction("Delete", () => void deleteAppLock(rule), true)
-      ]));
-    }
-  }
-  renderLimitsConfigurationStatus(ui.data?.limits.rules || [], rules);
-}
-
-function configureAppLockUnlockButton(
-  button: HTMLButtonElement,
-  rule: DashboardItem,
-  confirmation: { selected: boolean; select(): void }
-): void {
-  if (!rule.enabled) {
-    button.textContent = "Off";
-    button.disabled = true;
-    return;
-  }
-  if (rule.activeUnlock) {
-    button.textContent = "Unlocked";
-    button.disabled = true;
-    return;
-  }
-  if ((rule.remainingToday || 0) <= 0) {
-    button.textContent = "No unlocks";
-    button.disabled = true;
-    return;
-  }
-  const pendingRequest = rule.pendingRequest;
-  if (pendingRequest) {
-    const milliseconds = new Date(pendingRequest.eligibleAt || "").getTime() - Date.now();
-    if (!confirmation.selected) {
-      button.textContent = milliseconds > 0 ? `Review · ${Math.ceil(milliseconds / 1_000)}s` : "Review";
-      button.addEventListener("click", confirmation.select);
-      return;
-    }
-    if (milliseconds > 0) {
-      button.textContent = `${Math.ceil(milliseconds / 1_000)}s`;
-      button.disabled = true;
-      return;
-    }
-    button.textContent = "Confirm";
-    button.addEventListener("click", () => void confirmAppLockUnlock(rule, pendingRequest));
-    return;
-  }
-  button.textContent = "Unlock";
-  button.addEventListener("click", () => void requestAppLockUnlock(rule));
-}
-
-async function requestAppLockUnlock(rule: DashboardItem): Promise<void> {
-  try {
-    const response = await post<{ request?: { id?: string } }>("/api/app-lock/unlock/request", {
-      lockId: rule.id,
-      reason: $("#appLockReason").value.trim()
-    });
-    selectedAppLockRequestId = response.request?.id || null;
-    toast("Unlock cooldown started");
-    await refresh();
-  } catch (error) {
-    toast(errorMessage(error));
-  }
-}
-
-async function confirmAppLockUnlock(rule: DashboardItem, pendingRequest: DashboardItem): Promise<void> {
-  try {
-    await post("/api/app-lock/unlock/confirm", {
-      requestId: pendingRequest.id,
-      passcode: $("#appLockPasscode").value,
-      distanceKey: $("#appLockDistanceKey").value,
-      challengeText: $("#appLockChallengeInput").value
-    });
-    selectedAppLockRequestId = null;
-    clearInputs(["appLockReason", "appLockPasscode", "appLockDistanceKey", "appLockChallengeInput"]);
-    toast(`${rule.name} unlocked`);
-    await refresh();
-  } catch (error) {
-    toast(errorMessage(error));
-  }
-}
-
-function ruleRow(name: string, detailText: string, actions: HTMLButtonElement[]): HTMLElement {
-  const row = document.createElement("article");
-  row.className = "rule-item";
-  const copy = document.createElement("div");
-  copy.className = "rule-item-copy";
-  const titleLine = document.createElement("div");
-  const title = document.createElement("strong");
-  title.textContent = name;
-  titleLine.append(title);
-  const detail = document.createElement("small");
-  detail.textContent = detailText;
-  copy.append(titleLine, detail);
-  const actionGroup = document.createElement("div");
-  actionGroup.className = "rule-item-actions";
-  actionGroup.append(...actions);
-  row.append(copy, actionGroup);
-  return row;
-}
-
-function ruleAction(label: string, listener: () => void, danger = false): HTMLButtonElement {
-  const button = document.createElement("button");
-  button.type = "button";
-  button.textContent = label;
-  button.classList.toggle("danger-text", danger);
-  button.addEventListener("click", listener);
-  return button;
-}
-
-function ruleEmptyState(message: string): HTMLElement {
-  const empty = document.createElement("div");
-  empty.className = "empty-state";
-  empty.textContent = message;
-  return empty;
-}
-
-function renderLimitsConfigurationStatus(limits: DashboardItem[], appLocks: DashboardItem[]): void {
-  const active = [...limits, ...appLocks].filter((rule) => rule.enabled).length;
-  const total = limits.length + appLocks.length;
-  $("#limitsConfigStatus").textContent = total ? `${active}/${total} on` : "No rules";
-  $("#limitsConfigStatus").className = `config-status${active ? " good" : ""}`;
+  const locks = data.appLocks.rules.filter(rule => rule.enabled && Number(rule.unlocksAllowed) === 0);
+  for (const lock of locks) list.append(deviceSummaryItem(String(lock.name || "Permanent block"), "Locked"));
+  if (!locks.length) list.textContent = "Permanent content and short-form restrictions are active.";
 }
 
 function bindSettingActions(): void {
-  for (const id of ["sketchySiteForm", "enforcementTimingForm", "accessTimingForm", "focusShortcutForm", "keyholderForm"]) {
+  for (const id of ["sketchySiteForm", "accessTimingForm", "keyholderForm"]) {
     trackFormChanges($("#" + id) as unknown as HTMLFormElement);
-  }
-  for (const input of $$<HTMLInputElement>("[data-setting]")) {
-    input.addEventListener("change", () => void saveBooleanSetting(input));
   }
   $("#sketchySiteForm").addEventListener("submit", (event: Event) => {
     event.preventDefault();
     void saveSettings({ sketchySiteMaxAgeDays: Number($("#sketchySiteMaxAgeDays").value) }, "Registration age limit saved", "#sketchySiteForm");
   });
-  $("#enforcementTimingForm").addEventListener("submit", (event: Event) => {
-    event.preventDefault();
-    void saveSettings({
-      appQuitEscalationSeconds: Number($("#appQuitEscalationSeconds").value),
-      processSweepIntervalSeconds: Number($("#processSweepIntervalSeconds").value),
-      systemSleepLockIntervalSeconds: Number($("#systemSleepLockIntervalSeconds").value)
-    }, "Enforcement timing saved", "#enforcementTimingForm");
-  });
   $("#accessTimingForm").addEventListener("submit", (event: Event) => {
     event.preventDefault();
-    void saveSettings({
-      intentReasonMinLength: Number($("#intentReasonMinLength").value),
-      panicLockDurationMinutes: Number($("#panicLockDurationMinutes").value)
-    }, "Unlock safeguards saved", "#accessTimingForm");
+    void saveSettings({ panicLockDurationMinutes: Number($("#panicLockDurationMinutes").value) }, "Panic duration saved", "#accessTimingForm");
   });
-  $("#focusShortcutForm").addEventListener("submit", (event: Event) => {
-    event.preventDefault();
-    void saveSettings({
-      focusShortcutEnabled: $("#focusShortcutEnabled").checked,
-      focusShortcutOnName: $("#focusShortcutOnName").value,
-      focusShortcutOffName: $("#focusShortcutOffName").value
-    }, "Focus shortcuts saved", "#focusShortcutForm");
-  });
-  for (const id of ["grayscaleSoftBlockEnabled", "grayscalePreventManualChanges"]) {
-    $(`#${id}`).addEventListener("change", () => void saveGrayscaleSettings());
-  }
   $("#keyholderForm").addEventListener("submit", (event: Event) => {
     event.preventDefault();
     void saveKeyholder();
   });
-}
-
-async function saveBooleanSetting(input: HTMLInputElement): Promise<void> {
-  const key = input.dataset.setting;
-  if (!key) return;
-  input.disabled = true;
-  try {
-    await post("/api/settings", { [key]: input.checked });
-    toast("Setting saved");
-  } catch (error) {
-    handleMutationError(error);
-  } finally {
-    input.disabled = false;
-    await refresh();
-  }
 }
 
 async function saveSettings(body: UnknownRecord, success: string, formSelector: string): Promise<void> {
@@ -1345,19 +747,6 @@ async function saveSettings(body: UnknownRecord, success: string, formSelector: 
     await post("/api/settings", body);
     markFormSavedAtRevision(form, submittedRevision);
     toast(success);
-    await refresh();
-  } catch (error) {
-    handleMutationError(error);
-  }
-}
-
-async function saveGrayscaleSettings(): Promise<void> {
-  try {
-    await post("/api/grayscale/settings", {
-      softBlockEnabled: $("#grayscaleSoftBlockEnabled").checked,
-      preventManualChanges: $("#grayscalePreventManualChanges").checked
-    });
-    toast("Screen color settings saved");
     await refresh();
   } catch (error) {
     handleMutationError(error);
@@ -1381,40 +770,21 @@ async function saveKeyholder(): Promise<void> {
 }
 
 function renderSettings(data: DashboardData): void {
-  const settings = data.state.settings as unknown as UnknownRecord;
-  for (const input of $$<HTMLInputElement>("[data-setting]")) {
-    if (document.activeElement !== input) input.checked = settings[input.dataset.setting || ""] !== false;
-  }
+  const settings = data.state.settings;
   setInputValue("#sketchySiteMaxAgeDays", settings.sketchySiteMaxAgeDays);
+  setInputValue("#panicLockDurationMinutes", settings.panicLockDurationMinutes);
   const sketchySites = data.state.sketchySites || [];
   $("#sketchySiteStatus").textContent = `${sketchySites.length} domains observed; ${sketchySites.filter(entry => entry.lookupStatus !== "verified").length} without a verified registration age.`;
-  setInputValue("#appQuitEscalationSeconds", settings.appQuitEscalationSeconds);
-  setInputValue("#processSweepIntervalSeconds", settings.processSweepIntervalSeconds);
-  setInputValue("#systemSleepLockIntervalSeconds", settings.systemSleepLockIntervalSeconds);
-  setInputValue("#intentReasonMinLength", settings.intentReasonMinLength);
-  setInputValue("#panicLockDurationMinutes", settings.panicLockDurationMinutes);
-  setInputValue("#focusShortcutOnName", settings.focusShortcutOnName);
-  setInputValue("#focusShortcutOffName", settings.focusShortcutOffName);
-  $("#grayscaleSoftBlockEnabled").checked = Boolean(data.state.grayscale?.softBlockEnabled);
-  $("#grayscalePreventManualChanges").checked = data.state.grayscale?.preventManualChanges !== false;
   const keyholder = data.state.keyholder as unknown as UnknownRecord;
-  if (!formHasUnsavedChanges($("#keyholderForm") as unknown as HTMLFormElement)) {
-    $("#keyholderEnabled").checked = Boolean(keyholder.enabled);
-  }
-  $("#keyholderStatus").textContent = keyholder.hasPasscode ? "Passcode set" : "Not set";
+  if (!formHasUnsavedChanges($("#keyholderForm") as unknown as HTMLFormElement)) $("#keyholderEnabled").checked = Boolean(keyholder.enabled);
+  $("#keyholderStatus").textContent = keyholder.hasPasscode ? "Passcode set" : "Optional";
   $("#keyholderStatus").className = `count-pill${keyholder.hasPasscode ? " good" : ""}`;
-  const protectedCount = [
-    settings.systemNetworkBlockingEnabled,
-    settings.contentFilterEnabled,
-    settings.safariUrlFilterEnabled,
-    settings.appQuitEnabled,
-    settings.processSweepEnabled,
-    settings.systemSleepLockEnabled
-  ].filter((value) => value !== false).length;
-  $("#protectionConfigStatus").textContent = `${protectedCount}/6 on`;
-  $("#protectionConfigStatus").className = `config-status ${protectedCount >= 5 ? "good" : "warn"}`;
-  $("#accessConfigStatus").textContent = settings.protectedEditsEnabled === false ? "Review" : "Protected";
-  $("#accessConfigStatus").className = `config-status ${settings.protectedEditsEnabled === false ? "warn" : "good"}`;
+  $("#accessConfigStatus").textContent = "Protected";
+  $("#accessConfigStatus").className = "config-status good";
+  const required = (data.hardening.audit || []).filter(check => ["runtime-watchdog", "protected-edits", "adult-blocklist", "content-filter", "app-quit", "process-sweep", "launch-agent"].includes(String(check.id)));
+  const healthy = required.length > 0 && required.every(check => check.ok === true);
+  $("#protectionConfigStatus").textContent = healthy ? "Active" : "Review health";
+  $("#protectionConfigStatus").className = `config-status ${healthy ? "good" : "warn"}`;
 }
 
 function setInputValue(selector: string, value: unknown): void {
@@ -1431,9 +801,6 @@ function bindDeviceActions(): void {
     event.preventDefault();
     void saveIosSettings();
   });
-  $("#iosDownloadProfile").addEventListener("click", () => {
-    window.location.href = "/api/devices/ios/profile.mobileconfig";
-  });
 }
 
 async function saveIosSettings(): Promise<void> {
@@ -1441,15 +808,11 @@ async function saveIosSettings(): Promise<void> {
   const revision = formRevision(form);
   try {
     await post("/api/devices/ios/settings", {
-      enabled: $("#iosEnabled").checked,
-      blockWeb: $("#iosBlockWeb").checked,
-      blockApps: $("#iosBlockApps").checked,
-      hardenRemoval: $("#iosHardenRemoval").checked,
       restrictInstallAndErase: $("#iosRestrictInstallErase").checked,
       allowSafariHistoryClearing: $("#iosAllowSafariHistoryClearing").checked
     });
     markFormSavedAtRevision(form, revision);
-    toast("iPhone policy saved");
+    toast("Desired policy saved; a verified phone update is required");
     await refresh();
   } catch (error) {
     handleMutationError(error);
@@ -1459,10 +822,6 @@ async function saveIosSettings(): Promise<void> {
 function renderDevice(data: DashboardData): void {
   const ios = data.devices.ios || {};
   if (!formHasUnsavedChanges($("#iosForm") as unknown as HTMLFormElement)) {
-    $("#iosEnabled").checked = Boolean(ios.enabled);
-    $("#iosBlockWeb").checked = ios.blockWeb !== false;
-    $("#iosBlockApps").checked = ios.blockApps !== false;
-    $("#iosHardenRemoval").checked = ios.removalHardened || ios.hardenRemoval !== false;
     $("#iosRestrictInstallErase").checked = ios.restrictInstallAndErase !== false;
     $("#iosAllowSafariHistoryClearing").checked = ios.allowSafariHistoryClearing !== false;
   }
@@ -1690,7 +1049,8 @@ async function runHardeningAction(buttonId: string, actionId: string, fallbackPa
 
 function renderHealth(data: DashboardData): void {
   const audit = data.hardening.audit || [];
-  const required = audit.filter((item) => item.required !== false);
+  const optional = new Set(["foolproof", "keyholder", "distance-key", "notification-focus", "sleep-screen-lock", "external-network-block", "mac-account"]);
+  const required = audit.filter((item) => item.required !== false && !optional.has(String(item.id)));
   const healthy = required.filter((item) => item.ok !== false).length;
   const degraded = Math.max(0, required.length - healthy);
   const allHealthy = degraded === 0 && required.length > 0;

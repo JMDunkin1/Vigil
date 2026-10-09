@@ -1,6 +1,8 @@
 import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Script } from "node:vm";
+import { PROTECTION_PAGE_CSS } from "../src/protectionAppearance.js";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
@@ -22,9 +24,48 @@ await copyProjectFile("scripts/mac-build-version.mjs");
 await copyProjectFile("scripts/mac-signing-identity.mjs");
 await copyProjectFile("scripts/release-entitlements.mjs");
 await copyProjectFile("scripts/ios-phone-suite.mjs");
+// Generate the same stylesheet for both browser installations before packaging.
+await writeFile(join(projectRoot, "extension/blocked.css"), PROTECTION_PAGE_CSS.trimStart());
+await writeFile(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/blocked.css"), PROTECTION_PAGE_CSS.trimStart());
+for (const size of [16, 32, 48, 128]) {
+  await cp(join(projectRoot, `extension/icons/icon-${size}.png`), join(projectRoot, `ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/icons/icon-${size}.png`));
+}
+const legacyBrowserPath = join(projectRoot, "ios/VigilBrowser/VigilSafariExtension/Resources/content.js");
+const brandIcon = (await readFile(join(projectRoot, "extension/icons/icon-128.png"))).toString("base64");
+const diagnosticHelpers = (await readFile(join(runtimeRoot, "src/blockPageDiagnostics.js"), "utf8")).replace(/^export /gmu, "");
+const legacyProtectionCss = `${PROTECTION_PAGE_CSS}\n.brand-mark { background-image: url("data:image/png;base64,${brandIcon}"); }`;
+await writeFile(legacyBrowserPath, (await readFile(legacyBrowserPath, "utf8")).replace(
+  /\/\/ BEGIN GENERATED BLOCK DIAGNOSTICS[\s\S]*?\/\/ END GENERATED BLOCK DIAGNOSTICS/u,
+  `// BEGIN GENERATED BLOCK DIAGNOSTICS\n${diagnosticHelpers}// END GENERATED BLOCK DIAGNOSTICS`
+).replace(
+  /\/\* BEGIN GENERATED PROTECTION APPEARANCE \*\/[\s\S]*?\/\* END GENERATED PROTECTION APPEARANCE \*\//u,
+  `/* BEGIN GENERATED PROTECTION APPEARANCE */\n${legacyProtectionCss}\n/* END GENERATED PROTECTION APPEARANCE */`
+));
 await copyAssetDir("public");
 await copyAssetDir("extension");
 await makeExtensionScriptsClassic();
+await cp(join(runtimeRoot, "extension/blocked-navigation.js"), join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/blocked-navigation.js"));
+const searchBreakBackground = await readFile(join(runtimeRoot, "extension/search-break-background.js"), "utf8");
+const searchBreakSafariPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js");
+const searchBreakSafariSource = await readFile(searchBreakSafariPath, "utf8");
+const searchBreakSection = `// BEGIN GENERATED SEARCH BREAK\n${searchBreakBackground}// END GENERATED SEARCH BREAK`;
+await writeFile(searchBreakSafariPath, searchBreakSafariSource.includes("// BEGIN GENERATED SEARCH BREAK")
+  ? searchBreakSafariSource.replace(/\/\/ BEGIN GENERATED SEARCH BREAK[\s\S]*?\/\/ END GENERATED SEARCH BREAK/u, searchBreakSection)
+  : searchBreakSafariSource + "\n" + searchBreakSection + "\n");
+// The same guard runs before the existing protections in native WebKit and
+// Safari. The Mac Safari resource is a symlink to this iOS parity script.
+const avatarGuard = (await readFile(join(runtimeRoot, "src/youtubeCommentAvatars.js"), "utf8")).replace(/^export /gmu, "");
+for (const resource of [
+  "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-parity.js",
+  "ios/VigilBrowser/VigilSafariExtension/Resources/ContentSafety.js"
+]) {
+  const path = join(projectRoot, resource);
+  const source = await readFile(path, "utf8");
+  const marker = /\/\/ BEGIN GENERATED YOUTUBE COMMENT AVATARS[\s\S]*?\/\/ END GENERATED YOUTUBE COMMENT AVATARS/u;
+  if (!marker.test(source)) throw new Error(`Missing shared comment-avatar guard marker in ${resource}.`);
+  await writeFile(path, source.replace(marker,
+    `// BEGIN GENERATED YOUTUBE COMMENT AVATARS\n(() => {\n${avatarGuard}\ninstallYouTubeCommentAvatarMask();\n})();\n// END GENERATED YOUTUBE COMMENT AVATARS`));
+}
 const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
 const safariBackgroundPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js");
 await writeFile(safariBackgroundPath, (await readFile(safariBackgroundPath, "utf8")).replace(
@@ -62,17 +103,37 @@ async function makeExtensionScriptsClassic(): Promise<void> {
   // Chrome content scripts and ordinary option-page scripts are classic
   // scripts. TypeScript treats files under this ESM package as modules and
   // emits a trailing `export {};`, which Chrome rejects before Vigil can run.
-  for (const name of ["background.js", "blocked.js", "blocked-navigation.js", "content.js", "google-safe-search.js", "options.js", "reddit-review-background.js", "reddit-review-guard.js"]) {
+  for (const name of ["background.js", "blocked.js", "blocked-navigation.js", "content.js", "google-safe-search.js", "options.js", "reddit-review-background.js", "reddit-review-guard.js", "search-break.js", "search-break-background.js", "search-break-page.js"]) {
     const path = join(runtimeRoot, "extension", name);
     let source = await readFile(path, "utf8");
+    if (name === "search-break.js" || name === "search-break-background.js") {
+      const engine = await readFile(join(runtimeRoot, "src/searchBreak.js"), "utf8");
+      const searchBreak = engine.slice(engine.indexOf("export function limitedSearchWarning"), engine.indexOf("export function activeSearchBreakUntil")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*searchBreak\.js["'];?\s*$/mu, searchBreak);
+      source += "\nexport {};\n";
+    }
+    if (source.includes('from "../src/blockPageDiagnostics.js"')) {
+      const diagnostics = (await readFile(join(runtimeRoot, "src/blockPageDiagnostics.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*blockPageDiagnostics\.js["'];?\s*$/mu, diagnostics);
+    }
     if (source.includes('from "../src/blockedPageBack.js"')) {
       const back = (await readFile(join(runtimeRoot, "src/blockedPageBack.js"), "utf8")).replace(/^export /gmu, "");
       source = source.replace(/^import .*blockedPageBack\.js["'];?\s*$/mu, back);
       if (!name.startsWith("reddit-review-")) source = source.trimEnd() + "\nexport {};\n";
     }
+    if (name === "content.js") {
+      const appearance = (await readFile(join(runtimeRoot, "src/protectionAppearance.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*protectionAppearance\.js["'];?\s*$/mu, appearance);
+      source += "\nexport {};\n";
+    }
     if (name === "background.js") {
       const embedPolicy = (await readFile(join(runtimeRoot, "src/youtubeEmbeds.js"), "utf8")).replace(/^export /gmu, "");
       source = source.replace(/^import .*youtubeEmbeds\.js["'];?\s*$/mu, embedPolicy);
+      source += "\nexport {};\n";
+    }
+    if (name === "content.js") {
+      const avatarGuard = (await readFile(join(runtimeRoot, "src/youtubeCommentAvatars.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*youtubeCommentAvatars\.js["'];?\s*$/mu, avatarGuard);
       source += "\nexport {};\n";
     }
     if (name.startsWith("reddit-review-")) {
@@ -88,15 +149,25 @@ async function makeExtensionScriptsClassic(): Promise<void> {
         .replace(/^import .*explicitMediaContext\.js["'];?\s*$/mu, mediaContext)
         .replace(/^export /gmu, "");
       source = source.replace(/^import .*contextualExplicitSearch\.js["'];?\s*$/mu, matcher);
+      const safeSearchContext = (await readFile(join(runtimeRoot, "src/safeSearchContext.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*safeSearchContext\.js["'];?\s*$/mu, safeSearchContext);
       source += "\nexport {};\n";
     }
-    const classic = source.replace(/\nexport \{\};?\s*$/u, "\n");
+    if (name === "search-break.js") source = source.replace(/^export const checkSearchBreakBeforeNavigation/mu, "const checkSearchBreakBeforeNavigation");
+    if (name === "google-safe-search.js") source = source.replace(/^import .*search-break\.js["'];?\s*$/mu, "");
+    const classic = source.replace(/^export \{\};?[ \t]*\r?$/gmu, "");
     if (classic === source) throw new Error(`Vigil extension build did not contain the expected module marker in ${name}.`);
-    await writeFile(path, name.startsWith("reddit-review-") ? `(() => {\n${classic}\n})();\n` : classic, "utf8");
+    const script = classic.trimEnd() + "\n";
+    new Script(script, { filename: name });
+    await writeFile(path, name.startsWith("reddit-review-") || (name.startsWith("search-break") && name !== "search-break.js") ? `(() => {\n${script}\n})();\n` : script, "utf8");
   }
   const backgroundPath = join(runtimeRoot, "extension/background.js");
   await writeFile(backgroundPath, await readFile(join(runtimeRoot, "extension/reddit-review-background.js"), "utf8")
+    + await readFile(join(runtimeRoot, "extension/search-break-background.js"), "utf8")
     + await readFile(backgroundPath, "utf8"));
+  const searchGuardPath = join(runtimeRoot, "extension/google-safe-search.js");
+  await writeFile(searchGuardPath, await readFile(join(runtimeRoot, "extension/search-break.js"), "utf8")
+    + await readFile(searchGuardPath, "utf8"));
 }
 
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"), join(runtimeRoot, "extension/reddit-child-lock.js"));
