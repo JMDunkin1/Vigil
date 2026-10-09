@@ -11,10 +11,12 @@ export function containsExplicitMediaLabel(value: string): boolean {
 export const CONTEXTUAL_SEARCH_PLATFORMS = [
   "reddit.com", "deviantart.com", "artstation.com", "pixiv.net",
   "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com",
+  "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com",
+  "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com",
   "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app",
   "patreon.com", "itch.io", "discord.com", "discordapp.com"
 ];
-export const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
+export const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
 export const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
 function contextualSearchDecode(value: string): string {
   return normalizeExplicitVocabulary(decodeSearchQueryValue(value));

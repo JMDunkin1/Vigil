@@ -3,6 +3,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Script } from "node:vm";
 import { PROTECTION_PAGE_CSS } from "../src/protectionAppearance.js";
+import { CONTEXTUAL_SEARCH_PLATFORMS } from "../src/contextualExplicitSearch.js";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
@@ -189,6 +190,9 @@ await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Res
 const mediaGuardPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js");
 const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
 await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace(
+  /\/\/ BEGIN GENERATED CONTEXTUAL PLATFORMS[\s\S]*?\/\/ END GENERATED CONTEXTUAL PLATFORMS/u,
+  `// BEGIN GENERATED CONTEXTUAL PLATFORMS\n  const contextualHosts = ${JSON.stringify(CONTEXTUAL_SEARCH_PLATFORMS)};\n  const currentHost = location.hostname.toLowerCase().replace(/\\.$/u, '');\n  const isContextualPlatform = contextualHosts.some(domain => currentHost === domain || currentHost.endsWith('.' + domain));\n// END GENERATED CONTEXTUAL PLATFORMS`
+).replace(
   /\/\/ BEGIN GENERATED EXPLICIT MEDIA CONTEXT[\s\S]*?\/\/ END GENERATED EXPLICIT MEDIA CONTEXT/u,
   `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${mediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
 ));

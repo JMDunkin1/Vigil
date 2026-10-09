@@ -272,11 +272,42 @@ export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
   "ebookrenta.com"
 ] as const;
 
+// Reviewed first-party mature-content policies, October 9, 2026:
+// ArtStation: help.artstation.com/en/articles/16155170-mature-content-unsuitable-content
+// Pixiv: www.pixiv.help/hc/en-us/articles/235645907-Can-I-post-content-classed-as-R-18
+// Fur Affinity: www.furaffinity.net/aup/
+// ArtMajeur: www.artmajeur.com/en/support/mai-jia/2/how-to-display-mature-content-on-artmajeur/910
+// Inkbunny: inkbunny.net/userrate.php; SoFurry: wiki.sofurry.com/wiki/Acceptable_Use_Policy
+// Weasyl: www.weasyl.com/help/ratings
+export const DEFAULT_MATURE_ART_BLOCKED_SITES = [
+  "artstation.com",
+  "pixiv.net",
+  "furaffinity.net",
+  "artmajeur.com",
+  "inkbunny.net",
+  "sofurry.com",
+  "weasyl.com"
+] as const;
+
+// Storefront/catalog evidence reviewed October 9, 2026. The wholesale
+// marketplace has explicit product galleries alongside ordinary goods.
+export const DEFAULT_ADULT_PRODUCT_BLOCKED_SITES = [
+  "made-in-china.com",
+  "irontechdoll.com",
+  "zelexdoll.com",
+  "youqdoll.com",
+  "jydoll.cn",
+  "jxdoll.com",
+  "hanidoll.com",
+  "tpdoll.com",
+  "kumadoll.com",
+  "realdoll.com"
+] as const;
+
 /**
- * Adult and mixed-content domains that are absent from the selected bulk source or are too
- * deep in its lexical ordering to reach Personal edition's small preload.
- * These remain domain-only so labels such as "wildlife" never become page-text
- * classifier terms.
+ * Adult and mixed-content domains absent from the bulk source or beyond the
+ * Personal edition preload. These stay domain-only so ordinary site names
+ * never become generic page-text classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
   // User-requested whole-site ban; keep this mixed-use name out of prose terms.
@@ -318,5 +349,7 @@ export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
   "hdporncomics.com",
   "jerkmate.com",
   "sniffies.com",
+  ...DEFAULT_MATURE_ART_BLOCKED_SITES,
+  ...DEFAULT_ADULT_PRODUCT_BLOCKED_SITES,
   ...DEFAULT_MATURE_COMIC_BLOCKED_SITES
 ] as const;

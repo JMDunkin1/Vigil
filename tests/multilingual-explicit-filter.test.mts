@@ -6,6 +6,7 @@ import { defaultState } from "../src/defaults.js";
 import { baselinePolicy, matchBlockedUrlPattern } from "../src/policy.js";
 
 const blocked = [
+  "进口性爱娃娃", "矽膠性愛娃娃", "成人情趣娃娃商城", "硅胶性玩具", "ラブドール販売", "セックスドール通販",
   "فيديو إباحي وجنسي للممثلة Jane Example",
   "إباحية", "اباحي", "والإباحية", "إِبَاحِيّ", "إبـاحي", "إبا\u200bحي",
   "فيديو جنسي", "فيديوهات جنسية", "أفلام جنسية", "الفيديو الجنسي",

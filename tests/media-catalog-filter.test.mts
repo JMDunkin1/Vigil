@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { createContext, runInContext } from 'node:vm';
 
 const source = await readFile(new URL('../extension/media-child-lock.js', import.meta.url), 'utf8');
-const start = source.indexOf('  const isContextualPlatform =');
+const start = source.indexOf('// BEGIN GENERATED CONTEXTUAL PLATFORMS');
 const end = source.indexOf('  const isX =');
 assert.ok(start > 0 && end > start);
 for (const hostname of ['cinecat.eu', 'catalog.example', 'reddit.com']) {

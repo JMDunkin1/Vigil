@@ -228,7 +228,7 @@ struct NavigationFilter: Sendable {
         if route.hasPrefix("!") { route.removeFirst() }
         route = String(route.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
         let path = (decodedCandidates(route).last ?? route).replacingOccurrences(of: "+", with: " ")
-        let expression = try! NSRegularExpression(pattern: #"(?:^|/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+)(?=/|$)"#, options: .caseInsensitive)
+        let expression = try! NSRegularExpression(pattern: #"(?:^|/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=/|$)"#, options: .caseInsensitive)
         let text = path as NSString
         guard let match = expression.firstMatch(in: path, range: NSRange(location: 0, length: text.length)) else { return nil }
         let marker = text.substring(with: match.range(at: 1))
@@ -296,7 +296,7 @@ struct NavigationFilter: Sendable {
 // BEGIN GENERATED EXPLICIT MEDIA MATCHER
 // Generated from src/explicitMediaContext.ts; do not edit this section.
 private enum BroadenedExplicitMedia {
-    private static let labels: Set<String> = ["pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos", "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes", "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate", "futanari", "ecchi"]
+    private static let labels: Set<String> = ["pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos", "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes", "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate", "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls", "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"]
     private static let exposure = try! NSRegularExpression(pattern: #"^(?:nud|nuds|nudes?|nued|nudity|naked|nakedness|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|fullfrontal|seethrough|upskirt|downblouse|nipslips?|cameltoe)$"#)
     private static let sexual = try! NSRegularExpression(pattern: #"^(?:erotic|erotica|lewd|horny|sensual|seductive|sex|sexual|sexually|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage)$"#)
     private static let acts = try! NSRegularExpression(pattern: #"^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|ejaculation|fingering|selfpleasure|creampies?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting)$"#)
@@ -340,6 +340,9 @@ private enum BroadenedExplicitMedia {
             let folded = original.map { glyphs[String($0)] ?? String($0) }.joined().lowercased()
             if vocabulary.contains(folded), let range = Range(match.range, in: text) { text.replaceSubrange(range, with: folded) }
         }
+        text = text.replacingOccurrences(of: #"\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b"#, with: "sexdoll", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+robots?\b"#, with: "sexrobot", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+toys?\b"#, with: "sextoy", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:nak3d|n4ked|n4k3d)\b"#, with: "naked", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b"#, with: "nudes", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:ph0t0s|ph0tos|phot0s)\b"#, with: "photos", options: [.regularExpression, .caseInsensitive])
@@ -376,13 +379,13 @@ private enum BroadenedExplicitMedia {
         let text = normalizedVocabulary(value)
         if text.range(of: #"^\s*(?:nud(?:s|3s?)?|nudes)\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)"#, options: [.regularExpression, .caseInsensitive]) != nil || contains(value) { return true }
         let host = hostname.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        let domains = ["reddit.com", "deviantart.com", "artstation.com", "pixiv.net", "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com", "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app", "patreon.com", "itch.io", "discord.com", "discordapp.com"]
+        let domains = ["reddit.com", "deviantart.com", "artstation.com", "pixiv.net", "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com", "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com", "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com", "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app", "patreon.com", "itch.io", "discord.com", "discordapp.com"]
         let platform = domains.contains { host == $0 || host.hasSuffix("." + $0) }
         if (host == "itch.io" || host.hasSuffix(".itch.io")), text.range(of: #"(?:^|[/#])tag-adult(?:$|[/?.#])"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
         if host == "reddit.com" || host.hasSuffix(".reddit.com") {
             if text.range(of: #"^\s*x{1,2}\s*$|(?:^|[^\p{L}\p{N}])(?:(?:adult|unreviewed)[\s_-]+videos?|x{1,2}[\s_-]+(?:videos?|photos?|pics?))(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
         }
-        let namedPlatform = text.range(of: #"(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let namedPlatform = text.range(of: #"(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
         let discoveryText = text.replacingOccurrences(of: "3", with: "e").replacingOccurrences(of: "0", with: "o")
         return (platform || namedPlatform) && discoveryText.range(of: #"(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
     }

@@ -14,7 +14,7 @@ import {
   SOFT_BLOCK_PROFILE_ID,
   defaultState
 } from "./defaults.js";
-import { DEFAULT_MATURE_COMIC_BLOCKED_SITES } from "./priorityBlockedDomains.js";
+import { DEFAULT_ADULT_PRODUCT_BLOCKED_SITES, DEFAULT_MATURE_ART_BLOCKED_SITES, DEFAULT_MATURE_COMIC_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import { parseBoolean } from "./booleans.js";
 import { APPLE_CONTENT_FILTER_PERMITTED_URLS } from "./appleContentFilterExceptions.js";
 import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
@@ -27,7 +27,7 @@ import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord 
 import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import type { IosUrlFilterServiceConfiguration } from "./iosUrlFilterServiceConfiguration.js";
 import { IOS_GOOGLE_SAFE_SEARCH_DOMAINS, IOS_SAFE_SEARCH_DOH_URL } from "./iosSafeSearch.js";
-import { ADDITIONAL_EXPLICIT_SEARCH_TERMS } from "./explicitMediaContext.js";
+import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_ADULT_PRODUCT_TERMS } from "./explicitMediaContext.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 export const IOS_RETIRED_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
@@ -42,8 +42,13 @@ export const IOS_PANIC_ALLOWED_APP_BUNDLE_IDS = [
 const MAX_DENY_URLS = 500;
 const MIN_BULK_ADULT_DENY_URLS = 6;
 // Preserve the existing bypass-domain breadth as the adult overlay grows.
-const IOS_MATURE_COMIC_SITE_KEYS = new Set<string>(DEFAULT_MATURE_COMIC_BLOCKED_SITES);
-const IOS_PRIMARY_ADULT_BLOCKED_SITES = DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.filter(site => !IOS_MATURE_COMIC_SITE_KEYS.has(site));
+const IOS_SUPPLEMENTAL_ADULT_BLOCKED_SITES = [
+  ...DEFAULT_MATURE_COMIC_BLOCKED_SITES,
+  ...DEFAULT_MATURE_ART_BLOCKED_SITES,
+  ...DEFAULT_ADULT_PRODUCT_BLOCKED_SITES
+];
+const IOS_SUPPLEMENTAL_ADULT_SITE_KEYS = new Set<string>(IOS_SUPPLEMENTAL_ADULT_BLOCKED_SITES);
+const IOS_PRIMARY_ADULT_BLOCKED_SITES = DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.filter(site => !IOS_SUPPLEMENTAL_ADULT_SITE_KEYS.has(site));
 const MIN_PRIORITY_DOMAIN_BREADTH = 173 + IOS_PRIMARY_ADULT_BLOCKED_SITES.length;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
 const IOS_UNGUARDED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_UNGUARDED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
@@ -54,7 +59,9 @@ const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(
 // The expanded labels use the shared companion matcher. Generating seven
 // prefix URLs for each would displace existing protected sites/custom rules;
 // Apple's prefix matching also cannot express the required word boundaries.
-const IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS = new Set(["prno", "p0rn", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS]);
+const IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS = new Set([
+  "prno", "p0rn", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS, ...MULTILINGUAL_ADULT_PRODUCT_TERMS
+]);
 const IOS_PRIORITY_BLOCKED_SITE_KEYS = new Set([
   ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
   ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES
@@ -312,8 +319,9 @@ export function buildIosConfigurationProfile(
   if (active && settings.blockWeb && targets.supplementalDeniedUrls.length) {
     // Apple supports multiple web-content-filter payloads with unique UUIDs.
     // Keep the existing 500-slot filter intact; this additive filter carries
-    // whole-platform adult-comic bans over both HTTP and HTTPS.
-    payloads.push(commonPayload("com.apple.webcontent-filter", "Mature Comic Platforms", "mature-comics", {
+    // whole-platform comic, art, and adult-product bans over HTTP and HTTPS.
+    // Retain the installed payload's identity when expanding its coverage.
+    payloads.push(commonPayload("com.apple.webcontent-filter", "Adult Content Platforms", "mature-comics", {
       FilterType: "BuiltIn",
       AutoFilterEnabled: true,
       PermittedURLs: [...APPLE_CONTENT_FILTER_PERMITTED_URLS],
@@ -610,7 +618,7 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
 
   const supplementalDeniedUrls = settings.blockWeb && !fullLockoutActive
     ? uniqueUrls([
-      ...urlsFromSiteTargets(DEFAULT_MATURE_COMIC_BLOCKED_SITES),
+      ...urlsFromSiteTargets(IOS_SUPPLEMENTAL_ADULT_BLOCKED_SITES),
       // Whole-service limits consume primary slots. Carry every curated deny
       // displaced by that growth in the existing supplemental BuiltIn payload,
       // preserving both priority coverage and the primary adult reserve.

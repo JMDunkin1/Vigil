@@ -7,8 +7,13 @@ import { baselinePolicy, matchBlockedUrlPattern } from "../src/policy.js";
 import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
 import { shouldBlockUrl } from "../src/policy.js";
 
-const platforms = ["x.com", "twitter.com", "bsky.app", "pixiv.net", "patreon.com", "itch.io", "creator.itch.io", "discord.com", "discordapp.com"];
+const platforms = ["x.com", "twitter.com", "bsky.app", "pixiv.net", "patreon.com", "itch.io", "creator.itch.io", "discord.com", "discordapp.com", "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com"];
 const blocked = [
+  "https://www.saatchiart.com/en-nl/paintings/nude",
+  "https://fineartamerica.com/art/paintings/nude",
+  "https://500px.com/galleries/erotic",
+  "https://www.flickr.com/collections/adult-content",
+  ...["ArtMajeur", "Inkbunny", "SoFurry", "Weasyl", "Fur Affinity", "Saatchi Art", "Fine Art America", "Flickr", "500px"].map(name => `https://www.google.com/search?q=${encodeURIComponent(`${name} nude art`)}`),
   ...["X rated", "x-rated documentary", "XX_rated", "XXXX–rated", "rated X", "ｘ ｒａｔｅｄ", "x\u200brated",
     "adult videos", "adult vids", "vids for adults", "videos adult", "spicy clips", "spicy adult", "cream pie videos", "creampie compilation", "cream-pie spicy", "xx vids", "x videos",
     "nude videos", "naked photos", "nudity compilation", "erotic films", "lewd pictures", "spicy steamy", "uncensored nude", "mature erotic clips", "naked cream pie", "nude ＶＩＤＥＯＳ"
@@ -46,6 +51,10 @@ const blocked = [
   "https://search.example/?q=adult+content+on+pixiv"
 ];
 const allowed = [
+  "https://www.saatchiart.com/en-nl/paintings/landscape",
+  "https://fineartamerica.com/art/paintings/flowers",
+  "https://500px.com/galleries/architecture",
+  "https://www.flickr.com/collections/gardening",
   ...["spicy", "cream pie", "creampie", "banana cream pie recipe video", "spicy chicken videos", "adult education video", "video editing for adult learning", "Model X video", "X-Men film", "X Files documentary", "spicy recipe clips", "adult", "vids",
     "nude", "naked", "erotic", "lewd", "steamy", "mature films", "uncensored interview video", "nude makeup videos", "nude figure drawing photos", "nudity anatomy video", "naked mole rat documentary", "naked eye astronomy video", "naked cake video", "spicy recipe steamy clips", "spicy news today. A long unrelated story about gardening has many pictures"
   ].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),

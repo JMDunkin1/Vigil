@@ -20,6 +20,14 @@ export interface AdversarialUrlCase {
 }
 
 export const adversarialQueryCorpus: readonly AdversarialQueryCase[] = [
+  ...["silicone sex dolls", "love realistic silicone dolls", "sex_doll", "sex dolls medical", "love dolls art", "sex robots", "sex toys", "进口性爱娃娃", "矽膠性愛娃娃", "情趣娃娃商城", "ラブドール販売"].map((query, index) => ({
+    id: `adult-product-${index}`, query, expectedBlocked: true, expectedTextBlocked: true,
+    category: "adult product discovery", rationale: "Specific adult-product labels remain blocked even on an unknown marketplace."
+  })),
+  ...["silicone dolls", "reborn silicone baby dolls", "adult doll collectors", "dollhouse toys", "silicone baking molds", "love dollhouse furniture", "toy robots", "普通硅胶模具", "人形の服"].map((query, index) => ({
+    id: `ordinary-product-${index}`, query, expectedBlocked: false, expectedMediaBlocked: false, expectedTextBlocked: false,
+    category: "ordinary products", rationale: "Material names and ordinary dolls or toys do not establish adult-content intent."
+  })),
   {"id": "adversarial-queries-1", "query": "photos of women without clothes", "expectedBlocked": true, "expectedMediaBlocked": true, "expectedTextBlocked": true, "category": "unambiguous exposure paraphrases", "rationale": "The phrase requests visual media depicting unclothed people; there is no health, art, clothing, or other ordinary subject."},
   {"id": "adversarial-queries-2", "query": "girls without any clothes pictures", "expectedBlocked": true, "expectedMediaBlocked": true, "expectedTextBlocked": true, "category": "unambiguous exposure paraphrases", "rationale": "The phrase requests visual media depicting unclothed people; there is no health, art, clothing, or other ordinary subject."},
   {"id": "adversarial-queries-3", "query": "women with no clothes videos", "expectedBlocked": true, "expectedMediaBlocked": true, "expectedTextBlocked": true, "category": "unambiguous exposure paraphrases", "rationale": "The phrase requests visual media depicting unclothed people; there is no health, art, clothing, or other ordinary subject."},
@@ -309,6 +317,14 @@ export const adversarialQueryCorpus: readonly AdversarialQueryCase[] = [
 ];
 
 export const adversarialUrlCorpus: readonly AdversarialUrlCase[] = [
+  ...["https://www.saatchiart.com/en-nl/paintings/nude", "https://fineartamerica.com/art/paintings/nude", "https://500px.com/galleries/erotic", "https://www.flickr.com/collections/adult-content", "https://marketplace.example/product/love-silicone-doll", "https://marketplace.example/items/sex_realistic_tpe_dolls"].map((url, index) => ({
+    id: `adult-discovery-route-${index}`, url, expectedBlocked: true,
+    rationale: "Direct art categories and adult-product slugs must retain discovery checks outside search URLs."
+  })),
+  ...["https://www.saatchiart.com/en-nl/paintings/landscape", "https://fineartamerica.com/art/paintings/flowers", "https://500px.com/galleries/architecture", "https://www.flickr.com/collections/gardening", "https://marketplace.example/product/realistic-silicone-reborn-dolls"].map((url, index) => ({
+    id: `ordinary-discovery-route-${index}`, url, expectedBlocked: false,
+    rationale: "Ordinary art categories and collectibles remain available on mixed-use sites."
+  })),
   { id: "cars-hidden-tracking-porn", url: "https://www.google.com/search?q=cars&ei=AQpornTracked&safe=active", expectedBlocked: false, rationale: "Opaque tracking tokens are not search queries." },
   { id: "cars-hidden-tracking-nsfw", url: "https://www.google.com/search?q=cars&ved=nsfwRandomTracking&safe=active", expectedBlocked: false, rationale: "Opaque tracking tokens are not search queries." },
   { id: "real-query-with-tracking", url: "https://www.google.com/search?q=naked+girls&ei=AQpornTracked&safe=active", expectedBlocked: true, rationale: "Ignoring tracking fields must not cancel a real explicit query." },

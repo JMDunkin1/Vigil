@@ -1,4 +1,8 @@
 export const broadenedBlockedSearches = [
+  "sex dolls", "silicone sex doll", "sex silicone dolls", "love dolls",
+  "love realistic silicone doll", "love full-body silicone dolls", "sex-doll", "love_dolls",
+  "sex dolls medical", "love dolls art", "sexdolls", "lovedolls", "sex robots",
+  "sex toys", "sex_toy", "masturbators",
   "naked girls", "naked women", "naked woman", "girls naked", "nude men", "nude boys",
   "topless women", "bottomless models", "unclothed actresses", "undressed celebrities",
   "undressing girlfriends", "stripping girls", "full frontal women", "see through models",
@@ -16,6 +20,8 @@ export const broadenedBlockedSearches = [
 ];
 
 export const broadenedAllowedSearches = [
+  "silicone dolls", "reborn silicone baby dolls", "dollhouse toys", "silicone baking molds",
+  "love dollhouse furniture", "adult doll collectors", "toy robots", "sexdollhouse product",
   "naked", "nude", "topless", "bottomless", "sex", "sexual", "sensual", "sexy", "hot",
   "bondage", "fetish", "oral", "anal", "breasts", "feet", "penis", "vagina",
   "masturbation", "threesome", "girls", "women", "models", "lingerie", "bikini",

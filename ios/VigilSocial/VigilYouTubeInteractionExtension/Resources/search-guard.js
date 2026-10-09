@@ -116,10 +116,14 @@ const checkSearchBreakBeforeNavigation = (() => {
 // markers contribute evidence only within a short local phrase.
 // Keep the list limited to pornography labels and specific sexual-media
 // phrases. Bare translations of "sexual", "adult", or "nude" are too broad.
+const MULTILINGUAL_ADULT_PRODUCT_TERMS = [
+    "性爱娃娃", "性愛娃娃", "情趣娃娃", "性玩具", "ラブドール", "セックスドール"
+];
 const MULTILINGUAL_EXPLICIT_TERMS = [
     "إباحي", "إباحية", "اباحي", "اباحية",
     "فيديو جنسي", "فيديوهات جنسية", "فيلم جنسي", "أفلام جنسية",
     "色情片", "色情视频", "色情視頻", "色情影片", "色情电影", "色情電影",
+    ...MULTILINGUAL_ADULT_PRODUCT_TERMS,
     "ポルノ", "포르노", "음란물", "порно", "порнография",
     "pornographie", "pornographique", "pornografía", "pornográfico", "pornográfica",
     "pornografia", "pornografie", "pornografisch"
@@ -132,11 +136,17 @@ const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
     "pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos",
     "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes",
     "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate",
-    "futanari", "ecchi"
+    "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls",
+    "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"
 ];
 // Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
 // product IDs. Ordinary subjects retain their own accents and spellings.
 const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+    // Product labels also occur on ordinary marketplaces. Match the specific
+    // adult product, never bare silicone, dolls, toys, or reborn collectibles.
+    { pattern: /\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b/giu.source, replacement: "sexdoll" },
+    { pattern: /\bsex[\s_\p{Pd}]+robots?\b/giu.source, replacement: "sexrobot" },
+    { pattern: /\bsex[\s_\p{Pd}]+toys?\b/giu.source, replacement: "sextoy" },
     { pattern: /\b(?:nak3d|n4ked|n4k3d)\b/giu.source, replacement: "naked" },
     { pattern: /\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b/giu.source, replacement: "nudes" },
     { pattern: /\b(?:ph0t0s|ph0tos|phot0s)\b/giu.source, replacement: "photos" },
@@ -329,7 +339,9 @@ const SEARCH_PARAMETER_NAMES = new Set([
     "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
     "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
 ]);
-const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+)(?=\/|$)/iu;
+// Art categories and product catalogs carry discovery text in the path too;
+// direct category links need the same checks as a site's search box.
+const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=\/|$)/iu;
 const STRUCTURED_SEARCH_PARAMETER_PATTERN = /^(q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)\[(\d*|q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|word|tags|tag)\]$/iu;
 function decodeSearchQueryValue(value) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -413,10 +425,12 @@ function containsExplicitMediaLabel(value) {
 const CONTEXTUAL_SEARCH_PLATFORMS = [
     "reddit.com", "deviantart.com", "artstation.com", "pixiv.net",
     "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com",
+    "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com",
+    "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com",
     "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app",
     "patreon.com", "itch.io", "discord.com", "discordapp.com"
 ];
-const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|furaffinity|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
+const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
 const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
 function contextualSearchDecode(value) {
     return normalizeExplicitVocabulary(decodeSearchQueryValue(value));
