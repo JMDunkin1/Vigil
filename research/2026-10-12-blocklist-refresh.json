@@ -1,0 +1,163 @@
+{
+  "date": "2026-10-12",
+  "ban": {
+    "domain": "theblank.net",
+    "scope": "Whole site and subdomains",
+    "policy": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+    "reason": "User-requested permanent adult-comic site ban",
+    "catalogEvidence": "https://theblank.net/serie/xexKDOC8w3-someone-stop-her"
+  },
+  "sources": [
+    {
+      "source": {
+        "id": "blocklistproject-porn",
+        "label": "Vigil 600K+ adult sites",
+        "url": "https://blocklistproject.github.io/Lists/porn.txt",
+        "homepage": "https://github.com/blocklistproject/Lists",
+        "license": "Unlicense",
+        "format": "hosts"
+      },
+      "fetchedAt": "2026-10-12T19:06:12.323Z",
+      "bytes": 26095053,
+      "sha256": "425590c37e3ea624fdf646b14ba661f8b8f38391686adcf02b73f8b2d74b0db1",
+      "candidateLineCount": 953393,
+      "invalidLineCount": 197,
+      "normalizedLineCount": 953196,
+      "normalizedDomainCount": 952054,
+      "exactDuplicateCount": 1142,
+      "suffixRedundantCount": 15077,
+      "compactedDomainCount": 936977,
+      "tldRegistryChecked": true,
+      "unrecognizedTldCount": 2,
+      "unrecognizedTldExamples": [
+        "luscious.netchentai",
+        "nannyspy.comm"
+      ],
+      "containsTheBlank": true
+    },
+    {
+      "source": {
+        "id": "hagezi-nsfw",
+        "label": "HaGeZi NSFW",
+        "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt",
+        "homepage": "https://github.com/hagezi/dns-blocklists",
+        "license": "GPL-3.0",
+        "format": "domains"
+      },
+      "fetchedAt": "2026-10-12T19:06:07.725Z",
+      "bytes": 1376419,
+      "sha256": "0fb7d2025ce3ab6c0b940b245a0a372fd9d91591e0847ebfc4769691b3717108",
+      "candidateLineCount": 89037,
+      "invalidLineCount": 0,
+      "normalizedLineCount": 89037,
+      "normalizedDomainCount": 89037,
+      "exactDuplicateCount": 0,
+      "suffixRedundantCount": 0,
+      "compactedDomainCount": 89037,
+      "tldRegistryChecked": true,
+      "unrecognizedTldCount": 0,
+      "unrecognizedTldExamples": [],
+      "containsTheBlank": true
+    },
+    {
+      "source": {
+        "id": "stevenblack-porn",
+        "label": "StevenBlack porn hosts",
+        "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
+        "homepage": "https://github.com/StevenBlack/hosts",
+        "license": "MIT",
+        "format": "hosts"
+      },
+      "fetchedAt": "2026-10-12T19:06:09.475Z",
+      "bytes": 4185281,
+      "sha256": "d286648b8eff469ec862db5d693f3c0a2522ad35f3114e7f70f72c42722da635",
+      "candidateLineCount": 149052,
+      "invalidLineCount": 21,
+      "normalizedLineCount": 149031,
+      "normalizedDomainCount": 117512,
+      "exactDuplicateCount": 31519,
+      "suffixRedundantCount": 30519,
+      "compactedDomainCount": 86990,
+      "tldRegistryChecked": true,
+      "unrecognizedTldCount": 81,
+      "unrecognizedTldExamples": [
+        "24pornload.com.home",
+        "aflmxnxx.com.home",
+        "allpornimages.com.home",
+        "anitokyo.t",
+        "anyporn.pic",
+        "apiv2.tik.porn.home",
+        "ar.stripchat.global.asus",
+        "c.pornxp.me.home",
+        "ca.pornxp.me.home",
+        "cdn.sex4arab.xxx.home"
+      ],
+      "containsTheBlank": false
+    },
+    {
+      "source": {
+        "id": "shadowwhisperer-adult",
+        "label": "ShadowWhisperer Adult",
+        "url": "https://raw.githubusercontent.com/ShadowWhisperer/BlockLists/master/Lists/Adult",
+        "homepage": "https://github.com/ShadowWhisperer/BlockLists",
+        "license": "Unlicense",
+        "format": "domains"
+      },
+      "fetchedAt": "2026-10-12T19:06:12.845Z",
+      "bytes": 3789705,
+      "sha256": "d959c175b73e2aeffb796073bc2621411927e101e620ded54ed3a8e0c636d74f",
+      "candidateLineCount": 232039,
+      "invalidLineCount": 0,
+      "normalizedLineCount": 232039,
+      "normalizedDomainCount": 232039,
+      "exactDuplicateCount": 0,
+      "suffixRedundantCount": 28,
+      "compactedDomainCount": 232011,
+      "tldRegistryChecked": true,
+      "unrecognizedTldCount": 0,
+      "unrecognizedTldExamples": [],
+      "containsTheBlank": true
+    }
+  ],
+  "liveComparison": {
+    "checkedAt": "2026-10-12T19:07:42.669Z",
+    "previousDomainCount": 952054,
+    "latestDomainCount": 952054,
+    "added": 0,
+    "removed": 0,
+    "theBlankInLive": true,
+    "theBlankInLatest": true
+  },
+  "workspaceSnapshot": {
+    "source": {
+      "id": "blocklistproject-porn",
+      "label": "Vigil 600K+ adult sites",
+      "url": "https://blocklistproject.github.io/Lists/porn.txt",
+      "homepage": "https://github.com/blocklistproject/Lists",
+      "license": "Unlicense"
+    },
+    "generatedAt": "2026-10-12T19:09:04.711Z",
+    "hash": "59778ef1ed51dcc5049bec224b94d37cd9fa0673e17bd9d70a6e83c44d60dcdf",
+    "domainCount": 936977,
+    "audit": {
+      "candidateLineCount": 953393,
+      "invalidLineCount": 197,
+      "normalizedLineCount": 953196,
+      "normalizedDomainCount": 952054,
+      "exactDuplicateCount": 1142,
+      "suffixRedundantCount": 15077,
+      "compactedDomainCount": 936977,
+      "tldRegistryChecked": true,
+      "unrecognizedTldCount": 2,
+      "unrecognizedTldExamples": [
+        "luscious.netchentai",
+        "nannyspy.comm"
+      ]
+    },
+    "phoneArtifactSha256": "f20f060ecd21d184bebbb87c9b704bb8a4e177b5c787f35c0d2b1c9e56900ea8"
+  },
+  "deployment": {
+    "mac": "Verified protected app update; all saved Mac profiles block the domain and subdomains. Generated non-removable BuiltIn supervised policy contains HTTP and HTTPS denies for the domain.",
+    "phone": "Deferred at user request until the iPhone is connected by USB."
+  }
+}

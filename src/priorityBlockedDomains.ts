@@ -250,6 +250,8 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
 ] as const;
 
 export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
+  // User-requested whole-site adult-comic ban, including every subdomain.
+  "theblank.net",
   // Whole-platform bans: verified adult sections/editions, not just adult paths.
   // Evidence and scope: research/2026-09-27-mature-comic-platforms.md.
   "webcomicsapp.com",

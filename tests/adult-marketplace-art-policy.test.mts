@@ -8,7 +8,7 @@ import { sanitizeDefaultFocusProfile, sanitizeFullBrickProfile, sanitizeSoftBloc
 import { parsePlist } from "../src/plist.js";
 import { now, usageFixture } from "./test-helpers.mjs";
 
-const sites = [...DEFAULT_MATURE_ART_BLOCKED_SITES, ...DEFAULT_ADULT_PRODUCT_BLOCKED_SITES];
+const sites = ["theblank.net", ...DEFAULT_MATURE_ART_BLOCKED_SITES, ...DEFAULT_ADULT_PRODUCT_BLOCKED_SITES];
 const state = defaultState();
 state.settings.adultBlocklistEnabled = false;
 state.deviceControls.ios.enabled = true;
