@@ -24,9 +24,6 @@ struct SocialContainerView: View {
             ForEach(SocialService.allCases) { service in
                 if let store = container.stores[service] {
                     VStack(spacing: 0) {
-                        // Instagram keeps its established full-size canvas and counter.
-                        // Its existing home gesture and VoiceOver actions stay available.
-                        if service != .instagram { serviceNavigation(service) }
                         SocialServiceAccessView(store: store,
                                                 isServiceVisible: container.selectedService == service,
                                                 restriction: preferences.blockingReason(for: service, at: now),
@@ -49,6 +46,22 @@ struct SocialContainerView: View {
                 .multilineTextAlignment(.center).padding(28)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+            }
+        }
+        .overlay {
+            if container.selectedService != nil && container.migrationReady {
+                // Only the button reaches into the status-area corner. Service
+                // content keeps its normal safe area and full-height viewport.
+                GeometryReader { geometry in
+                    let insets = geometry.safeAreaInsets
+                    if insets.top > 0 || insets.leading > 0 {
+                        SocialHomeButton(action: returnHome)
+                            .frame(width: insets.leading > 0 ? min(44, insets.leading) : 44,
+                                   height: insets.top > 0 ? min(44, insets.top) : 44)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .ignoresSafeArea(.container, edges: [.top, .leading])
+                    }
+                }
             }
         }
         .task {
@@ -146,55 +159,13 @@ struct SocialContainerView: View {
                 }
                 Button { showingOpenLink = true } label: { Label("Open a shared link", systemImage: "link") }
                     .buttonStyle(.bordered)
-                Text("Double-tap with three fingers to return here from any service.")
+                Text("Tap the empty top-left corner to return here. You can also double-tap with three fingers.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             .padding(24).frame(maxWidth: 650)
             .frame(maxWidth: .infinity)
         }
         .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
-    }
-
-    private func serviceNavigation(_ service: SocialService) -> some View {
-        VStack(spacing: 8) {
-          HStack(spacing: 16) {
-            Button(action: returnHome) { Label("Apps", systemImage: "square.grid.2x2") }
-                .accessibilityIdentifier("social-return-home")
-            Spacer(minLength: 0)
-            if service == .youtube, let store = container.stores[service], store.youtubePictureInPictureEnabled {
-                Button {
-                    Task { if await store.requestYouTubePictureInPicture() { preferences.selectionFeedback() } }
-                } label: { Image(systemName: "pip.enter") }
-                    .disabled(!store.youtubeExternalPlaybackAvailable)
-                    .accessibilityLabel("Start picture-in-picture")
-            }
-            Text(service.displayName).font(.subheadline.bold()).lineLimit(1)
-            Spacer(minLength: 0)
-            Menu {
-                Button("Existing account") { container.selectAccount(nil, for: service); preferences.selectionFeedback() }
-                ForEach(preferences.accounts(for: service)) { account in
-                    Button(account.name) { container.selectAccount(account.id, for: service); preferences.selectionFeedback() }
-                }
-                Divider()
-                Button("Manage accounts") { showingSettings = true }
-            } label: { Image(systemName: "person.crop.circle") }
-                .accessibilityLabel("Switch \(service.displayName) account")
-                .disabled(preferences.isBlocked(for: service, at: now))
-            Button { showingSettings = true; preferences.selectionFeedback() } label: { Image(systemName: "gearshape") }
-                .accessibilityLabel("Settings")
-          }
-          if preferences.postingService == service, let end = preferences.postingUntil, end > now {
-              HStack {
-                  Text("Posting session").foregroundStyle(.secondary)
-                  Text(end, style: .timer).monospacedDigit()
-                  Spacer()
-                  Button("End") { endPostingSession() }
-              }.font(.caption)
-          }
-        }
-        .font(.subheadline)
-        .padding(.horizontal, 16).padding(.vertical, 10)
-        .background(Color(uiColor: .systemBackground))
     }
 
     private func returnHome() { container.showHome(); preferences.selectionFeedback() }
@@ -247,6 +218,32 @@ struct SocialContainerView: View {
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingOpenLink = false } } }
         }
         .presentationDetents([.medium, .large])
+    }
+}
+
+// A real hit target with no visible chrome. Keep its VoiceOver name and the
+// window gesture so returning Home remains discoverable and accessible.
+struct SocialHomeButton: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.accessibilityLabel = "Return to apps"
+        button.accessibilityIdentifier = "social-return-home"
+        button.addTarget(context.coordinator, action: #selector(Coordinator.returnHome), for: .touchUpInside)
+        return button
+    }
+
+    func updateUIView(_ uiView: UIButton, context: Context) { context.coordinator.action = action }
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIButton, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 44, height: proposal.height ?? 44)
+    }
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    final class Coordinator {
+        var action: () -> Void
+        init(action: @escaping () -> Void) { self.action = action }
+        @objc func returnHome() { action() }
     }
 }
 
@@ -395,11 +392,11 @@ struct RootView: View {
             ?? (colorScheme == .dark)
         let primaryWebView = store.webView(for: service)
         // Keep service canvases inside the native safe areas. Extending a
-        // canvas beneath the bottom safe area after adding the service toolbar
-        // makes WebKit alternate automatic insets as short pages fit/unfit the
+        // canvas beneath the bottom safe area makes WebKit alternate automatic
+        // insets as short pages fit/unfit the
         // viewport. Retained hidden services can trigger that same resize loop.
         // Native backgrounds still fill the status/home-indicator areas, and
-        // the established top inset and home gesture remain unchanged.
+        // the established safe area and home gesture remain unchanged.
         let webViewSafeAreaEdges: Edge.Set = []
         let defaultSurfaceColor = service == .instagram && isDark
             ? Self.instagramDarkSurface

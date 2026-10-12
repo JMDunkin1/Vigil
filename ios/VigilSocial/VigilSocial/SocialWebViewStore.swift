@@ -22,10 +22,11 @@ final class SocialContainerStore: ObservableObject {
     private var accountStores: [SocialService: [String: SocialWebViewStore]] = [:]
 
     init(bundle: Bundle = .main, defaults: UserDefaults = .standard,
-         combined: Bool? = nil, loadInitialPages: Bool = true) {
+         combined: Bool? = nil, loadInitialPages: Bool = true,
+         commitmentStorage: SocialCommitmentStorage = KeychainSocialCommitmentStorage()) {
         self.bundle = bundle
         self.defaults = defaults
-        self.preferences = SocialPreferences(defaults: defaults)
+        self.preferences = SocialPreferences(defaults: defaults, commitmentStorage: commitmentStorage)
         self.loadInitialPages = loadInitialPages
         let configured = bundle.object(forInfoDictionaryKey: "VigilService") as? String
         isCombined = combined ?? (configured == "all")

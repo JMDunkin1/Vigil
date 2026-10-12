@@ -6,7 +6,76 @@ import SwiftUI
 import WebKit
 @testable import VigilSocial
 
+// Unsigned simulator fixtures cannot read the device Keychain. Keep fixture
+// commitments isolated while production always defaults to persistent Keychain storage.
+final class FixtureSocialCommitmentStorage: SocialCommitmentStorage {
+    private var data: Data?
+    func load() throws -> Data? { data }
+    func save(_ data: Data) throws { self.data = data }
+}
+
 final class VigilSocialTests: XCTestCase {
+    @MainActor
+    func testCornerHomeButtonPreservesAllServiceCanvasesAndHitTargets() async throws {
+        let suite = "VigilCornerRegression.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false,
+                                             commitmentStorage: FixtureSocialCommitmentStorage())
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        defer { window.isHidden = true }
+
+        func homeButton(in view: UIView) -> UIButton? {
+            if let button = view as? UIButton, button.accessibilityIdentifier == "social-return-home" { return button }
+            return view.subviews.lazy.compactMap { homeButton(in: $0) }.first
+        }
+
+        for service in SocialService.allCases {
+            container.select(service)
+            let store = container.store(for: service)
+            let page = store.webView(for: service)
+            // Measure the established service canvas without any launcher UI.
+            let standalone = UIHostingController(rootView: RootView(store: store, isServiceVisible: false)
+                .environment(\.scenePhase, .inactive))
+            window.rootViewController = standalone
+            window.makeKeyAndVisible()
+            try await Task.sleep(for: .milliseconds(200))
+            window.layoutIfNeeded()
+            standalone.view.layoutIfNeeded()
+            let originalCanvas = page.convert(page.bounds, to: window)
+            XCTAssertGreaterThan(originalCanvas.height, 300)
+
+            let combined = UIHostingController(rootView: SocialContainerView(container: container)
+                .environment(\.scenePhase, .inactive))
+            window.rootViewController = combined
+            try await Task.sleep(for: .milliseconds(200))
+            window.layoutIfNeeded()
+            combined.view.layoutIfNeeded()
+            let canvas = page.convert(page.bounds, to: window)
+            XCTAssertEqual(canvas, originalCanvas, "\(service) must keep its full service viewport")
+            let button = try XCTUnwrap(homeButton(in: combined.view))
+            let corner = button.convert(button.bounds, to: window)
+            let insets = combined.view.safeAreaInsets
+            let expectedCorner = CGRect(x: 0, y: 0,
+                                        width: insets.left > 0 ? min(44, insets.left) : 44,
+                                        height: insets.top > 0 ? min(44, insets.top) : 44)
+            XCTAssertEqual(corner, expectedCorner, "\(service) must use only the empty screen corner")
+            XCTAssertFalse(corner.intersects(canvas), "\(service)'s page controls must not overlap the launcher target")
+            XCTAssertTrue(window.hitTest(CGPoint(x: corner.midX, y: corner.midY), with: nil) === button)
+            XCTAssertFalse(window.hitTest(CGPoint(x: 24, y: canvas.minY + 24), with: nil) === button)
+            XCTAssertNil(button.currentTitle)
+            XCTAssertNil(button.currentImage)
+            XCTAssertEqual(button.accessibilityLabel, "Return to apps")
+
+            button.sendActions(for: .touchUpInside)
+            XCTAssertNil(container.selectedService)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertNil(homeButton(in: combined.view), "The corner target must disappear on the launcher")
+        }
+    }
+
     @MainActor
     func testYouTubeHeaderKeepsShortDocumentViewportStable() async throws {
         try await verifyYouTubeViewportStability(scrollable: false)
