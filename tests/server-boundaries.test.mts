@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BRICK_MODE_PROFILE_ID, defaultState } from "../src/defaults.js";
@@ -740,6 +740,24 @@ assert.match(privilegedCommand, /^sudo /);
 assert.match(privilegedCommand, /ELECTRON_RUN_AS_NODE='1'/);
 assert.match(privilegedCommand, /VIGIL_DATA_DIR='\/tmp\/vigil state'/);
 assert.match(privilegedCommand, /app\.asar\.unpacked\/dist\/runtime\/scripts\/apply-hosts\.mjs/);
+
+// An ASAR is a file on disk, so a child process cannot use a directory within
+// it as cwd. Execute a harmless unpacked script with the real packaged layout.
+const packagedResources = await mkdtemp(join(tmpdir(), "vigil-packaged-script-cwd-"));
+try {
+  await writeFile(join(packagedResources, "app.asar"), "archive placeholder");
+  const scripts = join(packagedResources, "app.asar.unpacked", "dist", "runtime", "scripts");
+  await mkdir(scripts, { recursive: true });
+  await writeFile(join(scripts, "cwd.mjs"), "console.log(process.cwd());\n");
+  const packagedRunner = createLocalScriptRunner({
+    root: join(packagedResources, "app.asar", "dist", "runtime"),
+    launchAgentStatus: async () => ({ running: true }),
+    processObject: { ...electronProcess, execPath: process.execPath }
+  });
+  assert.equal((await packagedRunner.runLocalScript("cwd.mjs")).stdout, await realpath(packagedResources));
+} finally {
+  await rm(packagedResources, { recursive: true, force: true });
+}
 
 function mockSessionRequest(method: string, url: string, body: object): IncomingMessage {
   const stream = Readable.from([JSON.stringify(body)]);

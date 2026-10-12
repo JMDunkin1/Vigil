@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { defaultState } from "../src/defaults.js";
-import { DEFAULT_ADULT_PRODUCT_BLOCKED_SITES, DEFAULT_MATURE_ART_BLOCKED_SITES } from "../src/priorityBlockedDomains.js";
+import { DEFAULT_ADULT_PRODUCT_BLOCKED_SITES, DEFAULT_MATURE_ART_BLOCKED_SITES, DEFAULT_MATURE_COMIC_BLOCKED_SITES } from "../src/priorityBlockedDomains.js";
 import { buildIosConfigurationProfile, iosPolicyTargets } from "../src/iosProfiles.js";
 import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
 import { shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
@@ -8,7 +8,7 @@ import { sanitizeDefaultFocusProfile, sanitizeFullBrickProfile, sanitizeSoftBloc
 import { parsePlist } from "../src/plist.js";
 import { now, usageFixture } from "./test-helpers.mjs";
 
-const sites = ["theblank.net", ...DEFAULT_MATURE_ART_BLOCKED_SITES, ...DEFAULT_ADULT_PRODUCT_BLOCKED_SITES];
+const sites = [...DEFAULT_MATURE_COMIC_BLOCKED_SITES, ...DEFAULT_MATURE_ART_BLOCKED_SITES, ...DEFAULT_ADULT_PRODUCT_BLOCKED_SITES];
 const state = defaultState();
 state.settings.adultBlocklistEnabled = false;
 state.deviceControls.ios.enabled = true;

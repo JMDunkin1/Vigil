@@ -252,6 +252,14 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
 export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
   // User-requested whole-site adult-comic ban, including every subdomain.
   "theblank.net",
+  // First-party adult catalog evidence: research/2026-10-12-adult-comic-audit.json.
+  "toonily.com",
+  "webtoonscan.com",
+  "comix.to",
+  "bato.to",
+  "manhwa18.com",
+  "manhwaraw.com",
+  "manhwahentai.me",
   // Whole-platform bans: verified adult sections/editions, not just adult paths.
   // Evidence and scope: research/2026-09-27-mature-comic-platforms.md.
   "webcomicsapp.com",

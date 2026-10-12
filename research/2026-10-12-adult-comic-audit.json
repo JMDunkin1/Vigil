@@ -1,0 +1,122 @@
+{
+  "reviewedAt": "2026-10-12T19:23:00.954Z",
+  "scope": "Whole-domain and subdomain bans for verified adult comic catalogs and generation sites.",
+  "rootCause": {
+    "bulkSourceAlreadyContainedTheBlank": true,
+    "theBlankSnapshotIndex": 829647,
+    "priorNativeMacPolicy": "policyForSample returned adultBlocklist metadata for bulk-only domains, but browserBlockDecision, enforce, and durableEffectApplicable did not consume it.",
+    "reproduction": "The regression test fails before the fix with an immediate redirect decision of null for a domain present only in the managed snapshot.",
+    "existingTestGap": "The previous test asserted the matched policy kind without dispatching a browser redirect.",
+    "fix": "Immediate navigation, routine enforcement, and durable redirect recovery now explicitly consume adultBlocklist matches. Block records retain matched-domain/source evidence.",
+    "limits": "This proves a native Mac enforcement defect. Phone Safari receives a bounded supervised/static domain overlay; exact causes for every historical browser/phone occurrence cannot be reconstructed from the available records.",
+    "packagedRepairFailure": "The packaged script runner chose app.asar/dist as cwd. ASAR is a file, so the Repair network block action failed with spawn ENOTDIR. It now uses the real Resources directory outside the archive."
+  },
+  "beforeDeployment": {
+    "macAppleDenyUrls": 430,
+    "macAppleTheBlankPresent": false,
+    "macHostsTheBlankPresent": false,
+    "macSafariProfileStale": true,
+    "macHostsStale": true,
+    "phoneDeploymentAt": "2026-10-09T21:05:43.465Z",
+    "phoneBundledDomainCount": 952054,
+    "phoneInstallationDeferredByUser": true
+  },
+  "newBans": [
+    {
+      "domain": "toonily.com",
+      "url": "https://toonily.com/serie/her-toys-ce2a34e3/",
+      "finding": "First-party catalog labels mature sexual-content comics.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "webtoonscan.com",
+      "url": "https://webtoonscan.com/manhwa/taste-folder-raw/",
+      "finding": "First-party catalog labels comics Adult and Mature.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "comix.to",
+      "url": "https://comix.to/title/mr5x0-night-team-leader",
+      "finding": "First-party catalog displays an explicit-content 18+ warning and Pornographic classification.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "bato.to",
+      "url": "https://bato.to/search?page=10&word=SaE",
+      "finding": "First-party catalog includes Adult, Mature and Smut classifications.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwa18.com",
+      "url": "https://manhwa18.com/",
+      "finding": "First-party navigation exposes adult, explicit-sex and uncensored comic categories.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwaraw.com",
+      "url": "https://manhwaraw.com/",
+      "finding": "First-party homepage describes adult hentai comics and includes an Adult category.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwahentai.me",
+      "url": "https://manhwahentai.me/",
+      "finding": "First-party homepage explicitly advertises adult hentai/manhwa image generation.",
+      "inLiveBulkListBeforeFix": true,
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    }
+  ],
+  "unresolvedCandidates": [
+    {
+      "domain": "toontop.io",
+      "reason": "A source maintainer identifies a migration from Toonily.me, but the fetched homepage does not independently establish adult content."
+    },
+    {
+      "domain": "comizy.io",
+      "reason": "MangaBuddy redirects here; reviewed homepage does not independently establish adult content."
+    }
+  ],
+  "validation": {
+    "build": "passed",
+    "sourceLint": "passed",
+    "targetedSuites": 9,
+    "targetedSuitesPassed": 9,
+    "regressions": [
+      "bulk-only native redirect",
+      "exact-tab URL precondition",
+      "HTTP/HTTPS",
+      "subdomains and unrelated hostname boundaries",
+      "immediate navigation dispatch",
+      "durable redirect recovery",
+      "protected allowlist exceptions",
+      "existing-profile migration",
+      "non-removable BuiltIn phone filter and per-payload 500 URL capacity",
+      "Packaged repair script executes with a real child-process cwd outside ASAR"
+    ],
+    "macDeployment": "Verified protected update installed the native bulk-list fix and seven permanent domain bans. The installed Monitor executes a simulated exact-tab redirect for the bulk-only toonily.me target; all four live profiles block each new domain and subdomains.",
+    "phoneDeployment": "deferred until USB connection",
+    "generatedPhonePolicy": {
+      "removalDisallowed": true,
+      "filterType": "BuiltIn",
+      "autoFilterEnabled": true,
+      "denyPayloadSizes": [
+        500,
+        203
+      ],
+      "newDomainDenies": "HTTP and HTTPS verified for all seven domains",
+      "installedOnPhone": false
+    },
+    "networkRepair": {
+      "hostsCurrent": true,
+      "firewallCurrent": true,
+      "newDomainInHosts": true,
+      "safariProfileCurrent": false
+    }
+  }
+}

@@ -1270,6 +1270,12 @@ export class Monitor implements MonitorHandle {
       };
     }
 
+    // Full-snapshot matches are not necessarily in the curated profile or
+    // network preload. They still require an immediate exact-tab redirect.
+    if (front.url && policy.adultBlocklist) {
+      return { ...decisionContext, front, policy, options: {} };
+    }
+
     // Network-only blocking still goes through the ordinary path because it
     // must first confirm that the system network layer is current. Redirects
     // enabled in policy can safely take the immediate, exact-tab path.
@@ -1370,6 +1376,7 @@ export class Monitor implements MonitorHandle {
       browserControl: options.browserControl || null,
       browserProtection: options.browserProtection || null,
       contentFilter: options.contentFilter || null,
+      adultBlocklist: policy.adultBlocklist || null,
       urlPattern: options.urlPattern || null,
       policy: policy.session.title || policy.session.mode,
       result,
@@ -1948,6 +1955,7 @@ export class Monitor implements MonitorHandle {
       return Boolean(
         policy.browserControl ||
         contentBlocked ||
+        policy.adultBlocklist ||
         ((siteBlocked || urlBlocked) && (lockdown || state.settings.siteRedirectEnabled || systemNetworkBlockingEnabled(state)))
       );
     }
@@ -2531,6 +2539,11 @@ export class Monitor implements MonitorHandle {
         ...front,
         hostname: policy.contentFilter.label
       }, policy, { contentFilter: policy.contentFilter, originalHostname: front.hostname });
+      return;
+    }
+
+    if (!preserveBlockedPage && front.url && policy.adultBlocklist) {
+      await this.blockSite(front, policy);
       return;
     }
 

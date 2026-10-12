@@ -87,7 +87,8 @@ export function createLocalScriptRunner({ root, launchAgentStatus, processObject
   }
 
   function processCwd(): string {
-    return root.includes(".asar") ? dirname(root) : root;
+    const archiveRoot = root.match(/^.*?\.asar(?=\/|$)/)?.[0];
+    return archiveRoot ? dirname(archiveRoot) : root;
   }
 
   function resourcePath(...parts: string[]): string {
