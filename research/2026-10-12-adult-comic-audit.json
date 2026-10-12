@@ -116,7 +116,10 @@
       "hostsCurrent": true,
       "firewallCurrent": true,
       "newDomainInHosts": true,
-      "safariProfileCurrent": false
+      "safariProfileCurrent": true,
+      "installedSafariPolicySignature": "7102d4dbfd0b5aa016e8aa139563157be2c7df2e24b85879b3cece3865e84695",
+      "appleDenyCount": 500,
+      "allEightRequestedDomainDeniesVerified": true
     }
   }
 }
