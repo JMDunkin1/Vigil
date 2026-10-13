@@ -182,6 +182,27 @@ async function main() {
   assert.deepEqual(await run('[railCamera,railGames,friendStory,lightbox,!!window.railSpotlight,!!window.sharedSpotlight]'),[true,true,true,true,false,false]);
   await run(`document.querySelector('.FDMBo').appendChild(document.createElement('span'))`);await settle();
   assert.equal(await run('spotlightClosed'),1,'reconciliation does not repeatedly close one player');
+  // A warm list-to-chat transition must not reuse the cold-launch deadline
+  // or treat message text as a page-load error when the composer remounts.
+  await win.loadURL('https://www.snapchat.com/web/');
+  await run(`window.fixtureClock=0;performance.now=()=>fixtureClock;window.healthReports=[];window.__vigilBridge=value=>{if(value.type==='health')healthReports.push(value)};void 0`);
+  await run(policy+mobile);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'ready');
+  await run(`fixtureClock=60000;document.getElementById('shell').style.display='none'`);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'loading','warm remount gets its own loading deadline');
+  await run(`fixtureClock=76000;document.getElementById('shell').classList.add('fixture-pending')`);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'degraded','a genuinely stalled remount still reports failure');
+  await run(`document.getElementById('shell').style.display='';openChat('Alex');document.querySelector('[contenteditable]').removeAttribute('role');document.querySelector('.messages').innerHTML='<div>Something went wrong. Failed to load the photo.</div>'`);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'ready','visible conversation survives composer role changes and error words in messages');
+  await run(`document.querySelector('[contenteditable]').remove()`);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'ready','visible chat header stays usable while React replaces the composer');
+  const stableHealthCount=await run('healthReports.length');
+  await run(`document.querySelector('.messages').appendChild(document.createElement('span'))`);await settle();
+  assert.equal(await run('healthReports.length'),stableHealthCount,'ordinary conversation mutations do not republish unchanged health');
+  await run(`document.querySelector('#restricted').click();closeChat()`);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'ready','returning to the permitted feed clears the restricted-feature notice');
+  await run(`document.body.innerHTML='<h1>Something went wrong</h1><button>Try again</button>'`);await settle();
+  assert.equal(await run(`healthReports.at(-1).state`),'degraded','real page errors retain the recovery screen');
   await win.loadURL('https://accounts.snapchat.com/v2/login');await run(mobile);
   assert.equal(await run(`!!window.__vigilSnapchatMobileInstalled`),false,'authentication remains untouched');
   console.log('Snapchat mobile layout passed: 320/390/430px, opaque Reply menus/previews, menu edge/keyboard positioning, reactions/cancel/dismiss, long replies, desktop, chat/back, search remount, camera/call controls, dialogs, theme sync, fallback, authentication, and restricted features.');

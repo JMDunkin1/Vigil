@@ -1144,6 +1144,47 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatWarmConversationTransitionKeepsItsOwnHealthDeadline() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: """
+            window.healthReports = [];
+            window.__vigilBridge = value => { if (value.type === 'health') healthReports.push(value); };
+            window.fixtureClock = 0;
+            performance.now = () => window.fixtureClock;
+            window.healthChecks = [];
+            window.setTimeout = callback => healthChecks.push(callback);
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString("""
+            <html><body><div id="shell"><aside class="BL7do"><nav><div role="list">Chats</div></nav></aside></div></body></html>
+            """, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.healthReports?.at(-1)?.state === 'ready'", in: webView)
+        _ = try await webView.evaluateJavaScript("fixtureClock = 60000; document.getElementById('shell').style.display = 'none'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'loading'", in: webView)
+        _ = try await webView.evaluateJavaScript("fixtureClock = 76000; healthChecks.splice(0).forEach(check => check());")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'degraded'", in: webView)
+        _ = try await webView.evaluateJavaScript("""
+            document.body.innerHTML = '<main class="aXEpU"><header class="k1IaM"><button title="Close Chat">Back</button></header><div class="NvRM8"><p>Something went wrong. Failed to load the photo.</p><div class="sT7ta"><div class="euyIb" contenteditable="true"></div></div></div></main>';
+            """)
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'ready'", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelector('[contenteditable]').remove()")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'ready'", in: webView)
+        _ = try await webView.evaluateJavaScript("document.body.innerHTML = '<h1>Something went wrong</h1><button>Try again</button>'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state === 'degraded'", in: webView)
+    }
+
+    @MainActor
     func testSnapchatRecoversAfterTimeoutWhenExistingChatBecomesVisible() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: """

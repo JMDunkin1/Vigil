@@ -5254,6 +5254,7 @@ enum DOMAdapters {
       };
       const publishUnavailable = (feature) => {
         if (window !== window.top) return;
+        lastHealthReport = '';
         window.__vigilBridge?.({
           type: 'health',
           state: 'degraded',
@@ -5262,7 +5263,11 @@ enum DOMAdapters {
       };
       const loginAttemptKey = 'vigil-snapchat-web-login-attempted';
       const webLoginURL = 'https://accounts.snapchat.com/v2/login?continue=https%3A%2F%2Fwww.snapchat.com%2Fweb%2F';
-      const startedAt = performance.now();
+      // Cold launch and each later remount need their own deadline. The
+      // document's age says nothing about a newly opened conversation.
+      let missingSurfaceSince = performance.now();
+      let healthDeadlineTimer = 0;
+      let lastHealthReport = '';
       const visible = (element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
@@ -5271,7 +5276,9 @@ enum DOMAdapters {
       };
       const hasChatSurface = () => [...document.querySelectorAll(
         '[data-testid="app.feed.Search"], [data-testid^="app.user.userProfileButton"], '
-        + '.BL7do > nav [role="list"], [role="textbox"][contenteditable="true"]'
+        + '.BL7do .yC1EG input[role="searchbox"], .BL7do > nav [role="list"], '
+        + '[role="textbox"][contenteditable="true"], .aXEpU .sT7ta [contenteditable="true"], '
+        + '.aXEpU .k1IaM button[title]'
       )].some(visible);
       const isMarketingShell = () => {
         if (hasChatSurface()) return false;
@@ -5350,7 +5357,7 @@ enum DOMAdapters {
         characterData: true,
         attributes: true,
         attributeFilter: ['href', 'aria-label', 'data-testid', 'class', 'style',
-          'hidden', 'aria-hidden', 'data-vigil-page-verdict']
+          'hidden', 'aria-hidden', 'data-vigil-page-verdict', 'data-vigil-snap-layout']
       });
 
       const reportHealth = () => {
@@ -5365,17 +5372,33 @@ enum DOMAdapters {
         const usable = chatReady || (text.trim().length > 0 && [...document.querySelectorAll(
           'input:not([type="hidden"]), button, [role="button"], [role="dialog"]'
         )].some(visible));
-        const stalled = !usable && performance.now() - startedAt >= 15000;
-        window.__vigilBridge?.({
-          type: 'health',
-          state: unsupported ? 'unsupported' : failed || stalled ? 'degraded' : usable ? 'ready' : 'loading',
-          detail: unsupported
-            ? (marketingShell
-              ? 'Snapchat returned its app-download page. Tap Try again to open Snapchat sign-in.'
-              : 'Snapchat rejected its web client in this version of WebKit.')
-            : failed ? 'Snapchat could not finish loading. Try again to reconnect.'
-            : stalled ? 'Snapchat is taking too long to load chat. Try again to reconnect.' : ''
-        });
+        if (usable) {
+          missingSurfaceSince = null;
+          clearTimeout(healthDeadlineTimer);
+          healthDeadlineTimer = 0;
+        } else {
+          if (missingSurfaceSince === null) missingSurfaceSince = performance.now();
+          if (!healthDeadlineTimer && performance.now() - missingSurfaceSince < 15000) {
+            healthDeadlineTimer = setTimeout(() => {
+              healthDeadlineTimer = 0;
+              reportHealth();
+            }, Math.max(0, 15000 - (performance.now() - missingSurfaceSince)));
+          }
+        }
+        const stalled = !usable && performance.now() - missingSurfaceSince >= 15000;
+        const state = unsupported ? 'unsupported' : failed || stalled ? 'degraded' : usable ? 'ready' : 'loading';
+        const detail = unsupported
+          ? (marketingShell
+            ? 'Snapchat returned its app-download page. Tap Try again to open Snapchat sign-in.'
+            : 'Snapchat rejected its web client in this version of WebKit.')
+          : failed ? 'Snapchat could not finish loading. Try again to reconnect.'
+          : stalled ? 'Snapchat is taking too long to load chat. Try again to reconnect.' : '';
+        // React mutates the conversation on typing, receipt updates and layout
+        // changes. Publish health only when it changes, without remounting UI.
+        const reportKey = state + ':' + detail;
+        if (lastHealthReport === reportKey) return;
+        lastHealthReport = reportKey;
+        window.__vigilBridge?.({ type: 'health', state, detail });
       };
       reconcile();
       setTimeout(reportHealth, 1500);
