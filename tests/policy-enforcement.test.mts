@@ -607,8 +607,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.equal(shouldBlockUrl(profileById(state, "normal"), "https://www.webtoons.com/en/"), true);
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=porn"), true);
   assert.equal(shouldBlockUrl(profile, "https://duckduckgo.com/?q=hooneytoons"), true);
-  assert.equal(shouldBlockUrl(profile, "https://search.example/?q=mawha"), true);
-  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon%2018")?.pattern, "webtoon18");
+  assert.equal(shouldBlockUrl(profile, "https://search.example/?q=mawha"), false, "a generic comic genre alone is not explicit evidence");
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon%2018"), null, "a chapter or count alone is not an adult age label");
   assert.equal(shouldBlockUrl(profile, "https://search.example/?q=18%2B+manhwa"), true);
   assert.equal(matchBlockedUrlPattern(profile, "https://www.google.com/search?q=Ari+Kytsya+leaks")?.pattern, "person-intimate-exposure");
   assert.equal(shouldBlockUrl(profile, "https://www.google.com/search?q=ari+kytsya+leaks"), true);
@@ -654,9 +654,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
       `ordinary search should remain available: ${harmlessQuery}`
     );
   }
-  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored+webtoon")?.pattern, "uncensoredwebtoon");
-  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon-uncensored")?.pattern, "webtoonuncensored");
-  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored%20manhua")?.pattern, "uncensoredmanhua");
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored+webtoon")?.pattern, "contextual-explicit-search");
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=webtoon-uncensored")?.pattern, "contextual-explicit-search");
+  assert.equal(matchBlockedUrlPattern(profile, "https://search.example/?q=uncensored%20manhua")?.pattern, "contextual-explicit-search");
   for (const harmlessQuery of [
     "uncensored",
     "uncensored lyrics",
@@ -953,11 +953,11 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const baselineUrls = safariFilterDenyUrls(state, now);
   assert.equal(baselineUrls.includes("https://pornhub.com/"), true);
   assert.equal(baselineUrls.includes("https://www.pornhub.com/"), true);
-  assert.equal(baselineUrls.includes("https://youtube.com/shorts"), true);
-  assert.equal(baselineUrls.includes("https://snapchat.com/spotlight"), true);
-  assert.equal(baselineUrls.includes("https://reddit.com/over18"), true);
-  assert.equal(baselineUrls.includes("https://www.reddit.com/over18"), true);
-  assert.equal(safariFilterDenyMatch(state, "https://www.reddit.com/over18?dest=%2Fr%2Fexample", now), "https://reddit.com/over18");
+  assert.equal(baselineUrls.includes("https://youtube.com/shorts/"), true);
+  assert.equal(baselineUrls.includes("https://snapchat.com/spotlight/"), true);
+  assert.equal(baselineUrls.includes("https://reddit.com/over18/"), true);
+  assert.equal(baselineUrls.includes("https://www.reddit.com/over18/"), true);
+  assert.equal(safariFilterDenyMatch(state, "https://www.reddit.com/over18?dest=%2Fr%2Fexample", now), "https://reddit.com/over18/");
   assert.equal(baselineUrls.includes("https://croxyproxy.com/"), true);
   assert.equal(baselineUrls.includes("http://anonymouse.com/"), true, "confirmed plain-HTTP proxies need a Safari filter entry");
   assert.equal(baselineUrls.includes("http://croxyproxy.com/"), false, "HTTPS-only priority sites should not spend a second Safari filter slot");
@@ -991,22 +991,22 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const urls = safariFilterDenyUrls(state, now);
   assert.equal(urls.includes("https://pornhub.com/"), true);
   assert.equal(urls.includes("https://www.pornhub.com/"), true);
-  assert.equal(urls.includes("https://youtube.com/shorts"), true);
-  assert.equal(urls.includes("https://www.youtube.com/shorts"), true);
-  assert.equal(urls.includes("https://m.youtube.com/shorts"), true);
+  assert.equal(urls.includes("https://youtube.com/shorts/"), true);
+  assert.equal(urls.includes("https://www.youtube.com/shorts/"), true);
+  assert.equal(urls.includes("https://m.youtube.com/shorts/"), true);
   assert.equal(urls.includes("https://www.youtube.com/watch"), false);
   assert.equal(
     safariFilterDenyMatch(state, "https://www.youtube.com/watch?next=https%3A%2F%2Fwww.youtube.com%2Fshorts%2Fabc", now),
-    "https://youtube.com/shorts"
+    "https://youtube.com/shorts/"
   );
   assert.equal(
     safariFilterDenyMatch(state, "https://www.youtube.com/%ZZ?next=https%253A%252F%252Fwww.youtube.com%252Fshorts%252Fabc", now),
-    "https://youtube.com/shorts",
+    "https://youtube.com/shorts/",
     "malformed escapes must not suppress bounded decoding of nested denied URLs"
   );
   assert.equal(
     safariFilterDenyMatch(state, "https://unknown-proxy.example/https://www.youtube.com/shorts/abc", now),
-    "https://youtube.com/shorts",
+    "https://youtube.com/shorts/",
     "embedded proxy paths must normalize nested www hosts before matching"
   );
   assert.equal(safariFilterPathDenyUrls(state, now).some((url) => url.includes("/shorts")), true);
@@ -1046,7 +1046,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   const explicitReddit = evaluateExtensionCheck(state, usage, { url: "https://www.reddit.com/r/gonewild", event: "navigation" }, now);
   assert.equal(explicitReddit.blocked, true);
   assert.equal(explicitReddit.reason, "url-pattern");
-  const explicitComicSearch = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=webtoon%2018", event: "navigation" }, now);
+  const explicitComicSearch = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=webtoon%2018%2B", event: "navigation" }, now);
   assert.equal(explicitComicSearch.blocked, true);
   assert.equal(explicitComicSearch.reason, "url-pattern");
   const bare18Search = evaluateExtensionCheck(state, usage, { url: "https://www.google.com/search?q=18", event: "navigation" }, now);

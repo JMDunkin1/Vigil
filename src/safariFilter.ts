@@ -9,6 +9,8 @@ import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { vigilLocalSiteAllowList } from "./blockedPageUrl.js";
 import { contentFilterEnabled, contentFilterRuleEntries } from "./contentFilters.js";
 import { DATA_DIR } from "./store.js";
+import { applePresetUrlPatternVariants } from "./iosProfiles.js";
+import { usesAutomaticExplicitUrlPolicy } from "./automaticExplicitUrlPolicy.js";
 import { toPlist } from "./plist.js";
 import { activePolicy, baselinePolicy, expandSiteTargets, normalizeHost, normalizeUrlPattern } from "./policy.js";
 import { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
@@ -76,7 +78,18 @@ export function safariFilterDenyMatch(state: VigilState, value: unknown, now = n
   const candidates = managedFilterMatchCandidates(url);
   return safariFilterTargets(state, now).find((target) => {
     const pattern = target.url.toLowerCase();
-    return candidates.some((candidate) => candidate.includes(pattern));
+    return candidates.some(candidate => {
+      if (candidate.includes(pattern)) return true;
+      if (!pattern.endsWith("/")) return false;
+      const root = pattern.slice(0, -1);
+      let index = candidate.indexOf(root);
+      while (index !== -1) {
+        const next = candidate[index + root.length];
+        if (next === undefined || next === "?" || next === "#") return true;
+        index = candidate.indexOf(root, index + 1);
+      }
+      return false;
+    });
   })?.url || "";
 }
 
@@ -124,7 +137,10 @@ export function safariFilterTargets(state: VigilState, now = new Date()): Safari
       targets.push(...siteTargetUrls(site, `${item.kind}:site`));
     }
     for (const pattern of item.profile?.blockedUrlPatterns || []) {
-      targets.push(...urlPatternTargetUrls(pattern, `${item.kind}:url-pattern`));
+      const precise = usesAutomaticExplicitUrlPolicy(item.profile) ? applePresetUrlPatternVariants(pattern) : null;
+      for (const variant of precise ?? [pattern]) {
+        targets.push(...urlPatternTargetUrls(variant, `${item.kind}:url-pattern`, precise !== null));
+      }
     }
   }
 
@@ -301,15 +317,16 @@ function contentFilterTargetUrls(filter: unknown, source: string): SafariFilterU
   const normalized = normalizeUrlPattern(String(filter || "").replace(/^\|\|/, ""));
   if (!normalized) return [];
   if (!normalized.includes("/")) return siteTargetUrls(normalized, source);
-  return urlPatternTargetUrls(normalized, source);
+  return urlPatternTargetUrls(normalized, source, true);
 }
 
-function urlPatternTargetUrls(pattern: unknown, source: string): SafariFilterUrlTarget[] {
+function urlPatternTargetUrls(pattern: unknown, source: string, bounded = false): SafariFilterUrlTarget[] {
   const normalized = normalizeUrlPattern(pattern);
   if (!normalized || normalized.startsWith("/") || !normalized.includes("/")) return [];
   const slash = normalized.indexOf("/");
   const host = normalizeHost(normalized.slice(0, slash));
-  const path = normalizePath(normalized.slice(slash));
+  const originalPath = normalized.slice(slash);
+  const path = bounded && !originalPath.includes("?") ? `${normalizePath(originalPath).replace(/\/+$/u, "")}/` : normalizePath(originalPath);
   if (!isPublicHost(host) || path === "/") return [];
   return hostVariants(host).flatMap((variant) => protocolUrls(variant, path, source, true));
 }

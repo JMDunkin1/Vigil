@@ -4,6 +4,7 @@ export const SEARCH_PARAMETER_NAMES = new Set([
   "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
   "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
 ]);
+const AMBIGUOUS_SEARCH_PARAMETER_NAMES = new Set(["p", "k", "s", "mode"]);
 // Art categories and product catalogs carry discovery text in the path too;
 // direct category links need the same checks as a site's search box.
 const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=\/|$)/iu;
@@ -27,7 +28,7 @@ export function decodeSearchQueryValue(value: string): string {
 
 export function isProtectedSearchParameter(name: string, onSearchRoute = false): boolean {
   const normalized = decodeSearchQueryValue(name).toLowerCase();
-  return SEARCH_PARAMETER_NAMES.has(normalized)
+  return (SEARCH_PARAMETER_NAMES.has(normalized) && (!AMBIGUOUS_SEARCH_PARAMETER_NAMES.has(normalized) || onSearchRoute))
     || (onSearchRoute && STRUCTURED_SEARCH_PARAMETER_PATTERN.test(normalized));
 }
 
@@ -59,8 +60,18 @@ export function searchQueries(value: unknown): Array<{ query: string; hostname: 
   const fragment = url.hash.replace(/^#!?/u, "");
   const pathIsSearch = looksLikeSearchRoute(url.pathname);
   const fragmentIsSearch = looksLikeSearchRoute(fragment);
+  const hostname = url.hostname.toLowerCase().replace(/\.$/u, "");
+  const protectedParameter = (name: string) => {
+    const normalized = decodeSearchQueryValue(name).toLowerCase();
+    // These short field names are ordinary configuration/authentication data
+    // elsewhere, but these providers declare their exact discovery meaning.
+    const providerField = (normalized === "p" && hostname === "search.yahoo.com")
+      || (normalized === "mode" && (hostname === "pixiv.net" || hostname.endsWith(".pixiv.net"))
+        && /^\/ranking(?:\.php)?\/?$/u.test(decodeSearchQueryValue(url.pathname).toLowerCase()));
+    return isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch || providerField);
+  };
   const queries = [...url.searchParams]
-    .filter(([name]) => isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch))
+    .filter(([name]) => protectedParameter(name))
     .map(([, query]) => decodeSearchQueryValue(query));
   if (fragmentIsSearch) {
     const queryStart = fragment.indexOf("?");

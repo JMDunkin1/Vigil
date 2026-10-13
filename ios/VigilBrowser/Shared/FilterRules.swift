@@ -13,6 +13,8 @@ struct FilterRules: Codable, Equatable, Sendable {
         "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
         "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
     ]
+    static let ambiguousSearchParameterNames: Set<String> = ["p", "k", "s", "mode"]
+    static let automaticSearchTerms = Set(defaultExplicitSearchTerms)
 
     var schemaVersion: Int
     var revision: Int
@@ -161,6 +163,9 @@ struct NavigationFilter: Sendable {
         }) {
             return .block(reason: "This page is blocked by Vigil.")
         }
+        if BroadenedExplicitMedia.containsSemanticURL(url) {
+            return .block(reason: "This page is blocked by Vigil.")
+        }
         if isBlockedSearch(url) {
             return .block(reason: "That search is blocked by Vigil.")
         }
@@ -172,15 +177,27 @@ struct NavigationFilter: Sendable {
         let routeText = Self.searchRouteText(components.percentEncodedPath)
         let fragmentText = components.percentEncodedFragment.flatMap(Self.searchRouteText)
         let onSearchRoute = routeText != nil || fragmentText != nil
-        var values = components.queryItems?
-            .filter { Self.isProtectedSearchParameter($0.name, onSearchRoute: onSearchRoute) }
-            .compactMap(\.value) ?? []
+        let host = Self.normalizedHost(url.host ?? "")
+        let path = Self.decodedCandidates(components.percentEncodedPath).last ?? components.path.lowercased()
+        let queryItems = (components.percentEncodedQuery ?? "").split(separator: "&").map { pair in
+            let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            return (name: Self.decodeFormField(String(parts[0])), value: parts.count == 2 ? Self.decodeFormField(String(parts[1])) : "")
+        }
+        var values = queryItems
+            .filter { item in
+                let name = Self.decodedCandidates(item.name).last ?? item.name.lowercased()
+                let providerField = (name == "p" && host == "search.yahoo.com")
+                    || (name == "mode" && (host == "pixiv.net" || host.hasSuffix(".pixiv.net"))
+                        && path.range(of: #"^/ranking(?:\.php)?/?$"#, options: .regularExpression) != nil)
+                return Self.isProtectedSearchParameter(item.name, onSearchRoute: onSearchRoute || providerField)
+            }
+            .map(\.value)
         if let fragment = components.percentEncodedFragment, fragmentText != nil,
            let queryStart = fragment.firstIndex(of: "?") {
             for pair in fragment[fragment.index(after: queryStart)...].split(separator: "&") {
                 let parts = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-                if parts.count == 2, Self.isProtectedSearchParameter(String(parts[0]), onSearchRoute: true) {
-                    values.append(String(parts[1]))
+                if parts.count == 2, Self.isProtectedSearchParameter(Self.decodeFormField(String(parts[0])), onSearchRoute: true) {
+                    values.append(Self.decodeFormField(String(parts[1])))
                 }
             }
         }
@@ -188,7 +205,8 @@ struct NavigationFilter: Sendable {
         if let fragmentText, !fragmentText.isEmpty { values.append(fragmentText) }
         return values.map { Self.decodedCandidates($0).last ?? $0 }.contains { terms in
             rules.blockedSearchTerms.contains { term in
-                !BroadenedExplicitMedia.isAdditionalLabel(term)
+                !FilterRules.automaticSearchTerms.contains(term.lowercased())
+                    && !BroadenedExplicitMedia.isAdditionalLabel(term)
                     && terms.range(of: term, options: [.caseInsensitive, .diacriticInsensitive]) != nil
             } || Self.isExplicitPersonSearch(terms) || BroadenedExplicitMedia.containsSearch(terms, hostname: url.host ?? "")
         }
@@ -218,7 +236,8 @@ struct NavigationFilter: Sendable {
 
     private static func isProtectedSearchParameter(_ value: String, onSearchRoute: Bool) -> Bool {
         let name = decodedCandidates(value).last ?? value.lowercased()
-        if FilterRules.protectedSearchParameterNames.contains(name) { return true }
+        if FilterRules.protectedSearchParameterNames.contains(name),
+           !FilterRules.ambiguousSearchParameterNames.contains(name) || onSearchRoute { return true }
         return onSearchRoute && name.range(of: #"^(q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)\[(\d*|q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|word|tags|tag)\]$"#, options: .regularExpression) != nil
     }
 
@@ -227,7 +246,7 @@ struct NavigationFilter: Sendable {
         if route.hasPrefix("#") { route.removeFirst() }
         if route.hasPrefix("!") { route.removeFirst() }
         route = String(route.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
-        let path = (decodedCandidates(route).last ?? route).replacingOccurrences(of: "+", with: " ")
+        let path = decodedCandidates(route).last ?? route
         let expression = try! NSRegularExpression(pattern: #"(?:^|/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=/|$)"#, options: .caseInsensitive)
         let text = path as NSString
         guard let match = expression.firstMatch(in: path, range: NSRange(location: 0, length: text.length)) else { return nil }
@@ -273,6 +292,12 @@ struct NavigationFilter: Sendable {
         return candidates.filter { seen.insert($0).inserted }
     }
 
+    private static func decodeFormField(_ value: String) -> String {
+        // Form separators must become spaces before decoding, so literal %2B
+        // content such as 18+ survives the same nested decoding as JavaScript.
+        decodePercentRuns(value.replacingOccurrences(of: "+", with: " "))
+    }
+
     private static func decodePercentRuns(_ value: String) -> String {
         guard let expression = try? NSRegularExpression(pattern: "(?:%[0-9a-fA-F]{2})+") else { return value }
         let result = NSMutableString(string: value)
@@ -297,10 +322,13 @@ struct NavigationFilter: Sendable {
 // Generated from src/explicitMediaContext.ts; do not edit this section.
 private enum BroadenedExplicitMedia {
     private static let labels: Set<String> = ["pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos", "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes", "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate", "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls", "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"]
+    private static let searchKeywords: Set<String> = ["porn", "porno", "prno", "p0rn", "p0rno", "pornography", "pornographic", "nsfw", "hentai", "h3ntai", "rule34", "gonewild", "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube", "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "pornhub", "honeytoon", "honeytoons", "hooneytoon", "hooneytoons", "toongod", "pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos", "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes", "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate", "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls", "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"]
+    private static let searchCompound = try! NSRegularExpression(pattern: #"^(?:porn|porno|p0rn|hentai|h3ntai|nsfw)(?:videos?|vids?|photos?|pics?|images?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|hub|tube|hd|vr|4k)$"#)
     private static let exposure = try! NSRegularExpression(pattern: #"^(?:nud|nuds|nudes?|nued|nudity|naked|nakedness|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|fullfrontal|seethrough|upskirt|downblouse|nipslips?|cameltoe)$"#)
     private static let sexual = try! NSRegularExpression(pattern: #"^(?:erotic|erotica|lewd|horny|sensual|seductive|sex|sexual|sexually|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage)$"#)
     private static let acts = try! NSRegularExpression(pattern: #"^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|ejaculation|fingering|selfpleasure|creampies?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting)$"#)
     private static let strongActs = try! NSRegularExpression(pattern: #"^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|bukkake|gangbangs?|fucking|selfpleasure|upskirt|downblouse|nipslips?|cameltoe)$"#)
+    private static let strongMediaMarker = try! NSRegularExpression(pattern: #"^(?:nud|nuds|nudes?|naked|nudity|lewd|erotic|erotica|x{3,})$"#)
     private static let connectors = try! NSRegularExpression(pattern: #"^(?:a|an|the|of|with|who|that|are|is|were|was|be|being|their|very|really|absolutely|totally|completely|fully|amazingly|beautiful|gorgeous|amazing|pretty|lovely)$"#)
     private static let body = try! NSRegularExpression(pattern: #"^(?:boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?)$"#)
     private static let people = try! NSRegularExpression(pattern: #"^(?:girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?)$"#)
@@ -332,13 +360,13 @@ private enum BroadenedExplicitMedia {
                 text.replaceSubrange(range, with: source.substring(with: match.range).folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX")))
             }
         }
-        let glyphs = ["а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "Α": "A"]
-        let vocabulary: Set<String> = ["naked", "nude", "nudes", "porn", "porno", "nsfw", "sex", "sexual", "topless", "nakedgirls", "nudegirls"]
+        let glyphs = ["а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "α": "a"]
+        let vocabulary: Set<String> = searchKeywords.union(["naked", "nude", "nudes", "porn", "porno", "nsfw", "sex", "sexual", "topless", "nakedgirls", "nudegirls"])
         let glyphSource = text as NSString
         for match in words.matches(in: text, range: NSRange(location: 0, length: glyphSource.length)).reversed() {
             let original = glyphSource.substring(with: match.range)
-            let folded = original.map { glyphs[String($0)] ?? String($0) }.joined().lowercased()
-            if vocabulary.contains(folded), let range = Range(match.range, in: text) { text.replaceSubrange(range, with: folded) }
+            let folded = original.lowercased().map { glyphs[String($0)] ?? String($0) }.joined()
+            if (vocabulary.contains(folded) || matches(searchCompound, folded)), let range = Range(match.range, in: text) { text.replaceSubrange(range, with: folded) }
         }
         text = text.replacingOccurrences(of: #"\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b"#, with: "sexdoll", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+robots?\b"#, with: "sexrobot", options: [.regularExpression, .caseInsensitive])
@@ -372,12 +400,135 @@ private enum BroadenedExplicitMedia {
         text = text.replacingOccurrences(of: #"\b(?:sex[\s_-]+pistols|dick[\s_-]+(?:van[\s_-]+dyke|tracy|clark)|moby[\s_-]+dick|hot[\s_-]+money|penetration[\s_-]+(?:pricing|testing|tests?))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:fingering[\s_-]+(?:guitar|piano|music)|(?:guitar|piano)[\s_-]+fingering|strip[\s_-]+tease[\s_-]+rose(?=[\s_-]+(?:growing|garden|plant)))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\bleak(?:s|ed)?[\s_-]+(?:(?:pentagon|government|classified|court|source)[\s_-]+)?(?:documents?|data|databases?|passwords?|code|pipes?|aquariums?|gardening)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:nissan|skyline|gt[\s_-]?r)[\s_-]+r[\s_-]?34\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\br[\s_-]?34[\s_-]+(?:nissan|skyline|gt[\s_-]?r)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\brule[\s_.-]*34[\s_-]+(?:algorithm|theorem|proof|specification|standard|procedure)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:chapter|book|section|volume|part|appendix|super[\s_-]+bowl)[\s_-]+x{3,}\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bx{3,}[\s_-]+chromosomes?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bchromosomes?[\s_-]+x{3,}\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bxxx[\s_-]+(?:vin[\s_-]+diesel|return[\s_-]+of[\s_-]+xander[\s_-]+cage|2002[\s_-]+(?:film|movie))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bvin[\s_-]+diesel[\s_-]+xxx\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\badult[\s_-]+(?:education|learning|training|literacy)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bmature[\s_-]+skin\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\buncensored[\s_-]+interviews?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bnude[\s_-]+art[\s_-]+(?:figure[\s_-]+)?drawings?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bnude[\s_-]+art[\s_-]+videos?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bnudity[\s_-]+anatomy\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bnude[\s_-]+(?:watercolou?r[\s_-]+palettes?|art[\s_-]+sculptures?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bmature[\s_-]+trees?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\berotic[\s_-]+imagery[\s_-]+art[\s_-]+history\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:porn|porno|pornography|pornographic)[\s_-]+(?:content[\s_-]+)?(?:blockers?|blocking|filters?|filtering|detection|detectors?|moderation|prevention)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bpornography[\s_-]+(?:laws?|legal[\s_-]+history)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:porn|pornography)[\s_-]+(?:addiction[\s_-]+)?(?:recovery|treatment)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bnsfw[\s_-]+(?:classifiers?|classification|filters?|filtering|detection|detectors?|moderation)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bnsfw[\s_-]+api[\s_-]+(?:reference|documentation)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b18\s*\+[\s_-]+(?:travel[\s_-]+insurance|insurance|(?:voting[\s_-]+)?eligibility|age[\s_-]+requirements?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
         return text
     }
 
+    static func normalizedEvidence(_ value: String) -> String { normalized(value) }
+
+    // Match meaningful destination labels and early routes, never credentials,
+    // arbitrary query/hash metadata, or identifiers later in the address.
+    static func containsSemanticURL(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let host = components.host else { return false }
+        let labels = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")).split(separator: ".").map(String.init)
+        if ["xxx", "porn"].contains(labels.last ?? "") { return true }
+        let hostLabels = labels.dropLast().map(semanticNormalized)
+        for (index, label) in hostLabels.enumerated() {
+            if semanticClassifies(label, hostname: true) { return true }
+            if semanticWeak.contains(label), index + 1 < hostLabels.count,
+               semanticMedia.contains(hostLabels[index + 1]) { return true }
+        }
+        let segments = Array(components.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true).prefix(4)).map { semanticNormalized(String($0.prefix(512))) }
+        let routeText = segments.map(normalizedEvidence).joined(separator: " ")
+        let qualifiedRouteText = normalizedEvidence(routeText)
+        if qualifiedRouteText != routeText {
+            return semanticClassifies(qualifiedRouteText, previous: segments.first(where: semanticCatalog.contains) ?? "")
+        }
+        for (index, segment) in segments.enumerated() {
+            let previous = index > 0 ? segments[index - 1] : ""
+            if semanticClassifies(segment, previous: previous) { return true }
+            let roman = semanticChapters.contains(previous) && segment.range(of: #"^x{3,}$"#, options: .regularExpression) != nil
+            let next = index + 1 < segments.count ? segments[index + 1] : ""
+            if !roman, (semanticWeak.contains(segment) || segment == "18+"
+                || segment.range(of: #"^x{3,}$"#, options: .regularExpression) != nil
+                || (segment == "r34" && semanticComics.contains(next))),
+               semanticTokens(next).contains(where: semanticMedia.contains) { return true }
+        }
+        return false
+    }
+
+    private static let semanticMedia: Set<String> = ["video", "videos", "vid", "vids", "photo", "photos", "pic", "pics", "image", "images", "gif", "gifs", "cam", "cams", "comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi", "novel", "novels", "art", "gallery", "galleries"]
+    private static let semanticWeak: Set<String> = ["adult", "adults", "mature", "uncensored", "lewd", "erotic", "nude", "nudes", "naked", "sex", "sexual", "xxx", "r18", "18plus"]
+    private static let semanticComics: Set<String> = ["comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi"]
+    private static let semanticCatalog: Set<String> = ["genre", "genres", "category", "categories", "tag", "tags", "catalog", "browse"]
+    private static let semanticChapters: Set<String> = ["chapter", "book", "section", "volume", "part", "appendix"]
+    private static let multilingualSemanticLabels = ["色情片", "色情视频", "色情視頻", "色情影片", "色情电影", "色情電影", "性爱娃娃", "性愛娃娃", "情趣娃娃", "性玩具", "ラブドール", "セックスドール", "ポルノ", "포르노", "음란물"]
+
+    private static func semanticNormalized(_ value: String) -> String {
+        var decoded = value
+        let encodedRuns = try! NSRegularExpression(pattern: #"(?:%[a-f0-9]{2})+"#, options: .caseInsensitive)
+        for _ in 0..<3 {
+            let next = NSMutableString(string: decoded)
+            for match in encodedRuns.matches(in: decoded, range: NSRange(decoded.startIndex..., in: decoded)).reversed() {
+                let run = next.substring(with: match.range)
+                let bytes = run.split(separator: "%").compactMap { UInt8($0, radix: 16) }
+                next.replaceCharacters(in: match.range, with: run.removingPercentEncoding ?? String(String.UnicodeScalarView(bytes.map { UnicodeScalar($0) })))
+            }
+            if next as String == decoded { break }
+            decoded = next as String
+        }
+        return normalizedVocabulary(decoded).lowercased()
+    }
+
+    private static func semanticTokens(_ value: String) -> [String] {
+        if value.range(of: #"^[a-z\d]{24,}$"#, options: .regularExpression) != nil,
+           value.range(of: #"\d"#, options: .regularExpression) != nil { return [] }
+        if value.range(of: #"^[a-f\d]{16,}$|^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$"#, options: .regularExpression) != nil { return [] }
+        let text = normalizedEvidence(value).lowercased()
+        let source = text as NSString
+        return words.matches(in: text, range: NSRange(location: 0, length: source.length)).map { source.substring(with: $0.range) }
+    }
+
+    private static func semanticClassifies(_ value: String, previous: String = "", hostname: Bool = false) -> Bool {
+        let evidence = normalizedEvidence(semanticChapters.contains(previous) ? previous + " " + value : value).lowercased()
+        let tokens = semanticTokens(evidence)
+        if tokens.isEmpty { return false }
+        if tokens.contains(where: { searchKeywords.contains($0) || ["p0rnography", "erotica"].contains($0) }) { return true }
+        let multilingual = evidence.replacingOccurrences(of: #"[\u200b-\u200d\u2060\ufeff\u0640\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"[أإآٱ]"#, with: "ا", options: .regularExpression)
+        if multilingualSemanticLabels.contains(where: multilingual.contains)
+            || multilingual.range(of: #"(?:^|[^\p{L}\p{N}])(?:(?:[وف]?ال|[بك]ال|لل|[وف]))?اباحي(?:ة|ا|ات|ون|ين)?(?=$|[^\p{L}\p{N}])"#, options: .regularExpression) != nil
+            || multilingual.range(of: #"(?:^|[^\p{L}\p{N}])(?:ال)?(?:فيديو(?:هات)?|فيلم|افلام)[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])"#, options: .regularExpression) != nil
+            || multilingual.range(of: #"(?:^|[^\p{L}\p{N}])(?:pornografi(?:a|co|ca)s?|pornographi(?:e|ques?)|pornografie|pornografisch(?:e[rmns]?)?|порно(?:видео|фильм(?:ы|ов)?|ролик(?:и|ов)?)?|порнографи\p{Cyrillic}*)(?=$|[^\p{L}\p{N}])"#, options: .regularExpression) != nil { return true }
+        let compact = tokens.joined()
+        if compact.range(of: #"^(?!rule34\d)(?:p[o0]rn|h[e3]ntai|nsfw|rule34)(?:hub|tube|world|land|zone|site|sites|read|reader|live|free|hd|vr|4k|\d{1,3}|videos?|photos?|pics?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)?$"#, options: .regularExpression) != nil
+            || compact.range(of: #"^(?:free|best|my|the|all|hd|new|daily|live|watch|read|anime|manga|comic|comics|webtoon|3d|vr|4k)(?:porn|hentai|nsfw)$"#, options: .regularExpression) != nil { return true }
+        if hostname, compact.range(of: #"^x{3,}$"#, options: .regularExpression) != nil { return true }
+        let media = "(?:videos?|vids?|photos?|pics?|images?|gifs?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))"
+        let marker = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18plus)"
+        if tokens.contains(where: { $0.range(of: "^(?:" + marker + media + "|" + media + marker + ")$", options: .regularExpression) != nil }) { return true }
+        if tokens.contains(where: { $0.range(of: #"^r34(?:comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)$"#, options: .regularExpression) != nil })
+            || (tokens.contains("r34") && (tokens.contains(where: semanticComics.contains) || semanticCatalog.contains(previous))) { return true }
+        if semanticChapters.contains(previous), value.range(of: #"^x{3,}$"#, options: .regularExpression) != nil { return false }
+        let hasMarker = tokens.enumerated().contains { index, token in
+            (semanticWeak.contains(token) || token.range(of: #"^x{3,}$"#, options: .regularExpression) != nil)
+                && !(token == "uncensored" && index + 1 < tokens.count && tokens[index + 1] == "interview")
+        } || value.range(of: #"(?:^|[^\p{L}\p{N}])18\s*\+(?:$|[^\p{L}\p{N}])"#, options: .regularExpression) != nil
+        return hasMarker && (tokens.contains(where: semanticMedia.contains) || semanticCatalog.contains(previous))
+    }
+
     static func containsSearch(_ value: String, hostname: String = "") -> Bool {
-        let text = normalizedVocabulary(value)
-        if text.range(of: #"^\s*(?:nud(?:s|3s?)?|nudes)\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)"#, options: [.regularExpression, .caseInsensitive]) != nil || contains(value) { return true }
+        let text = normalizedEvidence(value)
+        let lower = text.lowercased()
+        let source = lower as NSString
+        let tokens = words.matches(in: lower, range: NSRange(location: 0, length: source.length)).map { source.substring(with: $0.range) }
+        if tokens.contains(where: { searchKeywords.contains($0) || matches(searchCompound, $0) }) { return true }
+        if text.range(of: #"(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
+        if text.range(of: #"^\s*(?:nud(?:s|3s?)?|nudes)\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:(?:adults?|mature|uncensored|lewd|erotic|nsfw|hentai|porn|r18|18(?:\s*\+|plus))[\s_.-]*(?:comics?|manga|manhwa|manhua|mawha|webtoons?|doujin(?:shi)?)|(?:comics?|manga|manhwa|manhua|mawha|webtoons?|doujin(?:shi)?)[\s_.-]*(?:adults?|mature|uncensored|lewd|erotic|nsfw|hentai|porn|r18|18(?:\s*\+|plus)))(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:(?:18\s*\+|18[\s_-]*plus)[\s_-]+(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?)|(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?)[\s_-]+(?:18\s*\+|18[\s_-]*plus))(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil || contains(text) { return true }
         let host = hostname.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
         let domains = ["reddit.com", "deviantart.com", "artstation.com", "pixiv.net", "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com", "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com", "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com", "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app", "patreon.com", "itch.io", "discord.com", "discordapp.com"]
         let platform = domains.contains { host == $0 || host.hasSuffix("." + $0) }
@@ -387,14 +538,13 @@ private enum BroadenedExplicitMedia {
         }
         let namedPlatform = text.range(of: #"(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
         let discoveryText = text.replacingOccurrences(of: "3", with: "e").replacingOccurrences(of: "0", with: "o")
-        return (platform || namedPlatform) && discoveryText.range(of: #"(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
+        return (platform || namedPlatform) && discoveryText.range(of: #"(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     static func contains(_ value: String) -> Bool {
-        let vocabularyText = normalizedVocabulary(value).lowercased()
-        let text = normalized(value).lowercased()
-        let textSource = vocabularyText as NSString
-        let labelTokens = words.matches(in: vocabularyText, range: NSRange(location: 0, length: textSource.length)).map { textSource.substring(with: $0.range) }
+        let text = normalizedEvidence(value).lowercased()
+        let textSource = text as NSString
+        let labelTokens = words.matches(in: text, range: NSRange(location: 0, length: textSource.length)).map { textSource.substring(with: $0.range) }
         if labelTokens.contains(where: { labels.contains($0) || ["porn", "porno", "nsfw"].contains($0) }) { return true }
         if text.range(of: #"(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])"#, options: .regularExpression) != nil { return true }
         let combined = text.replacingOccurrences(of: #"\b(?:without(?:[\s_-]+any)?|with[\s_-]+no)[\s_-]+clothes\b"#, with: "naked", options: .regularExpression)
@@ -426,6 +576,7 @@ private enum BroadenedExplicitMedia {
             let lower = max(0, index - 4), upper = min(tokens.count, index + 5)
             let nearby = Array(tokens[lower..<upper])
             if matches(strongActs, token) && nearby.contains(where: { matches(media, $0) || matches(people, $0) }) { return true }
+            if matches(strongMediaMarker, token) && nearby.contains(where: { matches(media, $0) }) { return true }
             if token == "x" || token == "xx" {
                 if nearby.contains(where: { ["model", "men", "files", "axis", "chromosome", "chromosomes"].contains($0) }) { continue }
             }

@@ -40,6 +40,39 @@ struct NativeTextClassifierRegression {
             let verdict = await classifier.classify(pageText: "before \(phrase) after", wasTruncated: true)
             precondition(verdict == .sensitive, "Missed policy phrase: \(phrase)")
         }
+        // Keep ordinary names, opaque tokens, established nonsexual senses,
+        // and mixtures aligned with the shared automatic text corpus.
+        for text in [
+            "Sporn dog harness", "Caporn family history", "webcam480 driver", "actioncam4k", "SKU-RULE34567",
+            "AbcHentai90XZ", "dbNSFWfile88123", "account_onlyfanshash_04", "Project118plus build",
+            "Nissan R34 photos", "R34 Skyline tuning", "GT-R R34 videos", "Rule 34 algorithm",
+            "Chapter XXX images", "XXX chromosome research", "Super Bowl XXX videos", "XXX Vin Diesel movie", "XXX Return of Xander Cage",
+            "sex education", "sexual health", "nude lipstick photos", "nude art figure drawing", "naked mole rat photos",
+            "Sex Pistols gallery", "adult education video", "mature skin photos", "uncensored interview videos",
+            "pornographic content moderation research", "pornography blocker", "pornography addiction recovery",
+            "pornography law history", "NSFW classifier", "NSFW API reference", "18+ voting eligibility",
+            "18+ travel insurance", "18+5", "manhwa", "manhua", "manga", "webtoon", "mawha",
+            "nude watercolor palette", "nude art sculpture", "mature trees", "erotic imagery art history",
+            "top 18 manga for beginners", "read 18 comics this year", "chapter 18 manga",
+            "nude art drawings", "nudity anatomy"
+        ] {
+            let verdict = await classifier.classify(pageText: text, wasTruncated: false)
+            precondition(verdict == .safe, "Unexpected ordinary automatic text verdict for \(text): \(verdict)")
+            precondition(!nativeAutomaticSearchForTesting(text), "Unexpected ordinary native automatic search: \(text)")
+        }
+        for text in [
+            "porn", "p.o.r.n videos", "ｐｏｒｎ", "pornvideos", "hentai manga", "nsfw photos", "cam4", "onlyfans",
+            "honeytoon", "toongod", "pornographic content moderation porn videos", "pornography law hentai comics",
+            "Nissan R34 porn videos", "Chapter XXX nsfw photos", "XXX Vin Diesel porn videos", "NSFW classifier hentai", "nude lipstick porn photos",
+            "PОRN videos", "NАKED GIRLS", "HЕNTAI", "ОNLYFANS", "PОRNVIDEOS"
+        ] {
+            let verdict = await classifier.classify(pageText: text, wasTruncated: false)
+            precondition(verdict == .sensitive, "Missed independent explicit automatic text for \(text): \(verdict)")
+            precondition(nativeAutomaticSearchForTesting(text), "Missed independent explicit native automatic search: \(text)")
+        }
+        for search in ["XXX", "R34", "h3ntai", "nsfwvideos", "hentaicomics", "cam4", "onlyfans", "pornhub", "mature manhwa", "adult webtoon", "18+ videos"] {
+            precondition(nativeAutomaticSearchForTesting(search), "Missed bounded native automatic search: \(search)")
+        }
         for (text, expected) in [
             ("Ordinary reference material about astronomy", ContentSafetyVerdict.safe),
             ("PÓRNOGRAPHY", .sensitive),
@@ -48,7 +81,31 @@ struct NativeTextClassifierRegression {
             ("😀 XXX\tVI\u{301}DEOS 👩‍🔬", .sensitive),
             ("😀 cafe\u{301} और सितारे 𐐀", .safe),
             ("xxx videos", .sensitive),
-            ("Chapter XXX about astronomy", .safe)
+            ("Chapter XXX about astronomy", .safe),
+            ("Pornichet travel guide", .safe),
+            ("Actioncam4k camera manual", .safe),
+            ("Mawha manhwa manga webtoon reading history", .safe),
+            ("Pornographic content moderation research", .safe),
+            ("Pornography laws and legal history", .safe),
+            ("NSFW classifier API documentation", .safe),
+            ("Nude lipstick photos", .safe),
+            ("Nude art figure drawing", .safe),
+            ("Nissan R34 repair", .safe),
+            ("Rule 34 algorithm", .safe),
+            ("XXX chromosome research", .safe),
+            ("Adult education video", .safe),
+            ("Uncensored interview video", .safe),
+            ("Porntube and pornvids", .sensitive),
+            ("Pornographic content moderation research plus nude photos", .sensitive),
+            ("NSFW classifier documentation; pornography videos", .sensitive),
+            ("Nude lipstick photos plus nude videos", .sensitive),
+            ("Mature manhwa catalog", .sensitive),
+            ("Adult webtoon catalog", .sensitive),
+            ("Nude photos medical", .sensitive),
+            ("Naked photos research", .sensitive),
+            ("XXX videos education", .sensitive),
+            ("Erotic videos research", .sensitive),
+            ("Lewd videos health", .sensitive)
         ] {
             let verdict = await classifier.classify(pageText: text, wasTruncated: false)
             precondition(verdict == expected, "Unexpected verdict for \(text)")

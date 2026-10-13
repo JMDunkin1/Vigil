@@ -32,12 +32,13 @@ for (const url of [
   "https://www.reddit.com/search?q=cars&nsfw=0#nsfw",
   "https://www.reddit.com/r/nsfw/search?q=cars&nsfw=0",
   "https://www.reddit.com/r/nsfw/?nsfw=0",
-  "https://www.reddit.com/search?q=cars&other=nsfw&nsfw=0",
-  "https://reddit.com.example.org/search?q=cars&nsfw=0"
+  "https://www.reddit.com/search?q=cars&other=nsfw&nsfw=0"
 ]) {
   assert.ok(matchBlockedUrlPattern(profile, url), url);
   assert.ok(monitor.browserBlockDecision({ app: "Safari", hostname: new URL(url).hostname, url }), url);
   assert.equal(evaluateExtensionCheck(structuredClone(state), {}, { url }).blocked, true, url);
 }
+assert.equal(matchBlockedUrlPattern(profile, "https://reddit.com.example.org/search?q=cars&nsfw=0"), null,
+  "a foreign hostname and a non-search metadata field are not Reddit or explicit intent");
 assert.ok(matchBlockedUrlPattern({ ...profile, blockedUrlPatterns: ["nsfw=0"] },
   "https://www.reddit.com/search?q=cars&nsfw=0"), "explicit custom URL rules must retain their meaning");

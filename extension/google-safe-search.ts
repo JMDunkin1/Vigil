@@ -2,8 +2,8 @@ import { matchSemanticExplicitUrl } from "../src/explicitUrlContext.js";
 import { checkSearchBreakBeforeNavigation } from "./search-break.js";
 import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
 import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
-import { SEARCH_PARAMETER_NAMES, searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
-import { normalizeExplicitVocabulary, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
+import { searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
+import { containsExplicitSearchKeyword, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
 
 function guardBlockedPageURL(): string {
   try {
@@ -14,8 +14,6 @@ function guardBlockedPageURL(): string {
 }
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
-const EXPLICIT_SEARCH_PARAMETER_NAMES = SEARCH_PARAMETER_NAMES;
-const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
 const PERSON_EXPOSURE_MARKERS = new Set([
   "leak", "leaks", "leaked", "leakd", "lek", "leks",
   "nud", "nuds", "nude", "nudes", "nued", "naked", "topless"
@@ -83,9 +81,7 @@ function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): s
 
 function containsExplicitSearchText(rawValue: string, hostname = new URL(location.href).hostname, includeRedditShorthand = true): boolean {
   const decoded = decodeNestedSearchValue(rawValue);
-  const vocabulary = normalizeExplicitVocabulary(decoded);
-  return EXPLICIT_SEARCH_PATTERN.test(vocabulary)
-    || EXPLICIT_SEARCH_PATTERN.test(vocabulary.replace(/\+/gu, " "))
+  return containsExplicitSearchKeyword(decoded)
     || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
     || containsExplicitXxxSearchText(decoded)
     || containsExplicitPersonSearchText(decoded)
@@ -646,7 +642,7 @@ function isSearchControl(value: unknown): value is Element {
     value.getAttribute("placeholder"), value.getAttribute("data-testid")
   ].filter(Boolean).join(" ");
   return type === "search" || role === "searchbox"
-    || EXPLICIT_SEARCH_PARAMETER_NAMES.has((value.getAttribute("name") || "").toLowerCase())
+    || isProtectedSearchParameter(value.getAttribute("name") || "")
     || SEARCH_DESCRIPTOR_PATTERN.test(descriptor)
     || Boolean(value.closest("[role='search'], form[action*='search' i], form[action*='find' i]"));
 }

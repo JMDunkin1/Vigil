@@ -45,10 +45,10 @@ const CONTEXTUAL_MATCH_DISTANCE = 120;
  */
 export function buildExplicitContentTextPolicy(source: ExplicitContentTextPolicySource): ExplicitContentTextPolicy {
   const terms = clean([
-    ...source.searchTerms.filter(isUnambiguousPageTerm),
+    ...source.searchTerms,
     ...source.comicSiteTerms,
     ...source.blockedSites.map(siteLabel)
-  ]);
+  ].filter(isUnambiguousPageTerm));
   const phrases = clean(UNAMBIGUOUS_EXPLICIT_PHRASES);
   const contextualRules = [...source.contextualRules]
     .map((rule) => ({
@@ -74,7 +74,8 @@ function clean(values: readonly string[]): string[] {
 
 function isUnambiguousPageTerm(value: string): boolean {
   const term = value.trim().toLowerCase();
-  return Boolean(term && !term.includes("%") && term !== "xxx" && term !== "18+" && term !== "18-plus" && term !== "18plus");
+  const ambiguous = new Set(["xxx", "18+", "18-plus", "18plus", "mawha", "manhwa", "manhua", "manga", "webtoon", "webtoons", "doujin", "doujinshi"]);
+  return Boolean(term && !term.includes("%") && !ambiguous.has(term));
 }
 
 function siteLabel(value: string): string {
