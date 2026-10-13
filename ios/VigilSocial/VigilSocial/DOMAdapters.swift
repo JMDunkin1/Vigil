@@ -4906,6 +4906,11 @@ enum DOMAdapters {
             border-bottom: 1px solid var(--sigDivider);
           }
           [data-vigil-snap-layout] .NvRM8 { border-radius: 0; border: 0; }
+          /* Snapchat's away screen belongs to the message viewport. Its
+             absolute desktop overlay otherwise covers the mobile header and
+             composer, leaving only group member names floating in gray. */
+          [data-vigil-snap-layout] .IBqK8 { position: relative; min-height: 0; }
+          [data-vigil-snap-layout] .IBqK8 > .ejVI4 { inset: 0; height: auto; }
           [data-vigil-snap-layout] .sT7ta {
             padding: 8px 8px 10px; flex-shrink: 0;
             background: var(--sigSurface, #fff);
@@ -4996,6 +5001,14 @@ enum DOMAdapters {
           || !/^\/web\/?$/.test(location.pathname);
         set(shell, 'data-vigil-snap-layout', dialog ? 'dialog' : detail ? 'detail' : preferredPanel);
         if (detail) preferredPanel = 'feed';
+        // Hiding the formerly focused feed can leave embedded WebKit without
+        // a native responder. Ask the host to restore real focus for this chat;
+        // never spoof hasFocus or remove Snapchat's privacy/screenshot screens.
+        if (main.querySelector('.aXEpU') && !document.hasFocus()
+            && document.visibilityState === 'visible'
+            && document.documentElement.dataset.vigilPageVerdict === 'safe') {
+          window.__vigilBridge?.({ type: 'snapchatFocus' });
+        }
         // The older web shell has no navigation rail. Keep its existing camera
         // landing reachable without inventing unsupported Map or Stories screens.
         if (!shell.querySelector(':scope > .bkCIM, :scope > .vigil-snap-tabs')) {
@@ -5114,7 +5127,7 @@ enum DOMAdapters {
       };
       new MutationObserver(schedule).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true,
-        attributeFilter: ['class', 'style', 'data-testid', 'theme', 'dir']
+        attributeFilter: ['class', 'style', 'data-testid', 'theme', 'dir', 'data-vigil-page-verdict']
       });
       addEventListener('resize', schedule);
       addEventListener('popstate', schedule);

@@ -1085,7 +1085,7 @@ final class VigilSocialTests: XCTestCase {
     <script>
     const contacts=[['Alex','New Chat','👩🏻','unread'],['Jordan','Received · 12m','🧑🏽',''],['Sam','Opened · 1h','👨🏼',''],['Weekend plans','Received · 2h','👥',''],['Taylor','Delivered · 3h','👩🏾',''],['Morgan','Opened · 5h','🧑🏻',''],['Casey','Received · 1d','👨🏽',''],['Riley','Opened · 1d','👩🏼','']];
     document.getElementById('friends').innerHTML=contacts.map(([name,status,avatar,unread],i)=>`<div role="listitem" style="height:74px"><div class="O4POs" role="button" tabindex="0" aria-labelledby="title-${i}" onclick="openChat('${name}')"><div class="LNwMF">${avatar}</div><div class="BbZFb"><strong id="title-${i}">${name}</strong><span class="status ${unread}"><i></i>${status}</span></div><div class="w15C2"><button aria-label="Camera" onclick="event.stopPropagation(); window.cameraOpened=true">◎</button></div></div></div>`).join('');
-    function openChat(name){history.pushState({},'', '/web/fixture-conversation');document.getElementById('conversation').innerHTML=`<div class="aXEpU"><header class="k1IaM"><div class="iLVEm"><button class="enQRR" title="Close Chat" aria-label="Back to chats" onclick="closeChat()">❮</button><b>${name}</b></div><div><button aria-label="Audio call" onclick="window.callOpened=true">♧</button><button aria-label="Video call" onclick="window.videoOpened=true">▣</button></div></header><div class="NvRM8"><div class="messages"><p style="text-align:center;font-size:11px;color:var(--sigTextSecondary)">TODAY</p><div class="message"><b>${name.toUpperCase()}</b><div>Want to grab coffee later?</div></div><div class="message me"><b>ME</b><div>Sounds good! Around 3?</div></div><div class="message"><b>${name.toUpperCase()}</b><div>Perfect, see you there ☕</div></div></div><div class="sT7ta"><div class="composer-row"><button aria-label="Camera" onclick="window.cameraOpened=true">◎</button><div class="euyIb" role="textbox" contenteditable="true" aria-label="Send a chat"></div><button aria-label="Send" onclick="window.fixtureSent=document.querySelector('[contenteditable]').textContent">➤</button></div></div></div></div>`}
+    function openChat(name){history.pushState({},'', '/web/fixture-conversation');document.getElementById('conversation').innerHTML=`<div class="aXEpU"><header class="k1IaM"><div class="iLVEm"><button class="enQRR" title="Close Chat" aria-label="Back to chats" onclick="closeChat()">❮</button><b>${name}</b></div><div><button aria-label="Audio call" onclick="window.callOpened=true">♧</button><button aria-label="Video call" onclick="window.videoOpened=true">▣</button></div></header><div class="NvRM8"><div class="IBqK8 messages"><p style="text-align:center;font-size:11px;color:var(--sigTextSecondary)">TODAY</p><div class="message"><b>${name.toUpperCase()}</b><div>Want to grab coffee later?</div></div><div class="message me"><b>ME</b><div>Sounds good! Around 3?</div></div><div class="message"><b>${name.toUpperCase()}</b><div>Perfect, see you there ☕</div></div></div><div class="sT7ta"><div class="composer-row"><button aria-label="Camera" onclick="window.cameraOpened=true">◎</button><div class="euyIb" role="textbox" contenteditable="true" aria-label="Send a chat"></div><button aria-label="Send" onclick="window.fixtureSent=document.querySelector('[contenteditable]').textContent">➤</button></div></div></div></div>`}
     function closeChat(){closeDialog();history.pushState({},'', '/web/');document.getElementById('conversation').innerHTML='<div class="landing">Snapchat for Web</div>'}
     function closeDialog(){document.querySelector('.LtQF8')?.remove()}
     function openDialog(content){closeDialog();const panel=document.createElement('div');panel.className='LtQF8';panel.innerHTML=content;document.querySelector('._XMCw').appendChild(panel)}
@@ -1111,6 +1111,96 @@ final class VigilSocialTests: XCTestCase {
     function fixtureSwipe(selector,points,options={}){const target=document.querySelector(selector);const fire=(type,point,count)=>{const touches=Array.from({length:count},(_,i)=>({identifier:i,target,clientX:point[0]+i,clientY:point[1],pageX:point[0]+i,pageY:point[1]}));const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(event,{touches:{value:type==='touchend'?[]:touches},changedTouches:{value:touches}});target.dispatchEvent(event)};fire('touchstart',points[0],options.startCount||1);for(const point of points.slice(1))fire('touchmove',point,options.moveCount||1);fire(options.cancel?'touchcancel':'touchend',points.at(-1),1)}
     </script></body></html>
     """#
+
+    @MainActor
+    func testSnapchatGroupChatRecoversRealFocusWithoutRemovingPrivacyScreen() async throws {
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
+            websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let controller = UIViewController()
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        window.rootViewController = controller
+        webView.frame = window.bounds
+        controller.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        // Client b00815e2 renders ejVI4 when real document focus is lost.
+        // Fictional group members and no account, message or network requests.
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("document.documentElement.dataset.vigilPageVerdict === 'safe'", in: webView)
+        _ = try await webView.callAsyncJavaScript(
+            "globalThis.fetch = async url => ({status:200,url}); return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        let allowed = await store.confirmServiceAccess()
+        XCTAssertTrue(allowed)
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        _ = try await webView.evaluateJavaScript("""
+            window.fixturePrivacyUpdates = 0;
+            window.fixtureFocusRequests = 0;
+            const originalBridge = window.__vigilBridge;
+            window.__vigilBridge = value => { if (value.type === 'snapchatFocus') fixtureFocusRequests++; originalBridge(value); };
+            window.updatePrivacy = () => {
+              fixturePrivacyUpdates++;
+              const chat = document.querySelector('.NvRM8');
+              if (!chat) return;
+              chat.querySelector('.ejVI4')?.remove();
+              if (!document.hasFocus()) {
+                const shield = document.createElement('div');
+                shield.className = 'ejVI4';
+                shield.style.cssText = 'position:absolute;inset:0;background:#ddd;display:grid;place-items:center';
+                shield.innerHTML = '<div class="RZoOk">Jordan, Sam<h3>You are no longer present.</h3></div>';
+                chat.querySelector('.IBqK8').appendChild(shield);
+              }
+            };
+            window.addEventListener('focus', updatePrivacy);
+            window.addEventListener('blur', updatePrivacy);
+            """)
+        // A retained native control can own focus while a chat mounts. Only
+        // actual WebKit focus may reactivate the client's own privacy screen.
+        let otherResponder = UITextField(frame: CGRect(x: 0, y: 0, width: 100, height: 40))
+        controller.view.addSubview(otherResponder)
+        XCTAssertTrue(otherResponder.becomeFirstResponder())
+        try await waitForJavaScriptCondition("!document.hasFocus()", in: webView)
+        window.makeKeyAndVisible()
+        XCTAssertTrue(window.isKeyWindow)
+        _ = try await webView.evaluateJavaScript("openChat('Weekend plans'); updatePrivacy()")
+        try await waitForJavaScriptCondition("document.hasFocus() && !document.querySelector('.ejVI4')", in: webView)
+        XCTAssertFalse(otherResponder.isFirstResponder)
+        let usable = try await webView.evaluateJavaScript("""
+            getComputedStyle(document.querySelector('.message')).visibility === 'visible'
+              && getComputedStyle(document.querySelector('[contenteditable]')).visibility === 'visible'
+              && getComputedStyle(document.getElementById('restricted')).display === 'none'
+            """) as? Bool
+        XCTAssertEqual(usable, true)
+        // Background/hidden services must retain the genuine privacy shield.
+        await store.handleSceneActivity(true, isServiceVisible: false)
+        XCTAssertTrue(otherResponder.becomeFirstResponder())
+        _ = try await webView.evaluateJavaScript("updatePrivacy(); document.querySelector('.aXEpU').classList.add('fixture-background')")
+        try await Task.sleep(for: .milliseconds(500))
+        let concealed = try await webView.evaluateJavaScript("!document.hasFocus() && Boolean(document.querySelector('.ejVI4'))") as? Bool
+        XCTAssertEqual(concealed, true)
+        let controlsReachable = try await webView.evaluateJavaScript("""
+            (() => {
+              const shield = document.querySelector('.ejVI4').getBoundingClientRect();
+              const messages = document.querySelector('.IBqK8').getBoundingClientRect();
+              const header = document.querySelector('.k1IaM').getBoundingClientRect();
+              const composer = document.querySelector('.sT7ta').getBoundingClientRect();
+              return shield.top >= header.bottom && shield.bottom <= composer.top
+                && Math.abs(shield.height - messages.height) < 1;
+            })()
+            """) as? Bool
+        XCTAssertEqual(controlsReachable, true, "The original privacy screen must keep Back and the composer reachable")
+        // A foreground routine restriction must also reject focus recovery.
+        store.accessRestriction = { true }
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.aXEpU').classList.add('fixture-restricted')")
+        try await Task.sleep(for: .milliseconds(500))
+        let restricted = try await webView.evaluateJavaScript("!document.hasFocus() && Boolean(document.querySelector('.ejVI4'))") as? Bool
+        XCTAssertEqual(restricted, true)
+        withExtendedLifetime(store) {}
+    }
 
     @MainActor
     func testSnapchatNotificationListenerDoesNotCrashChatOrEnableWorkers() async throws {

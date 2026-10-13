@@ -1158,6 +1158,18 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   audioPreferences[service] != enabled else { return }
             audioPreferences[service] = enabled
             defaults.set(enabled, forKey: audioPreferenceKey(service))
+        case "snapchatFocus":
+            guard service == .snapchat, frame.isMainFrame,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  playbackServiceIsVisible, !playbackIsBackgrounded,
+                  !mediaPlaybackIsSuspended, hasRecentConfirmedAccess,
+                  accessRestriction?() != true,
+                  UIApplication.shared.applicationState == .active,
+                  let webView = webViews[service], !webView.isLoading,
+                  webView.window?.isKeyWindow == true else { return }
+            // Only the foreground, policy-verified chat can acquire the native
+            // responder. Background services keep Snapchat's real away shield.
+            webView.becomeFirstResponder()
         case "chromeColor":
             guard service == .snapchat, frame.isMainFrame,
                   let rgb = body["rgb"] as? [Double], rgb.count == 3,
