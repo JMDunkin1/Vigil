@@ -580,6 +580,10 @@
       style.textContent = `html[data-vigil-feed-pending] :is(${nativeCardSelector}){display:none!important}` + 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
+      // The mobile topic bar is fixed, but its wrapper still reserves 50–62px
+      // above the first video after the bar is hidden. Collapse that wrapper
+      // only on the feeds where we already remove its topic controls.
+      style.textContent += 'html[data-vigil-standard-feed] ytm-rich-grid-renderer .rich-grid-sticky-header:has(ytm-feed-filter-chip-bar-renderer){display:none!important}';
       style.textContent += `html[data-vigil-standard-feed] :is(ytd-rich-item-renderer,ytm-rich-item-renderer):not(:has(:is(ytd-rich-grid-media,ytm-rich-grid-media,ytd-video-renderer,ytm-video-with-context-renderer,ytd-grid-video-renderer,ytm-compact-video-renderer,yt-lockup-view-model,ytm-lockup-view-model))){display:none!important}`;
       if (!topFrame) style.textContent += '.ytp-endscreen-content,.ytp-ce-element,.ytp-cards-button,.ytp-cards-teaser,.ytp-next-button,.ytp-playlist-menu-button,.ytp-pause-overlay,.ytp-suggestion-set,a[href*="feature=endscreen"]{display:none!important}';
       style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}html[data-vigil-playback-held] .ytp-large-play-button,html[data-vigil-playback-held] .ytp-cued-thumbnail-overlay{display:block!important}html[data-vigil-playback-held] .ytp-chrome-bottom{display:block!important;opacity:1!important}';
