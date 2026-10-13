@@ -4968,6 +4968,35 @@ enum DOMAdapters {
       let preferredPanel = 'feed';
       let scheduled = false;
       let lastChromeColor = '';
+      let lastRenderState = '';
+      const renderVisible = element => {
+        if (!element) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none'
+          && style.visibility !== 'hidden';
+      };
+      const publishRenderState = () => {
+        if (typeof window.__vigilBridge !== 'function') return;
+        const away = document.querySelector('.aXEpU .ejVI4');
+        const bodyStyle = document.body ? getComputedStyle(document.body) : null;
+        const state = {
+          focused: document.hasFocus(), visible: document.visibilityState === 'visible',
+          chatMounted: Boolean(document.querySelector('.aXEpU')),
+          awayShield: renderVisible(away), reactivationPrompt: renderVisible(away?.querySelector('p')),
+          screenshotShield: renderVisible(document.querySelector('.aXEpU .eNF_J')),
+          headerVisible: renderVisible(document.querySelector('.aXEpU .k1IaM')),
+          composerVisible: renderVisible(document.querySelector('.aXEpU [contenteditable="true"]')),
+          bodyVisible: Boolean(bodyStyle && bodyStyle.visibility !== 'hidden' && bodyStyle.display !== 'none'),
+          layout: currentShell?.getAttribute('data-vigil-snap-layout') || 'none',
+          pageVerdict: document.documentElement.dataset.vigilPageVerdict || 'none'
+        };
+        const signature = JSON.stringify(state);
+        if (signature === lastRenderState) return;
+        lastRenderState = signature;
+        window.__vigilBridge({ type: 'snapchatRenderState', ...state });
+      };
+      window.__vigilPublishSnapchatRenderState = publishRenderState;
       const set = (element, name, value) => {
         if (element.getAttribute(name) !== value) element.setAttribute(name, value);
       };
@@ -4982,6 +5011,7 @@ enum DOMAdapters {
           currentShell?.removeAttribute('data-vigil-snap-layout');
           currentShell?.querySelectorAll('.vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat').forEach(node => node.remove());
           currentShell = null;
+          publishRenderState();
           return;
         }
         if (currentShell && currentShell !== shell) currentShell.removeAttribute('data-vigil-snap-layout');
@@ -5119,6 +5149,7 @@ enum DOMAdapters {
             if (menu.style.getPropertyValue(name) !== value) menu.style.setProperty(name, value);
           }
         }
+        publishRenderState();
       };
       const schedule = () => {
         if (scheduled) return;
@@ -5132,6 +5163,8 @@ enum DOMAdapters {
       addEventListener('resize', schedule);
       addEventListener('popstate', schedule);
       addEventListener('pageshow', schedule);
+      addEventListener('focus', schedule);
+      addEventListener('blur', schedule);
       document.addEventListener('visibilitychange', schedule);
       window.visualViewport?.addEventListener('resize', schedule);
       window.visualViewport?.addEventListener('scroll', schedule);

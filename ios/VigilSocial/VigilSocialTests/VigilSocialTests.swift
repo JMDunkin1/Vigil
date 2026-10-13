@@ -1137,16 +1137,15 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(allowed)
         await store.handleSceneActivity(true, isServiceVisible: true)
         _ = try await webView.evaluateJavaScript("""
-            window.fixturePrivacyUpdates = 0;
-            window.fixtureFocusRequests = 0;
-            const originalBridge = window.__vigilBridge;
-            window.__vigilBridge = value => { if (value.type === 'snapchatFocus') fixtureFocusRequests++; originalBridge(value); };
+            // Match the client's presence states, including the stale/initial
+            // away timestamp that requires a real click AFTER focus returns.
+            window.fixturePresence = 'away';
+            window.fixtureLastPresentBlur = 0;
             window.updatePrivacy = () => {
-              fixturePrivacyUpdates++;
               const chat = document.querySelector('.NvRM8');
               if (!chat) return;
               chat.querySelector('.ejVI4')?.remove();
-              if (!document.hasFocus()) {
+              if (fixturePresence !== 'present') {
                 const shield = document.createElement('div');
                 shield.className = 'ejVI4';
                 shield.style.cssText = 'position:absolute;inset:0;background:#ddd;display:grid;place-items:center';
@@ -1154,8 +1153,20 @@ final class VigilSocialTests: XCTestCase {
                 chat.querySelector('.IBqK8').appendChild(shield);
               }
             };
-            window.addEventListener('focus', updatePrivacy);
-            window.addEventListener('blur', updatePrivacy);
+            window.addEventListener('focus', () => {
+              fixturePresence = Date.now() - fixtureLastPresentBlur < 60000 ? 'present' : 'awaiting-reactivation';
+              updatePrivacy();
+            });
+            window.addEventListener('blur', () => {
+              if (document.hasFocus()) return;
+              if (fixturePresence === 'present') fixtureLastPresentBlur = Date.now();
+              fixturePresence = 'away';
+              updatePrivacy();
+            });
+            window.addEventListener('click', () => {
+              fixturePresence = 'present';
+              updatePrivacy();
+            }, true);
             """)
         // A retained native control can own focus while a chat mounts. Only
         // actual WebKit focus may reactivate the client's own privacy screen.
@@ -1165,8 +1176,22 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("!document.hasFocus()", in: webView)
         window.makeKeyAndVisible()
         XCTAssertTrue(window.isKeyWindow)
-        _ = try await webView.evaluateJavaScript("openChat('Weekend plans'); updatePrivacy()")
-        try await waitForJavaScriptCondition("document.hasFocus() && !document.querySelector('.ejVI4')", in: webView)
+        // Match the production gate: focus reaches WebKit while access is
+        // confirmed but media/taps remain suspended, then the user opens chat.
+        store.suspendAllMedia(relinquishExternalPlayback: false)
+        await store.handleSceneActivity(true, isServiceVisible: false)
+        await store.prepareForegroundInteraction()
+        XCTAssertTrue(otherResponder.isFirstResponder, "An invisible child must not take focus")
+        // The parent reaffirmation happens only after its live access check.
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        await store.prepareForegroundInteraction()
+        try await waitForJavaScriptCondition("document.hasFocus() && fixturePresence === 'awaiting-reactivation'", in: webView)
+        store.resumeSuspendedMedia()
+        _ = try await webView.evaluateJavaScript("document.querySelector('.O4POs').click(); updatePrivacy()")
+        try await waitForJavaScriptCondition("document.hasFocus()", in: webView)
+        let presence = try await webView.evaluateJavaScript("fixturePresence") as? String
+        XCTAssertEqual(presence, "present", "Restoring focus after the chat click can leave Snapchat awaiting reactivation")
+        try await waitForJavaScriptCondition("fixturePresence === 'present' && !document.querySelector('.ejVI4')", in: webView)
         XCTAssertFalse(otherResponder.isFirstResponder)
         let usable = try await webView.evaluateJavaScript("""
             getComputedStyle(document.querySelector('.message')).visibility === 'visible'
@@ -1174,6 +1199,17 @@ final class VigilSocialTests: XCTestCase {
               && getComputedStyle(document.getElementById('restricted')).display === 'none'
             """) as? Bool
         XCTAssertEqual(usable, true)
+        let diagnosticURL = try XCTUnwrap(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first)
+            .appendingPathComponent("vigil-snapchat-render-state.json")
+        let diagnosticData = try Data(contentsOf: diagnosticURL)
+        let diagnostic = try XCTUnwrap(JSONSerialization.jsonObject(with: diagnosticData) as? [String: Any])
+        let states = try XCTUnwrap(diagnostic["states"] as? [[String: Any]])
+        XCTAssertFalse(states.isEmpty)
+        XCTAssertLessThanOrEqual(states.count, 16)
+        let diagnosticText = String(decoding: diagnosticData, as: UTF8.self)
+        for privateValue in ["Jordan", "Sam", "Want to grab coffee", "fixture-conversation"] {
+            XCTAssertFalse(diagnosticText.contains(privateValue), "Render diagnostics must not include private chat content")
+        }
         // Background/hidden services must retain the genuine privacy shield.
         await store.handleSceneActivity(true, isServiceVisible: false)
         XCTAssertTrue(otherResponder.becomeFirstResponder())

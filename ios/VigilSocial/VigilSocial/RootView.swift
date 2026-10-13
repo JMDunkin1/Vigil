@@ -311,6 +311,13 @@ private struct SocialServiceAccessView: View {
             while !Task.isCancelled {
                 let allowed = await store.confirmServiceAccess()
                 guard !Task.isCancelled else { return }
+                if allowed, store.fixedService == .snapchat {
+                    // The covered child reports itself invisible until access
+                    // is published; reaffirm the selected foreground service.
+                    await store.handleSceneActivity(true, isServiceVisible: isServiceVisible)
+                    await store.prepareForegroundInteraction()
+                }
+                guard !Task.isCancelled else { return }
                 accessConfirmed = allowed
                 checking = !allowed && store.webView(for: store.fixedService).isLoading
                 if allowed { store.resumeSuspendedMedia() }

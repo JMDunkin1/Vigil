@@ -324,6 +324,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackMayRelinquish = false
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
+    private var snapchatRenderSnapshots: [[String: Any]] = []
     private(set) var linkedInApplePopup: LinkedInApplePopupController?
     var openSocialLink: ((URL) -> Void)?
     var accessRestriction: (() -> Bool)?
@@ -790,6 +791,36 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
+    // Prepare the foreground responder while the verified access gate still
+    // covers the page. Snapchat treats late focus as awaiting reactivation;
+    // its real chat-opening click must occur after focus has reached WebKit.
+    func prepareForegroundInteraction() async {
+        guard let view = eligibleSnapchatFocusView(),
+              let documentID = mainDocumentIDs[.snapchat] else { return }
+        let focused = try? await view.evaluateJavaScript("document.hasFocus()")
+        guard focused as? Bool == false,
+              !Task.isCancelled,
+              eligibleSnapchatFocusView() === view,
+              mainDocumentIDs[.snapchat] == documentID else { return }
+        view.becomeFirstResponder()
+        // Wait for WebKit to process the real focus event before enabling taps.
+        // Do not fake a focus/click event or acknowledge its privacy screen.
+        _ = try? await view.evaluateJavaScript("document.hasFocus(); window.__vigilPublishSnapchatRenderState?.();")
+    }
+
+    private func eligibleSnapchatFocusView() -> WKWebView? {
+        guard fixedService == .snapchat,
+              playbackServiceIsVisible, !playbackIsBackgrounded,
+              hasRecentConfirmedAccess, accessRestriction?() != true,
+              UIApplication.shared.applicationState == .active,
+              let view = webViews[.snapchat], !view.isLoading,
+              view.window?.isKeyWindow == true,
+              let url = view.url, SocialService.snapchat.allowsNavigation(to: url),
+              ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(url.host?.lowercased() ?? ""),
+              url.path == "/web" || url.path.hasPrefix("/web/") else { return nil }
+        return view
+    }
+
     func resumeSuspendedMedia() {
         guard accessRestriction?() != true else { suspendAllMedia(); return }
         guard mediaPlaybackIsSuspended else { return }
@@ -1158,6 +1189,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   audioPreferences[service] != enabled else { return }
             audioPreferences[service] = enabled
             defaults.set(enabled, forKey: audioPreferenceKey(service))
+        case "snapchatRenderState":
+            guard service == .snapchat, frame.isMainFrame, playbackServiceIsVisible,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]) else { return }
+            recordSnapchatRenderState(body)
         case "snapchatFocus":
             guard service == .snapchat, frame.isMainFrame,
                   Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
@@ -1223,6 +1258,33 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         default:
             break
         }
+    }
+
+    private func recordSnapchatRenderState(_ body: [String: Any]) {
+        // A bounded local receipt contains only fixed render flags. Never save
+        // chat text, names, conversation URLs/IDs, credentials or raw payloads.
+        var snapshot: [String: Any] = [
+            "checkedAt": ISO8601DateFormatter().string(from: Date()),
+            "nativeForeground": UIApplication.shared.applicationState == .active,
+            "nativeServiceVisible": playbackServiceIsVisible,
+            "nativeAccessFresh": hasRecentConfirmedAccess,
+            "nativeMediaSuspended": mediaPlaybackIsSuspended,
+            "nativeKeyWindow": webViews[.snapchat]?.window?.isKeyWindow == true
+        ]
+        for key in ["focused", "visible", "chatMounted", "awayShield", "reactivationPrompt", "screenshotShield", "headerVisible", "composerVisible", "bodyVisible"] {
+            if let value = body[key] as? Bool { snapshot[key] = value }
+        }
+        if let value = body["layout"] as? String, ["feed", "detail", "dialog", "camera", "none"].contains(value) {
+            snapshot["layout"] = value
+        }
+        if let value = body["pageVerdict"] as? String, ["safe", "sensitive", "unknown", "none"].contains(value) {
+            snapshot["pageVerdict"] = value
+        }
+        snapchatRenderSnapshots.append(snapshot)
+        snapchatRenderSnapshots = Array(snapchatRenderSnapshots.suffix(16))
+        guard let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+              let data = try? JSONSerialization.data(withJSONObject: ["schemaVersion": 1, "states": snapchatRenderSnapshots]) else { return }
+        try? data.write(to: directory.appendingPathComponent("vigil-snapchat-render-state.json"), options: .atomic)
     }
 
     private func handleMediaCandidate(_ body: [String: Any], service: SocialService, frame: WKFrameInfo) {
