@@ -150,6 +150,9 @@ async function makeExtensionScriptsClassic(): Promise<void> {
       source += "\nexport {};\n";
     }
     if (name === "google-safe-search.js") {
+      const semanticUrlMatcher = (await readFile(join(runtimeRoot, "src/explicitUrlContext.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*explicitUrlContext\.js["'];?\s*$/mu,
+        () => semanticUrlMatcher);
       // Inline the same pure matcher used by the server into the classic
       // document-start script; no runtime import or server round-trip needed.
       const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
@@ -197,3 +200,6 @@ await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace
   `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${mediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
 ));
 await cp(mediaGuardPath, join(runtimeRoot, "extension/media-child-lock.js"));
+
+// Keep Safari bundled with the exact shared search guard on every build.
+await import("./generate-ios-safari-guard.mjs").then(module => module.writeGeneratedIosSafariGuard());

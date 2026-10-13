@@ -15,6 +15,7 @@ import {
   STRICT_UNSUPPORTED_BROWSERS
 } from "./defaults.js";
 import { matchExplicitPersonSearchUrl } from "./explicitPersonSearch.js";
+import { matchSemanticExplicitUrl } from "./explicitUrlContext.js";
 import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_EXPLICIT_TERMS, containsAdditionalExplicitSearchTerm, containsMultilingualExplicitText } from "./explicitMediaContext.js";
 import { matchContextualExplicitSearchUrl, matchExplicitXxxSearchUrl } from "./contextualExplicitSearch.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
@@ -746,9 +747,16 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   const rawPatterns = profile.blockedUrlPatterns || [];
   const patterns = rawPatterns.map(normalizeUrlPattern);
   const explicitSearchProtection = patterns.includes("porn") && patterns.includes("onlyfans");
+
   if (explicitSearchProtection && matchContextualExplicitSearchUrl(parsed)) {
     return {
       pattern: "contextual-explicit-search", label: "Explicit search based on context",
+      hostname: normalizeHost(parsed.hostname), url: parsed.toString()
+    };
+  }
+  if (explicitSearchProtection && matchSemanticExplicitUrl(parsed)) {
+    return {
+      pattern: "semantic-explicit-url", label: "Explicit content in hostname or route",
       hostname: normalizeHost(parsed.hostname), url: parsed.toString()
     };
   }

@@ -19,6 +19,13 @@ export async function generatedIosSafariGuard(): Promise<string> {
   return `/* eslint-disable no-unused-vars -- Shared desktop matcher includes helpers unused by this entry point. */\n// Generated from the desktop search guard; run the generator after npm run build.\n(() => {\nfunction vigilBlockedSearchURL() {\n  try {\n    return (globalThis.browser || globalThis.chrome).runtime.getURL("blocked.html");\n  } catch { return "about:blank"; }\n}\n${adapted}\n})();\n`;
 }
 
+export async function writeGeneratedIosSafariGuard(): Promise<void> {
+  await writeFile(output, await generatedIosSafariGuard());
+  for (const name of [...redditReviewAssets, ...searchBreakAssets]) {
+    await writeFile(join(dirname(output), name), await readFile(join(runtimeRoot, "extension", name)));
+  }
+}
+
 export async function assertGeneratedIosSafariGuardCurrent(): Promise<void> {
   if (await readFile(output, "utf8").catch(() => "") !== await generatedIosSafariGuard()) {
     throw new Error("The Safari search guard is stale. Run node dist/runtime/scripts/generate-ios-safari-guard.mjs --write after npm run build.");

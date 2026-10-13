@@ -27,7 +27,7 @@ export const ADULT_BLOCKLIST_PREVIOUS_SNAPSHOT_PATH = join(DATA_DIR, "adult-bloc
 export const ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH = join(DATA_DIR, "adult-blocklist.sdi");
 const VERSIONED_SNAPSHOT_PATTERN = /^adult-blocklist\.([a-f0-9]{64})\.json$/;
 export const ADULT_BLOCKLIST_CUSTOM_SOURCE_ID = "custom";
-export const ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT = 300;
+export const ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT = 1_000;
 const SNAPSHOT_VERSION = 2;
 const FETCH_TIMEOUT_MS = 45_000;
 const MAX_FETCH_BYTES = 32 * 1024 * 1024;
@@ -161,6 +161,12 @@ export function adultBlocklistEnabled(state: VigilState): boolean {
   return state.settings?.adultBlocklistEnabled !== false;
 }
 
+export function adultBlocklistSnapshotRequiredButUnavailable(state: VigilState): boolean {
+  return Boolean(adultBlocklistEnabled(state)
+    && (state.adultBlocklist?.hash || state.adultBlocklist?.snapshotPath)
+    && !loadSelectedAdultBlocklistSnapshotSync(state));
+}
+
 export function adultBlocklistSource(state: VigilState): AdultBlocklistSource {
   const requested = String(state.settings?.adultBlocklistSourceId || DEFAULT_ADULT_BLOCKLIST_SOURCE_ID).trim();
   if (requested === ADULT_BLOCKLIST_CUSTOM_SOURCE_ID) {
@@ -180,7 +186,21 @@ export function adultBlocklistSource(state: VigilState): AdultBlocklistSource {
 
 export function invalidateAdultBlocklistIfSourceChanged(state: VigilState, previousSource: AdultBlocklistSourceSnapshot | null): boolean {
   if (adultBlocklistSourceMatches(previousSource, adultBlocklistSource(state))) return false;
-  clearAdultBlocklistSnapshotState(state);
+  // Selecting a source is only a request for the next refresh. The verified
+  // live snapshot and its phone artifact remain authoritative until a fetched
+  // replacement passes all validation and commits. Preserve provenance for
+  // legacy snapshots which were loaded before their state metadata was saved.
+  const retained = previousSource && loadAdultBlocklistSnapshotForSourceSync(state, previousSource);
+  if (retained && (!state.adultBlocklist.hash || !state.adultBlocklist.source || !state.adultBlocklist.snapshotPath)) {
+    state.adultBlocklist.domainCount = retained.domains.length;
+    state.adultBlocklist.activeDomainCount = activeDomainCount(state, retained.domains);
+    state.adultBlocklist.hash = retained.hash;
+    state.adultBlocklist.snapshotPath = runtimeSnapshotPath || ADULT_BLOCKLIST_SNAPSHOT_PATH;
+    state.adultBlocklist.lastRefreshAt = retained.generatedAt;
+    state.adultBlocklist.source = retained.source;
+  }
+  state.adultBlocklist.lastAttemptAt = null;
+  state.adultBlocklist.lastError = "";
   return true;
 }
 
@@ -464,7 +484,7 @@ export function adultBlocklistSummary(state: VigilState) {
   const selected = adultBlocklistSource(state);
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
   const storedSourceMatches = adultBlocklistSourceMatches(state.adultBlocklist?.source, selected);
-  const stored = storedSourceMatches ? state.adultBlocklist : null;
+  const stored = state.adultBlocklist;
   const availableSnapshots = snapshot && storedSourceMatches
     ? [snapshot]
     : availableAdultBlocklistSnapshotsSync(state);
@@ -472,7 +492,8 @@ export function adultBlocklistSummary(state: VigilState) {
   const domainCount = snapshot?.domainCount || stored?.domainCount || 0;
   const activeCount = snapshot ? activeDomainCount(state, domains) : stored?.activeDomainCount || 0;
   const hash = snapshot?.hash || stored?.hash || "";
-  const current = Boolean(snapshot && stored?.hash && snapshot.hash === stored.hash);
+  const current = Boolean(snapshot && stored?.hash && snapshot.hash === stored.hash
+    && adultBlocklistSourceMatches(snapshot.source, selected));
   const selectedSourceSnapshots = availableSnapshots.filter((item) => adultBlocklistSourceMatches(item.source, selected));
   const sourceMismatch = Boolean(
     (state.adultBlocklist?.source && !storedSourceMatches)
@@ -606,6 +627,9 @@ export async function syncAdultBlocklistPhoneArtifact(
   path = ADULT_BLOCKLIST_PHONE_ARTIFACT_PATH
 ): Promise<PhoneBlocklistMetadata | null> {
   const snapshot = loadSelectedAdultBlocklistSnapshotSync(state);
+  if (!snapshot && (state.adultBlocklist?.hash || state.adultBlocklist?.snapshotPath)) {
+    throw new Error("The committed adult blocklist snapshot is unavailable; retaining the existing phone artifact until it can be verified.");
+  }
   if (!snapshot || !activeAdultBlocklistDomains(state, snapshot.domains).length) {
     await rm(path, { force: true });
     return null;
@@ -621,13 +645,22 @@ function clearAdultBlocklistCache(): void {
 }
 
 function loadSelectedAdultBlocklistSnapshotSync(state: VigilState): AdultBlocklistSnapshot | null {
-  const selectedSource = adultBlocklistSource(state);
+  // State records the source of the committed snapshot separately from the
+  // source selected for its next refresh. Pending selection must not suspend
+  // enforcement, and hash mismatches must never adopt an uncommitted candidate.
+  const activeSource = state.adultBlocklist?.hash && state.adultBlocklist.source
+    ? state.adultBlocklist.source
+    : adultBlocklistSource(state);
+  return loadAdultBlocklistSnapshotForSourceSync(state, activeSource);
+}
+
+function loadAdultBlocklistSnapshotForSourceSync(state: VigilState, source: AdultBlocklistSourceSnapshot): AdultBlocklistSnapshot | null {
   const expectedHash = state.adultBlocklist?.hash || "";
-  if (adultBlocklistSnapshotMatches(runtimeSnapshot, selectedSource, expectedHash)) return runtimeSnapshot;
+  if (adultBlocklistSnapshotMatches(runtimeSnapshot, source, expectedHash)) return runtimeSnapshot;
 
   for (const path of adultBlocklistSnapshotCandidatePaths(state)) {
     const snapshot = loadAdultBlocklistSnapshotSync(path);
-    if (!adultBlocklistSnapshotMatches(snapshot, selectedSource, expectedHash)) continue;
+    if (!adultBlocklistSnapshotMatches(snapshot, source, expectedHash)) continue;
     setRuntimeSnapshot(snapshot, path);
     return snapshot;
   }
@@ -637,7 +670,8 @@ function loadSelectedAdultBlocklistSnapshotSync(state: VigilState): AdultBlockli
 function adultBlocklistPreloadLimit(state: VigilState, override?: number): number {
   const value = override ?? state.settings?.adultBlocklistPreloadLimit ?? DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT;
   if (!Number.isFinite(Number(value))) return DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT;
-  return Math.max(0, Math.min(250, Math.trunc(Number(value))));
+  const maximum = override === undefined ? 250 : ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT;
+  return Math.max(0, Math.min(maximum, Math.trunc(Number(value))));
 }
 
 function activeDomainCount(state: VigilState, domains: string[]): number {
@@ -1187,7 +1221,9 @@ function adultBlocklistDetail({
 }): string {
   if (!enabled) return "Adult blocklist is disabled.";
   if (error) return `Adult blocklist refresh needs attention: ${error}`;
-  if (sourceMismatch) return "Adult blocklist source changed; refresh it to load the selected source.";
+  if (sourceMismatch) return hasSnapshot
+    ? "The previous verified adult blocklist remains active while the selected source awaits a verified refresh."
+    : "Adult blocklist source changed; refresh it to load the selected source.";
   if (!hasSnapshot) return "Adult blocklist is enabled; refresh it to load the large domain snapshot.";
   if (!current) return "Adult blocklist snapshot is loaded; refresh it to mark the selected source current.";
   return `Adult blocklist loaded with ${activeCount.toLocaleString()} active domain target${activeCount === 1 ? "" : "s"}.`;

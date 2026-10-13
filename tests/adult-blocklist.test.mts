@@ -323,12 +323,12 @@ bad_domain
   const snapshot = extensionRuleSnapshot(state, now);
   assert.ok(snapshot.rules.some(rule => rule.domain === "exampleadult.test" && rule.kind === "adult-blocklist"),
     "bulk-source domains use spare capacity even when the preload begins with already-blocked domains");
-  assert.equal(snapshot.rules.length <= 300, true);
+  assert.equal(snapshot.rules.length <= 1_000, true);
   const fullCapacityState = structuredClone(state);
   fullCapacityState.profiles.find(profile => profile.id === fullCapacityState.settings.baselineProfileId)!.blockedSites
-    .push(...Array.from({ length: 300 }, (_, index) => `priority-fixture-${index}.test`));
+    .push(...Array.from({ length: 1_000 }, (_, index) => `priority-fixture-${index}.test`));
   const fullCapacitySnapshot = extensionRuleSnapshot(fullCapacityState, now);
-  assert.equal(fullCapacitySnapshot.rules.length, 300, "priority rules fill the browser's site-rule capacity");
+  assert.equal(fullCapacitySnapshot.rules.length, 1_000, "priority rules fill the browser's site-rule capacity");
   for (const domain of ["go2offer-1.com", "archive.org", "honeytoon.com", "pornhub.com"]) {
     assert.ok(fullCapacitySnapshot.rules.some(rule => rule.domain === domain && rule.reason === "baseline"),
       `${domain} must retain baseline priority at capacity`);
@@ -340,7 +340,7 @@ bad_domain
   const availableCapacitySnapshot = extensionRuleSnapshot(availableCapacityState, now);
   assert.ok(availableCapacitySnapshot.rules.some(rule => rule.domain === "exampleadult.test" && rule.kind === "adult-blocklist"),
     "bulk-source domains are preloaded when priority rules leave capacity");
-  assert.equal(availableCapacitySnapshot.rules.length <= 300, true);
+  assert.equal(availableCapacitySnapshot.rules.length <= 1_000, true);
 
   const hosts = buildHostsBlock(state, now);
   assert.match(hosts, /0\.0\.0\.0 exampleadult\.test/);
@@ -371,17 +371,19 @@ bad_domain
   assert.equal(activeIosTargets.deniedUrls.includes("https://exampleadult.test/"), true);
 
   const previousSource = adultBlocklistSource(state);
+  const committedHash = state.adultBlocklist.hash;
   state.settings.adultBlocklistSourceId = "custom";
   state.settings.adultBlocklistCustomUrl = "https://example.test/custom-adult-domains.txt";
   const staleSummary = adultBlocklistSummary(state);
   assert.equal(staleSummary.current, false);
-  assert.equal(staleSummary.ready, false);
-  assert.equal(staleSummary.domainCount, 0);
-  assert.equal(staleSummary.shortHash, "");
-  assert.equal(matchAdultBlocklistHost(state, "media.exampleadult.test"), null);
+  assert.equal(staleSummary.ready, true, "a pending source must retain the previous verified list");
+  assert.equal(staleSummary.domainCount, 3);
+  assert.equal(staleSummary.shortHash, committedHash.slice(0, 16));
+  assert.equal(matchAdultBlocklistHost(state, "media.exampleadult.test")?.domain, "exampleadult.test");
   assert.equal(invalidateAdultBlocklistIfSourceChanged(state, previousSource), true);
-  assert.equal(state.adultBlocklist.hash, "");
-  assert.equal(state.adultBlocklist.source, null);
+  assert.equal(state.adultBlocklist.hash, committedHash);
+  assert.equal(state.adultBlocklist.source?.id, previousSource.id);
+  assert.equal(matchAdultBlocklistHost(state, "media.exampleadult.test")?.domain, "exampleadult.test");
 } finally {
   clearAdultBlocklistCacheForTest();
 }

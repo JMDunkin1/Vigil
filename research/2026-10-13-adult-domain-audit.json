@@ -1,0 +1,1515 @@
+{
+  "reviewedAt": "2026-10-13T21:54:43.457798+00:00",
+  "scope": "Broader whole-domain audit of adult/mature comic readers, scan catalogs, publisher adult editions, and comic galleries. Metadata only; no explicit illustrations or chapter images were viewed.",
+  "methodology": [
+    "Discover candidate names broadly, then require first-party catalog metadata, title age/genre labels, live catalog API records, or an operator-published adult destination. Do not infer pornography from a comic-related hostname alone.",
+    "Record HTTP redirects only when directly observed. Independently classify each active destination, rather than guess mirror domains by changing TLDs.",
+    "Check exact-domain or ancestor-domain coverage in all four freshly downloaded upstream sources. This membership audit is not a replacement for Vigil's full ingestion quality audit.",
+    "Keep these entries domain-only, away from generic page-text classifier terms.",
+    "Retain every existing priority/bypass/art/product/comic deny. Add HTTP+HTTPS roots in the separate BuiltIn supplemental phone payload; fail rather than weaken if its 500-URL budget is exceeded."
+  ],
+  "sources": [
+    {
+      "id": "blocklistproject-porn",
+      "url": "https://blocklistproject.github.io/Lists/porn.txt",
+      "bytes": 26095053,
+      "sha256": "425590c37e3ea624fdf646b14ba661f8b8f38391686adcf02b73f8b2d74b0db1",
+      "fetchedAt": "2026-10-13T21:45:57.048697+00:00",
+      "parsedUniqueHostsForMembershipAudit": 953393,
+      "changedSince2026October12": false
+    },
+    {
+      "id": "hagezi-nsfw",
+      "url": "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/wildcard/nsfw-onlydomains.txt",
+      "bytes": 1384620,
+      "sha256": "0ca21189e92305e1da927464eccdeed67c164bcc5cf75c1c378e85de97c81a12",
+      "fetchedAt": "2026-10-13T21:45:54.806499+00:00",
+      "parsedUniqueHostsForMembershipAudit": 89558,
+      "changedSince2026October12": true
+    },
+    {
+      "id": "stevenblack-porn",
+      "url": "https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/porn/hosts",
+      "bytes": 4185281,
+      "sha256": "d286648b8eff469ec862db5d693f3c0a2522ad35f3114e7f70f72c42722da635",
+      "fetchedAt": "2026-10-13T21:45:56.341132+00:00",
+      "parsedUniqueHostsForMembershipAudit": 149040,
+      "changedSince2026October12": false
+    },
+    {
+      "id": "shadowwhisperer-adult",
+      "url": "https://raw.githubusercontent.com/ShadowWhisperer/BlockLists/master/Lists/Adult",
+      "bytes": 3792007,
+      "sha256": "4abd45aa39f401d16974027cb957eecdcfdb83b57a1e9020d034d95aa7006fbb",
+      "fetchedAt": "2026-10-13T21:45:57.202146+00:00",
+      "parsedUniqueHostsForMembershipAudit": 232202,
+      "changedSince2026October12": true
+    }
+  ],
+  "findings": {
+    "addedCuratedDomains": 63,
+    "previousComicDomainsRetained": 26,
+    "domainsAbsentFromAllFourCurrentSources": [
+      "comicland.org",
+      "manhwaread.org",
+      "toontop.io",
+      "comizy.io",
+      "mangabuddy.com",
+      "mangabuddy1.co.uk",
+      "mangameow.com",
+      "kurahentai.com",
+      "lewdmanhwa.com",
+      "mamorumanhwa.com",
+      "manhwaland.tv",
+      "manhwato.com",
+      "manhwa18archive.com",
+      "mangakakalot.gg",
+      "mangagg.com",
+      "nyrascans.com",
+      "mangavyvy.com",
+      "lalatoon.com",
+      "ridibooks.com",
+      "mrblue.com",
+      "komiflo.com"
+    ],
+    "coverageLesson": "Current new brands and alternate reader domains are missing even from all four source lists. Updating a list alone cannot close these gaps. Bulk matches also need working runtime enforcement and curated static phone coverage.",
+    "installedPolicyStatus": "Source policy only; no device deployment, commit, or push was performed by this research pass."
+  },
+  "newBans": [
+    {
+      "domain": "comicland.org",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://api.comicland.org/api/comics_by_genre?name=adult&limit=1",
+        "method": "first-party live catalog API plus public application source",
+        "finding": "The site-owned catalog API returned a sexual-content comic in its Adult category; its application also exposes Smut and uncensored catalog routes.",
+        "responseSha256": "8a18cdecabac3a6047e76eb26e93eec82db7bf0136f8f0bea2dbc8499acae4de",
+        "labels": [
+          "Adult",
+          "Smut"
+        ]
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwaread.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwaread.com/genre-index/",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party indexed genre directory lists hundreds of Adult comics and about 1,800 Hentai comics."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "relationship": "Same-brand adult catalog also operates on manhwaread.org; no current .com-to-.org redirect was directly proved.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    },
+    {
+      "domain": "manhwaread.org",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwaread.org/genre-index/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party catalog and genre directory contain Adult, Hentai, and Smut works.",
+        "fetchedPage": {
+          "url": "https://manhwaread.org/",
+          "sha256": "72c8ce0f424736d31ea8fae6d067534d5ca571ad5a1d8d3b81a07499f2266e03",
+          "bytes": 410307,
+          "reviewedAt": "2026-10-13T21:46:35.331534+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "toontop.io",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://toontop.io/pleasure-board-game-asmodek-raw",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The title catalog classifies a sexual board-game story Adult and Mature; the popular catalog marks titles 18+."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "toonily.me",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://toonily.me/",
+        "method": "verified first-party HTTP redirect",
+        "finding": "The original reader redirects to toontop.io, whose Adult and 18+ catalog is independently verified."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "observedFinalUrl": "https://toontop.io/"
+    },
+    {
+      "domain": "comizy.io",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://comizy.io/manga-tags/read-projection-manga-online",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party catalog marks the title Adult, Smut, and Mature, and neighboring cards are 18+."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangabuddy.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangabuddy.com/",
+        "method": "previous verified redirect plus current first-party destination catalog",
+        "finding": "The October 12 audit observed a redirect to Comizy; current Comizy catalog independently confirms Adult/Smut works."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "relationship": "research/2026-10-12-adult-comic-audit.json",
+      "currentSourceDirectlyReachable": false,
+      "directFetchLimitation": "HTTP Error 522: <none>"
+    },
+    {
+      "domain": "mangabuddy1.co.uk",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangabuddy1.co.uk/manga-list/13?categories=smut",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party Smut catalog contains 18+ title cards."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangameow.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://www.mangameow.com/genres/smut?genre=smut",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party Smut catalog lists 291 titles with 18+ badges."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    },
+    {
+      "domain": "mangaball.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangaball.com/genres",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party live genre directory reports roughly 69,000 Hentai records and populated Adult and Smut categories."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "kuramanga.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://kuramanga.com/search?genre=Contemporary",
+        "method": "first-party HTML and search-indexed catalog metadata",
+        "finding": "The first-party catalog exposes an 18+ toggle and Adult/Smut works; homepage has populated 18+ cards."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "kurahentai.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://kurahentai.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live site identifies itself as an adult 18+ hentai/doujinshi archive; KuraManga links this exact sibling host.",
+        "fetchedPage": {
+          "url": "https://kurahentai.com/",
+          "sha256": "c9450e7875ad14e64f810fd271c3fd5bb2104cc0f05e420344009e05d0a0f05f",
+          "bytes": 75782,
+          "reviewedAt": "2026-10-13T21:51:00.809017+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "relationship": "Operator-published sister site from https://kuramanga.com/"
+    },
+    {
+      "domain": "lewdmanhwa.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://lewdmanhwa.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live reader explicitly describes its uncensored adult-comic catalog as 18+ only.",
+        "fetchedPage": {
+          "url": "https://lewdmanhwa.com/",
+          "sha256": "e394be131d3cf5267e7ccf08d18a5a9d0c065b0fd3def30ef816445427bf3a3e",
+          "bytes": 195286,
+          "reviewedAt": "2026-10-13T21:49:50.097852+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwara.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwara.com/",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party indexed homepage describes an adults-only 18+ reader and populated adult chapters."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "<urlopen error timed out>"
+    },
+    {
+      "domain": "mamorumanhwa.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mamorumanhwa.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party catalog lists hundreds of Hentai comics and populated uncensored Adult/Mature works.",
+        "fetchedPage": {
+          "url": "https://mamorumanhwa.com/",
+          "sha256": "6f060d3b5c57f0ae79c5354b59f8073b6a4237d4235e792a19a9432eb5882d6f",
+          "bytes": 117866,
+          "reviewedAt": "2026-10-13T21:50:59.954141+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwaland.tv",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://linktr.ee/manhwaland",
+        "method": "operator-published destination and content classification",
+        "finding": "The operator-owned Linktree explicitly advertises adult comics, hentai, and 18+ manga at this exact domain."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "currentlyResolving": false,
+      "directFetchLimitation": "<urlopen error [Errno 8] nodename nor servname provided, or not known>"
+    },
+    {
+      "domain": "manhwato.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwato.com/webtoon-18",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party Webtoon 18+ catalog contains a populated adult-comic chapter directory."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwa18archive.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwa18archive.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live catalog contains over 1,200 works, labeled 18+, and Adult/Hentai/Uncensored category navigation.",
+        "fetchedPage": {
+          "url": "https://manhwa18archive.com/",
+          "sha256": "7c1c6733b358539267607f300a66b3fa8a054cb5c24ee49e57b8a418edcd6697",
+          "bytes": 641976,
+          "reviewedAt": "2026-10-13T21:49:50.643496+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwa18.cc",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwa18.cc/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://manhwa18.cc/",
+          "sha256": "10164d3f6d84f16311f5e43bd09e84973a43c2d5042df53b2469dc0a4865c37d",
+          "bytes": 151939,
+          "reviewedAt": "2026-10-13T21:46:35.505611+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manhwa18.net",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manhwa18.net/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://manhwa18.net/",
+          "sha256": "6895aac72521cd1ef7d9bec34d4d52f31eb09bd999b81a98b90cf278e42b61a2",
+          "bytes": 186442,
+          "reviewedAt": "2026-10-13T21:46:35.694185+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manga18fx.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manga18fx.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://manga18fx.com/",
+          "sha256": "95936bec7a0b4415f5b11cd105c83f3c048fcde4b88847fe526d1a3d960565d9",
+          "bytes": 123110,
+          "reviewedAt": "2026-10-13T21:46:35.460954+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manga18.me",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manga18.me/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://manga18.me/",
+          "sha256": "6c3f6bf8bae4c6f779034c30aa3d6b4c49076da873aeaa6fee0978c7b6eb6170",
+          "bytes": 130856,
+          "reviewedAt": "2026-10-13T21:46:35.869846+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "manga18.art",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://manga18.art/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://manga18.art/",
+          "sha256": "cf819c0824ec0357a9952e3a3ea07cfcdbd52be803371a5d420df3d6893c8546",
+          "bytes": 131257,
+          "reviewedAt": "2026-10-13T21:46:35.838488+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangaforfree.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangaforfree.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://mangaforfree.com/",
+          "sha256": "4b2a1ba46b556ef13ad46628eae9760afd75b4f70d1b400077747e6998ad9108",
+          "bytes": 162782,
+          "reviewedAt": "2026-10-13T21:48:09.916840+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangaforfree.net",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangaforfree.net/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party homepage identifies an adult-comic catalog and marks actual title cards 18+; sexual-content works are populated.",
+        "fetchedPage": {
+          "url": "https://mangaforfree.net/",
+          "sha256": "94ddd3af4c2163d03f916dff55395a942bbf4f668cb5c97847ee0b847f70beb4",
+          "bytes": 159291,
+          "reviewedAt": "2026-10-13T21:48:10.161026+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangakakalot.gg",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://www.mangakakalot.gg/manga/pay-with-your-body",
+        "method": "first-party HTML and search-indexed title catalog",
+        "finding": "The populated first-party title catalog classifies the work Smut, Adult, and Hentai; the directory also has Pornographic/R-18 categories."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangagg.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangagg.com/tags/manhwa-smut/",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party Smut category contains 47 works, with actual title cards labeled 18+."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    },
+    {
+      "domain": "nyrascans.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://nyrascans.com/series/?genre=smut",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party indexed catalog marks populated works NSFW / 18+ and names +19/adult sexual-content sections."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "<urlopen error [SSL: TLSV1_ALERT_INTERNAL_ERROR] tlsv1 alert internal error (_ssl.c:1129)>"
+    },
+    {
+      "domain": "mangavyvy.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangavyvy.com/collection/653349?genre=141&sort=time_added&sort_type=desc&status=",
+        "method": "first-party HTML and search-indexed catalog metadata",
+        "finding": "The first-party Smut collection is 18+ and populated; the live homepage has Smut and Pornographic navigation and adult-cover handling rules."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "pornhwaz.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://www.pornhwaz.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live homepage describes adult manhwa and uncensored comics, with an adults-only genre catalog.",
+        "fetchedPage": {
+          "url": "https://www.pornhwaz.com/",
+          "sha256": "ea5f0b39724c897eaeddf0a9b112607c30db23b8772293f2af2e657e3e259b1d",
+          "bytes": 216775,
+          "reviewedAt": "2026-10-13T21:49:50.347134+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hiperdex.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://hiperdex.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party meta description advertises an adult comic series catalog alongside general genres.",
+        "fetchedPage": {
+          "url": "https://hiperdex.com/",
+          "sha256": "a47923da65a5ca06e80bd1e6768bc94553a31b5850e564384fd54d09bec52811",
+          "bytes": 371291,
+          "reviewedAt": "2026-10-13T21:46:36.136618+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "fanfox.net",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://fanfox.net/search/author/Hasu/",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party indexed catalog lists Adult/Smut categories and a populated hentai title with sexual-content metadata."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "mangafox.me",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangafox.me/",
+        "method": "verified first-party HTTP redirect",
+        "finding": "The source domain redirects to fanfox.net, whose populated Adult/Smut/hentai catalog is independently verified."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "observedFinalUrl": "http://fanfox.net/"
+    },
+    {
+      "domain": "mangahere.cc",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangahere.cc/",
+        "method": "first-party HTML metadata",
+        "finding": "The live homepage contains a populated title card classified Adult; .com redirects to the same .cc catalog.",
+        "fetchedPage": {
+          "url": "http://www.mangahere.cc/",
+          "sha256": "b47fb26048b0d29190627c0b2d7647660df18b49768a77f910085351aca76d72",
+          "bytes": 152984,
+          "reviewedAt": "2026-10-13T21:46:41.814562+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "observedFinalUrl": "http://www.mangahere.cc/"
+    },
+    {
+      "domain": "mangahere.com",
+      "classification": "adult-comic-catalog",
+      "evidence": {
+        "url": "https://mangahere.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live homepage contains a populated title card classified Adult; .com redirects to the same .cc catalog.",
+        "fetchedPage": {
+          "url": "http://www.mangahere.cc/",
+          "sha256": "f17e758219e30c55a7b3f6f7dc6944e34d382d866179c7250434ea615d981590",
+          "bytes": 152984,
+          "reviewedAt": "2026-10-13T21:46:41.856480+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "observedFinalUrl": "http://www.mangahere.cc/"
+    },
+    {
+      "domain": "lalatoon.com",
+      "classification": "licensed-platform-with-adult-editions",
+      "evidence": {
+        "url": "https://lalatoon.com/en/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party page has 18+ navigation and age verification for browsing or buying 18+ content.",
+        "fetchedPage": {
+          "url": "https://lalatoon.com/en/",
+          "sha256": "1b5993201252a398b24d449ec3d071e2a403716c180d653bae55c5079def8d01",
+          "bytes": 367199,
+          "reviewedAt": "2026-10-13T21:46:38.073299+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "ridibooks.com",
+      "classification": "licensed-platform-with-adult-editions",
+      "evidence": {
+        "url": "https://ridibooks.com/category/books/6104?order=review&page=1",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party adult manga category contains populated sexual-content title records, marked 성인 (adult)."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    },
+    {
+      "domain": "mrblue.com",
+      "classification": "licensed-platform-with-adult-editions",
+      "evidence": {
+        "url": "https://www.mrblue.com/webtoon/wt_000070564?directview=ok",
+        "method": "first-party search-indexed catalog metadata",
+        "finding": "The first-party comic listing is age 19+ and carries adult sexual-content category metadata."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "irodoricomics.com",
+      "classification": "licensed-adult-comic-publisher",
+      "evidence": {
+        "url": "https://irodoricomics.com/",
+        "method": "first-party web-fetched catalog metadata",
+        "finding": "The first-party publisher catalog contains populated explicitly sexual comic releases."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "dlsite.com",
+      "classification": "licensed-platform-with-adult-editions",
+      "evidence": {
+        "url": "https://www.dlsite.com/index.html?locale=en_US",
+        "method": "first-party HTML metadata",
+        "finding": "The live official storefront has dedicated Adult Comics and adult doujin/game departments.",
+        "fetchedPage": {
+          "url": "https://www.dlsite.com/index.html",
+          "sha256": "82dc765af222f6ebf83aab3888be20cc01ef12dda03e31d92f8f17248cdcb424",
+          "bytes": 210226,
+          "reviewedAt": "2026-10-13T21:46:38.189601+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "komiflo.com",
+      "classification": "licensed-adult-comic-publisher",
+      "evidence": {
+        "url": "https://komiflo.com/",
+        "method": "first-party HTML and search-indexed metadata",
+        "finding": "The first-party page describes an erotic-manga service and requires age 18+."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "fakku.net",
+      "classification": "licensed-adult-comic-publisher",
+      "evidence": {
+        "url": "https://www.fakku.net/",
+        "method": "first-party HTML metadata",
+        "finding": "The live publisher identifies itself as an adult website and warns of nudity and explicit sexual depictions.",
+        "fetchedPage": {
+          "url": "https://www.fakku.net/",
+          "sha256": "9d7888d9a97a0b50696235da9f74fe0cf0636131f96d82273abe0e9c230e7c62",
+          "bytes": 157445,
+          "reviewedAt": "2026-10-13T21:46:36.526704+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentai20.io",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentai20.io/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentai20.io/home1/",
+          "sha256": "106b1e691a9d8405ac79da8a143d56db1ae64b709e5b05b25f031bfb44684904",
+          "bytes": 250319,
+          "reviewedAt": "2026-10-13T21:46:36.188748+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentai2read.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentai2read.com/",
+        "method": "first-party web-fetched catalog metadata",
+        "finding": "The first-party page identifies free hentai/doujinshi reading and contains populated adult sexual-content works."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    },
+    {
+      "domain": "e-hentai.org",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://e-hentai.org/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://e-hentai.org/",
+          "sha256": "a91262e1852f6162f3543d0a75b6bfb7d2ab4290660f7189f51ccb51dd44f738",
+          "bytes": 63721,
+          "reviewedAt": "2026-10-13T21:46:36.241812+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hitomi.la",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hitomi.la/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hitomi.la/",
+          "sha256": "5a71f68ce84741f3a835ac0c5ef3134b8b0d2f0f5d6eee446a12342aa4034b22",
+          "bytes": 4875,
+          "reviewedAt": "2026-10-13T21:46:42.438279+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "nhentai.to",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://nhentai.to/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://nhentai.to/",
+          "sha256": "e582f44a79cb6bee9222a985d089f3681336f14842ca9c9381e1dfbd2839197e",
+          "bytes": 25977,
+          "reviewedAt": "2026-10-13T21:46:35.997496+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "nhentai.xxx",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://nhentai.xxx/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://nhentai.xxx/",
+          "sha256": "ffef2093ad68c3bc6447170a246137f3884bd17358583ef2edf53120e0256db0",
+          "bytes": 34692,
+          "reviewedAt": "2026-10-13T21:46:36.130186+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "nhentai.website",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://nhentai.website/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://nhentai.website/",
+          "sha256": "512f06b9061e0ec4177e0b979b088687d55c34cbfb905ba2456c735b9fe9588c",
+          "bytes": 21405,
+          "reviewedAt": "2026-10-13T21:46:43.957960+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "nhentai.io",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://nhentai.io/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://nhentai.io/",
+          "sha256": "7d766d6301d22f324c7a5cfd561bee2b49c86519bbc0c5fca9e721184a7aba2e",
+          "bytes": 71384,
+          "reviewedAt": "2026-10-13T21:48:11.227819+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentaifox.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentaifox.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentaifox.com/",
+          "sha256": "9279ae17196835901f70630bf3e7b653f35a093f608546c8dcf945bb0d7ab880",
+          "bytes": 46441,
+          "reviewedAt": "2026-10-13T21:46:43.460933+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentaiera.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentaiera.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentaiera.com/",
+          "sha256": "5454d799d9f8fc7c3f9178ba38dde2ad511f26e5643bc1e87afbf08b5594544a",
+          "bytes": 69943,
+          "reviewedAt": "2026-10-13T21:48:08.090863+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentaienvy.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentaienvy.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentaienvy.com/",
+          "sha256": "eb5e23ad704b24413134c957a272276bc86d1900827ffa866a0c5a4e0e5fac29",
+          "bytes": 48097,
+          "reviewedAt": "2026-10-13T21:48:08.393203+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentaiclap.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentaiclap.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentaiclap.com/",
+          "sha256": "c0f6b60f83f4c6f30c4b6b3063baee701527b5d87bed6a849bbf99c2ba9a2db0",
+          "bytes": 43783,
+          "reviewedAt": "2026-10-13T21:48:08.186355+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "comicporn.xxx",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://comicporn.xxx/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://comicporn.xxx/",
+          "sha256": "2f0969bf2f50af689d182f1fc81864bb5f2d8573f1c4f7382cc755e120767b35",
+          "bytes": 63567,
+          "reviewedAt": "2026-10-13T21:48:08.161182+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "imhentai.xxx",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://imhentai.xxx/",
+        "method": "first-party web-fetched catalog metadata",
+        "finding": "The first-party page identifies a hentai/doujinshi/porn-comic gallery; HentaiFox directly links this exact host."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    },
+    {
+      "domain": "doujins.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://doujins.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://doujins.com/",
+          "sha256": "a9974824100769fd239eb9433c3993adfe9e98135ff8d6d78de792d77af60158",
+          "bytes": 112910,
+          "reviewedAt": "2026-10-13T21:48:08.423900+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "8muses.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://8muses.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://comics.8muses.com/comics",
+          "sha256": "66a2ea42f25ca9d00d93286c92a3aec45fa0318a6d9b7a3d01370d1d9fa87d91",
+          "bytes": 71654,
+          "reviewedAt": "2026-10-13T21:48:09.064257+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "multporn.net",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://multporn.net/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://multporn.net/",
+          "sha256": "81cc656c9156e3b3cba17bdadeac4a524ed17a423c1354c990b0a741df93fa58",
+          "bytes": 65015,
+          "reviewedAt": "2026-10-13T21:48:08.431344+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentaicomicsfree.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentaicomicsfree.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentaicomicsfree.com/",
+          "sha256": "edd42906f428ba0e31aef32a6a493fbcab33c4522f23ff8bcc9d9a1cea568d86",
+          "bytes": 138123,
+          "reviewedAt": "2026-10-13T21:48:08.957966+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "comicsarmy.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://comicsarmy.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://comicsarmy.com/",
+          "sha256": "1a0efc143ecf2d9ce1bb8e40dc4d75f1fe32a510892d9dd9d900e6c7759b703c",
+          "bytes": 213016,
+          "reviewedAt": "2026-10-13T21:48:09.076887+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "hentai4manga.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://hentai4manga.com/",
+        "method": "first-party HTML metadata",
+        "finding": "The live first-party title, description, age gate, or homepage identifies a populated hentai or pornographic comic gallery.",
+        "fetchedPage": {
+          "url": "https://hentai4manga.com/",
+          "sha256": "fc2ce594ee7b0683c580226141f87f624c9f50593af9d744d182c36259325db4",
+          "bytes": 81274,
+          "reviewedAt": "2026-10-13T21:48:08.653419+00:00"
+        }
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies."
+    },
+    {
+      "domain": "allporncomic.com",
+      "classification": "dedicated-adult-comic-gallery",
+      "evidence": {
+        "url": "https://allporncomic.com/",
+        "method": "first-party web-fetched catalog metadata",
+        "finding": "The first-party page identifies pornographic comic, hentai, and Rule 34 galleries."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": true,
+        "hagezi-nsfw": true,
+        "stevenblack-porn": true,
+        "shadowwhisperer-adult": true
+      },
+      "policyCategory": "DEFAULT_MATURE_COMIC_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "HTTP Error 403: Forbidden"
+    }
+  ],
+  "previousComicDomainsRetained": [
+    "theblank.net",
+    "toonily.com",
+    "webtoonscan.com",
+    "comix.to",
+    "bato.to",
+    "manhwa18.com",
+    "manhwaraw.com",
+    "manhwahentai.me",
+    "webcomicsapp.com",
+    "webtoons.com",
+    "tapas.io",
+    "tappytoon.com",
+    "manta.net",
+    "toomics.com",
+    "lezhin.com",
+    "lezhinus.com",
+    "lezhinx.com",
+    "daycomics.com",
+    "toptoon.com",
+    "coolmic.me",
+    "inkr.com",
+    "globalcomix.com",
+    "mangaplaza.com",
+    "emanga.com",
+    "bookwalker.jp",
+    "ebookrenta.com"
+  ],
+  "excludedOrUnresolved": [
+    {
+      "domain": "webtoonz.org",
+      "status": "not-added",
+      "reason": "Linked by an adult site but the independently fetched homepage establishes only a general comic catalog; no sufficient adult/18+ evidence was found. A link alone is not enough."
+    },
+    {
+      "domain": "topco.com",
+      "status": "not-added",
+      "reason": "The independently fetched site is an unrelated retail purchasing cooperative. Do not infer the comic operator from the similar name."
+    },
+    {
+      "domain": "pocketcomics.com",
+      "status": "not-added",
+      "reason": "Current fetched homepage is unrelated sports-streaming content, so historical mature-comic references do not establish present adult content."
+    },
+    {
+      "domain": "mangabat.com",
+      "status": "not-added",
+      "reason": "The current source redirects to an emoji website. No new adult classification was inferred for that unrelated destination."
+    },
+    {
+      "domain": "tsumino.com",
+      "status": "not-added",
+      "reason": "The current source says the service shut down. Existing bulk-list entries remain untouched."
+    },
+    {
+      "domain": "bomtoon.com",
+      "status": "unresolved",
+      "reason": "Some indexed 19 labels were ambiguous; this pass did not independently establish a current adult age/content rule."
+    },
+    {
+      "domains": [
+        "manytoon.com",
+        "webtoon.xyz",
+        "manhwaclan.com",
+        "manhwa-raw.com",
+        "mangago.me"
+      ],
+      "status": "no-new-curated-rule-in-this-pass",
+      "reason": "Direct metadata fetches were unavailable or access-limited, and sufficient current first-party catalog evidence was not retrieved. Their existing source-list or user-policy coverage is not removed."
+    }
+  ],
+  "validation": {
+    "compiler": "passed",
+    "targetedSuites": [
+      "mature-comic-platforms",
+      "ios-deny-capacity",
+      "ios-mdm",
+      "adult-blocklist-migration",
+      "policy-enforcement"
+    ],
+    "targetedSuitesPassed": 5,
+    "phonePayload": {
+      "primaryDenyUrls": 500,
+      "supplementalDenyUrls": 323,
+      "perPayloadMaximum": 500,
+      "allPriorCuratedDeniesRetained": true,
+      "allNewDomainHttpAndHttpsRootsRetained": true,
+      "autoFilterEnabled": true,
+      "removalDisallowed": true
+    },
+    "newCuratedDomains": 63,
+    "previousComicDomainsRetained": 26,
+    "priorityDomains": 142,
+    "phoneInstalled": false,
+    "macInstalled": false
+  },
+  "alreadyCovered": [
+    {
+      "domain": "honeytoon.com",
+      "classification": "licensed-platform-with-adult-editions",
+      "evidence": {
+        "url": "https://honeytoon.com/",
+        "method": "first-party web-fetched HTML metadata",
+        "finding": "The first-party page requires age 18+ for adult content and advertises uncensored editions."
+      },
+      "sourceMembership": {
+        "blocklistproject-porn": false,
+        "hagezi-nsfw": false,
+        "stevenblack-porn": false,
+        "shadowwhisperer-adult": false
+      },
+      "policyCategory": "DEFAULT_EXPLICIT_BLOCKED_SITES",
+      "scope": "All paths and subdomains; HTTP and HTTPS supervised denies.",
+      "directFetchLimitation": "<urlopen error [Errno 61] Connection refused>",
+      "alreadyCovered": "Existing unconditional domain/subdomain and HTTP/HTTPS denies retained; no redundant priority entry added."
+    }
+  ]
+}

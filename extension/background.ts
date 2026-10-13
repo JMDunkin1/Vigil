@@ -26,7 +26,7 @@ const LOCAL_SERVER_ALLOW_RULE_ID = ALLOWLIST_RULE_START - 1;
 const SITE_EMBEDDED_BLOCK_RULE_START = 13000;
 const CONTENT_EMBEDDED_BLOCK_RULE_START = 14000;
 const ALLOWLIST_EMBEDDED_BLOCK_RULE_START = 15000;
-const SITE_BLOCK_RULE_LIMIT = 300;
+const SITE_BLOCK_RULE_LIMIT = 1_000;
 const CONTENT_BLOCK_RULE_LIMIT = 200;
 const ALLOWLIST_RULE_LIMIT = 20;
 const VIGIL_REQUEST_TIMEOUT_MS = 2500;
@@ -362,6 +362,11 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
+  if (message?.type === "VIGIL_EMBEDDED_FRAME_CHECK") {
+    void checkEmbeddedFrameUrl(message.url, sender).then(sendResponse)
+      .catch(() => sendResponse({ ok: false, offline: true }));
+    return true;
+  }
   if (message?.type === "VIGIL_BROWSER_FILTER_HEALTH") {
     if (sender.frameId !== 0 || !sender.tab?.active || sender.tab.windowId === undefined || !sender.url || message.revision !== "2026-09-17.1") return false;
     const report = (async () => {
@@ -420,6 +425,29 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
   return false;
 });
+
+async function checkEmbeddedFrameUrl(url: string | undefined, sender: chrome.runtime.MessageSender): Promise<ExtensionCheckResult> {
+  const tabId = sender.tab?.id;
+  const frameId = sender.frameId;
+  if (tabId === undefined || frameId === undefined || frameId <= 0
+    || !url || !/^https?:\/\//u.test(url)) return { ok: false, skipped: true };
+  const current = async (): Promise<boolean> => {
+    const frame = await chrome.webNavigation.getFrame({ tabId, frameId });
+    return frame !== null && frame.url === url
+      && (!sender.documentId || frame.documentId === sender.documentId);
+  };
+  if (!await current()) return { ok: false, stale: true };
+  // Embedded pages use the full native policy, not only the finite DNR preload.
+  // Do not count a background frame as a top-level open or foreground usage.
+  const response = await fetchVigil("/api/extension/check", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, event: "embedded", seconds: 0, extensionVersion: manifest.version })
+  });
+  if (!response.ok) return { ok: false, offline: true };
+  const result = await response.json() as ExtensionCheckResult;
+  if (!await current()) return { ok: false, stale: true };
+  return { ok: result.ok === true, blocked: result.blocked === true || result.paused === true };
+}
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void chrome.storage.session.remove(`youtube-navigation:${tabId}`).catch(() => {});

@@ -287,7 +287,9 @@ enum SocialService: String, CaseIterable, Identifiable {
 
     func allowsNavigation(to url: URL) -> Bool {
         guard url.scheme?.lowercased() == "https",
-              url.port == nil || url.port == 443 else { return false }
+              url.port == nil || url.port == 443,
+              url.user == nil, url.password == nil,
+              Self.hasUnambiguousNavigationPath(url) else { return false }
         let host = url.host?.lowercased() ?? ""
         switch self {
         case .instagram:
@@ -456,6 +458,26 @@ enum SocialService: String, CaseIterable, Identifiable {
 
     private static func host(_ host: String, matches domain: String) -> Bool {
         host == domain || host.hasSuffix(".\(domain)")
+    }
+
+    private static func hasUnambiguousNavigationPath(_ url: URL) -> Bool {
+        guard var path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return false }
+        // Foundation preserves dot segments while WebKit resolves them. Do
+        // not let an alternate spelling pass a gate for a restricted route.
+        // Unicode names remain valid; structural separators and nested path
+        // escapes must not change the document that the native gate approved.
+        for attempt in 0..<4 {
+            let lowercased = path.lowercased()
+            if lowercased.contains("%2f") || lowercased.contains("%5c")
+                || path.contains("\\") || path.contains("//")
+                || path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }) { return false }
+            guard let decoded = path.removingPercentEncoding, decoded != path else { return true }
+            if attempt > 0 { return false }
+            path = decoded
+        }
+        // Leave excessive nested encodings closed rather than guessing how
+        // many times the destination's router decodes them.
+        return !path.contains("%")
     }
 
     static func isSnapchatAuthenticationFrameURL(_ url: URL) -> Bool {

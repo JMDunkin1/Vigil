@@ -1,8 +1,17 @@
+import { matchSemanticExplicitUrl } from "../src/explicitUrlContext.js";
 import { checkSearchBreakBeforeNavigation } from "./search-break.js";
 import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
 import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
 import { SEARCH_PARAMETER_NAMES, searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
 import { normalizeExplicitVocabulary, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
+
+function guardBlockedPageURL(): string {
+  try {
+    const target = chrome.runtime.getURL("blocked.html");
+    return typeof target === "string" && target ? target : "about:blank";
+  }
+  catch { return "about:blank"; }
+}
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
 const EXPLICIT_SEARCH_PARAMETER_NAMES = SEARCH_PARAMETER_NAMES;
@@ -48,6 +57,16 @@ const safeSearchSubjects = new Map<string, number>();
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
 
+let embeddedPolicyGeneration = 0;
+let embeddedPolicyCheckedAt = 0;
+let embeddedPolicyPendingUrl = "";
+let embeddedPolicyDeadline: ReturnType<typeof setTimeout> | null = null;
+let embeddedPolicyObserver: MutationObserver | null = null;
+const embeddedPolicyPreviousDisplays = new Map<HTMLElement, { value: string; priority: string }>();
+let embeddedPolicyAwaiting = false;
+let embeddedPolicyMediaGuardInstalled = false;
+const embeddedPolicyPausedMedia = new Set<HTMLMediaElement>();
+
 function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): string | null {
   let url: URL;
   try {
@@ -56,8 +75,9 @@ function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): s
     return null;
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-  if (matchContextualExplicitSearchUrl(url)) return chrome.runtime.getURL("blocked.html");
-  if (searchQueries(url).some(({ query }) => containsExplicitSearchText(query, url.hostname))) return chrome.runtime.getURL("blocked.html");
+  if (matchSemanticExplicitUrl(url.href)) return guardBlockedPageURL();
+  if (matchContextualExplicitSearchUrl(url)) return guardBlockedPageURL();
+  if (searchQueries(url).some(({ query }) => containsExplicitSearchText(query, url.hostname))) return guardBlockedPageURL();
   return null;
 }
 
@@ -237,7 +257,7 @@ function scanSafeSearchContext(): void {
   const query = currentGoogleSearchQuery();
   if (query) {
     if ((hasCurrentSafeSearchEvidence() || hasSavedSafeSearchSubject(query)) && hasSafeSearchContributor(query)) {
-      redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"));
+      redirectAfterSearchWarning(guardBlockedPageURL());
       return;
     }
   } else {
@@ -246,7 +266,7 @@ function scanSafeSearchContext(): void {
     const evidence = !hasOrdinarySafeSearchContext(title) && [...safeSearchSubjects].some(([subject, at]) => at > Date.now() - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
       && at <= Date.now() && matchesSafeSearchSubject(title, subject));
     if (!hasOrdinarySafeSearchContext(title) && isExplicitLinkCollection(readerFileDestinations(roots), evidence)) {
-      redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"));
+      redirectAfterSearchWarning(guardBlockedPageURL());
       return;
     }
   }
@@ -399,7 +419,107 @@ function alwaysOnSearchRedirect(rawUrl: string, baseUrl = location.href): string
 function enforceGoogleSafeSearchForCurrentNavigation(): void {
   lastInspectedSearchUrl = location.href;
   const redirect = alwaysOnSearchRedirect(location.href);
-  if (redirect && redirect !== location.href) location.replace(redirect);
+  if (redirect && redirect !== location.href) { location.replace(redirect); return; }
+  checkEmbeddedFramePolicy();
+}
+
+function checkEmbeddedFramePolicy(): void {
+  // Safari keeps its supervised BuiltIn filter and bundled all-frame guard.
+  // Chrome can additionally ask its local companion for long-tail domains
+  // omitted from the capacity-limited dynamic rules, without moving the parent.
+  if (globalThis.top === globalThis.self || !/^https?:\/\//u.test(location.href)) return;
+  const api = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || globalThis.chrome;
+  try {
+    const origin = api?.runtime?.getURL("");
+    if (origin?.startsWith("safari-web-extension:")) return;
+    if (!origin?.startsWith("chrome-extension:") || !api.runtime.sendMessage) throw new Error("Frame policy authority unavailable");
+  } catch { concealEmbeddedPolicyDocument(); location.replace("about:blank"); return; }
+  const url = location.href;
+  if (embeddedPolicyPendingUrl === url) return;
+  if (lastInspectedSearchUrl === url && Date.now() - embeddedPolicyCheckedAt < 5_000) return;
+  embeddedPolicyPendingUrl = url;
+  embeddedPolicyCheckedAt = Date.now();
+  const generation = ++embeddedPolicyGeneration;
+  concealEmbeddedPolicyDocument();
+  if (embeddedPolicyDeadline !== null) clearTimeout(embeddedPolicyDeadline);
+  let closed = false;
+  const current = () => !closed && generation === embeddedPolicyGeneration && location.href === url;
+  const close = () => {
+    if (!current()) return;
+    closed = true;
+    if (embeddedPolicyDeadline !== null) clearTimeout(embeddedPolicyDeadline);
+    embeddedPolicyDeadline = null;
+    embeddedPolicyPendingUrl = "";
+    location.replace(guardBlockedPageURL());
+  };
+  embeddedPolicyDeadline = setTimeout(close, 3_000);
+  const request = () => {
+    if (!current()) return;
+    try {
+      const requestResult = api.runtime.sendMessage({ type: "VIGIL_EMBEDDED_FRAME_CHECK", url }).then(result => {
+        if (!current()) return;
+        if (result?.stale === true || result?.skipped === true) {
+          // Chrome can briefly report no frame at document_start. Keep it
+          // concealed while retrying, under the original bounded deadline.
+          setTimeout(request, 50);
+          return;
+        }
+        if (result?.ok !== true || result.blocked !== false) { close(); return; }
+        if (embeddedPolicyDeadline !== null) clearTimeout(embeddedPolicyDeadline);
+        embeddedPolicyDeadline = null;
+        embeddedPolicyPendingUrl = "";
+        releaseEmbeddedPolicyDocument();
+      });
+      void requestResult.catch(close);
+    } catch { close(); }
+  };
+  request();
+}
+
+function concealEmbeddedPolicyDocument(): void {
+  embeddedPolicyAwaiting = true;
+  if (typeof document === "undefined") return;
+  const conceal = () => {
+    const root = document.documentElement;
+    if (!root) return;
+    if (!embeddedPolicyPreviousDisplays.has(root)) embeddedPolicyPreviousDisplays.set(root, {
+      value: root.style.getPropertyValue("display"), priority: root.style.getPropertyPriority("display")
+    });
+    if (root.style.getPropertyValue("display") !== "none" || root.style.getPropertyPriority("display") !== "important") {
+      root.style.setProperty("display", "none", "important");
+    }
+  };
+  conceal();
+  for (const media of document.querySelectorAll<HTMLMediaElement>("video, audio")) {
+    if (!media.paused) { embeddedPolicyPausedMedia.add(media); media.pause(); }
+  }
+  if (!embeddedPolicyObserver && typeof MutationObserver === "function") {
+    embeddedPolicyObserver = new MutationObserver(conceal);
+    embeddedPolicyObserver.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
+  }
+  if (!embeddedPolicyMediaGuardInstalled && typeof document.addEventListener === "function") {
+    embeddedPolicyMediaGuardInstalled = true;
+    document.addEventListener("play", event => {
+      if (embeddedPolicyAwaiting && event.target instanceof HTMLMediaElement) event.target.pause();
+    }, true);
+  }
+}
+
+function releaseEmbeddedPolicyDocument(): void {
+  embeddedPolicyAwaiting = false;
+  embeddedPolicyObserver?.disconnect();
+  embeddedPolicyObserver = null;
+  for (const [root, previous] of embeddedPolicyPreviousDisplays) {
+    if (previous.value) root.style.setProperty("display", previous.value, previous.priority);
+    else root.style.removeProperty("display");
+  }
+  embeddedPolicyPreviousDisplays.clear();
+  // Resume only playback this veil interrupted, after a fresh authoritative
+  // allow. A site's new autoplay attempts made while pending stay paused.
+  for (const media of embeddedPolicyPausedMedia) {
+    if (media.isConnected && media.paused) void media.play().catch(() => {});
+  }
+  embeddedPolicyPausedMedia.clear();
 }
 
 function enforceGoogleSafeSearchForLink(event: MouseEvent): void {
@@ -413,7 +533,7 @@ function enforceGoogleSafeSearchForLink(event: MouseEvent): void {
   if (containsExplicitMediaLabel(label) || contextualLinkIsBlocked(anchor)) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"), "assign");
+    redirectAfterSearchWarning(guardBlockedPageURL(), "assign");
     return;
   }
   const redirect = alwaysOnSearchRedirect(anchor.href);
@@ -445,7 +565,7 @@ function enforceGoogleSafeSearchForForm(event: SubmitEvent): void {
   if (explicitFormSearch || directBlock) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"), "assign");
+    redirectAfterSearchWarning(guardBlockedPageURL(), "assign");
     return;
   }
   if (method.toLowerCase() !== "get") return;
@@ -496,7 +616,7 @@ function enforceExplicitSearchControlInteraction(event: Event): boolean {
   if (!blocked) return false;
   if (event.cancelable) event.preventDefault();
   event.stopImmediatePropagation();
-  redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"), "assign");
+  redirectAfterSearchWarning(guardBlockedPageURL(), "assign");
   return true;
 }
 
@@ -565,7 +685,7 @@ function scanExistingSearchControls(root: ParentNode): boolean {
     "input[type='search'], [role='searchbox'], input[name], textarea[name], [contenteditable='true']"
   ) || [];
   if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, false))) {
-    redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"));
+    redirectAfterSearchWarning(guardBlockedPageURL());
     return true;
   }
   return false;
@@ -574,14 +694,14 @@ function scanExistingSearchControls(root: ParentNode): boolean {
 function installDynamicSearchGuard(): void {
   if (typeof document === "undefined") return;
   if (containsExplicitMediaLabel(document.title)) {
-    redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"));
+    redirectAfterSearchWarning(guardBlockedPageURL());
     return;
   }
   scanExistingSearchControls(document);
   if (typeof MutationObserver !== "function" || !document.documentElement) return;
   new MutationObserver((records) => {
     if (containsExplicitMediaLabel(document.title)) {
-      redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"));
+      redirectAfterSearchWarning(guardBlockedPageURL());
       return;
     }
     for (const record of records) {
@@ -589,7 +709,7 @@ function installDynamicSearchGuard(): void {
         if (node instanceof Element) {
           if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node), undefined, false))
             || explicitSearchTextInContainer(node, false)) {
-            redirectAfterSearchWarning(chrome.runtime.getURL("blocked.html"));
+            redirectAfterSearchWarning(guardBlockedPageURL());
             return;
           }
         }
@@ -599,12 +719,16 @@ function installDynamicSearchGuard(): void {
 }
 
 function checkForSearchUrlChange(): void {
-  if (lastInspectedSearchUrl === location.href) return;
+  if (lastInspectedSearchUrl === location.href) { checkEmbeddedFramePolicy(); return; }
+  // A previous URL's pending decision cannot authorize or block this document.
+  embeddedPolicyCheckedAt = 0;
   enforceGoogleSafeSearchForCurrentNavigation();
   if (typeof document !== "undefined") scanSafeSearchContext();
 }
 
 addEventListener("click", enforceGoogleSafeSearchForLink, true);
+addEventListener("auxclick", enforceGoogleSafeSearchForLink, true);
+addEventListener("contextmenu", enforceGoogleSafeSearchForLink, true);
 addEventListener("submit", enforceGoogleSafeSearchForForm, true);
 addEventListener("input", enforceExplicitSearchControlInteraction, true);
 addEventListener("change", enforceExplicitSearchControlInteraction, true);

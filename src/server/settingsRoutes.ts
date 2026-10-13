@@ -52,7 +52,7 @@ export async function handleSettingsApiRoute(
   const previousAdultBlocklistSource = adultBlocklistSource(state);
   const keys = updateSettings(state.settings, body, state.profiles.map((profile) => profile.id));
   if (invalidateAdultBlocklistIfSourceChanged(state, previousAdultBlocklistSource)) {
-    keys.push("adultBlocklistSnapshot");
+    keys.push("adultBlocklistSourcePending");
   }
   if (!keys.length) {
     sendJson(response, 200, { ok: true, keys });
