@@ -9,7 +9,11 @@
   const accountFetch = typeof fetch === 'function' ? fetch.bind(window) : null;
   const pending = new Map();
   const client = crypto.randomUUID();
-  let state = null, panel, message, statusLine, notice;
+  let state = window.webkit?.messageHandlers?.vigilYouTube && window.__vigilYouTubeInitialStatus?.ok
+    && Math.abs(Date.now() - window.__vigilYouTubeInitialStatus.serverTime) < 6500
+    ? window.__vigilYouTubeInitialStatus : null;
+  delete window.__vigilYouTubeInitialStatus;
+  let panel, message, statusLine, notice;
   let lease = null, playing = null, played = 0, lastTick = 0, lastPosition = 0;
   let renewal = null;
   let resumeMedia = null, retryInterruptedPlay = false, queuedStart = false;
@@ -418,6 +422,11 @@
     if (!cached || cached.day !== day || cached.schemaVersion !== 2) cached = { schemaVersion: 2, day, items: [] };
     cached.items = (Array.isArray(cached.items) ? cached.items : [])
       .filter(entry => entry?.card && standardFeedItem(entry.item)?.videoId === entry.card.videoId).slice(0, 20);
+    // The UI cache cannot choose a new twenty after the protected daily feed
+    // has filled. Otherwise only its intersection with the ledger is visible.
+    const selected = state?.feeds?.[name] || [];
+    const selectedIDs = new Set(selected.map(card => card.videoId));
+    if (selected.length === 20) cached.items = cached.items.filter(entry => selectedIDs.has(entry.card.videoId));
     const lists = [];
     const scan = value => {
       if (!value || typeof value !== 'object') return;
@@ -433,8 +442,13 @@
     if (!lists.length) return data;
     for (const list of lists) for (const item of list) {
       const card = standardFeedItem(item);
-      if (card && cached.items.length < 20 && !cached.items.some(old => old.card.videoId === card.videoId)) cached.items.push({ card, item });
+      if (card && (selected.length < 20 || selectedIDs.has(card.videoId)) && cached.items.length < 20
+          && !cached.items.some(old => old.card.videoId === card.videoId)) cached.items.push({ card, item });
     }
+    if (selected.length) cached.items.sort((a, b) => {
+      const rank = id => { const index = selected.findIndex(card => card.videoId === id); return index < 0 ? 20 : index; };
+      return rank(a.card.videoId) - rank(b.card.videoId);
+    });
     // Reuse YouTube's own renderer models. YouTube continues to render every
     // thumbnail, title, three-dot menu and Save action itself.
     let inserted = false;
@@ -447,6 +461,68 @@
     nativeCache.set(name, cached);
     try { localStorage.setItem(key, JSON.stringify(cached)); } catch { /* The protected ledger remains authoritative. */ }
     return data;
+  }
+  function findStandardFeedItem(data, videoId) {
+    if (!data || typeof data !== 'object') return null;
+    const card = standardFeedItem(data);
+    if (card?.videoId === videoId) return data;
+    // Search may also return Shorts and campaigns; never recover from them.
+    if (Object.keys(data).some(key => /(?:Shelf|reel|shorts|promoted|adSlot|brandVideo).*Renderer|shortsLockupViewModel|^richSectionRenderer$/i.test(key))) return null;
+    for (const child of Object.values(data)) if (child && typeof child === 'object') {
+      for (const value of Array.isArray(child) ? child : [child]) {
+        const item = findStandardFeedItem(value, videoId);
+        if (item) return item;
+      }
+    }
+    return null;
+  }
+  let feedRecovery = null;
+  const recoveredFeeds = new Set();
+  async function recoverNativeFeed(name) {
+    const selected = state?.feeds?.[name] || [];
+    const cached = nativeCache.get(name);
+    if (!accountFetch || !cached || selected.length !== 20 || feedRecovery) return;
+    const key = `${state.day}:${name}`;
+    if (recoveredFeeds.has(key)) return;
+    const missing = selected.filter(card => !cached.items.some(entry => entry.card.videoId === card.videoId));
+    if (!missing.length) return;
+    recoveredFeeds.add(key);
+    const day = state.day;
+    feedRecovery = (async () => {
+      let restored = 0;
+      // Retrieve original YouTube renderer models, including its menu commands,
+      // for the existing daily IDs. This never registers new search/play rights.
+      const worker = async () => {
+        while (missing.length) {
+          const card = missing.shift();
+          try {
+            let original = null;
+            for (const query of [card.videoId, card.title]) {
+              const response = await accountFetch(`/results?search_query=${encodeURIComponent(query)}`, {
+                credentials: 'include', signal: AbortSignal.timeout(10000)
+              });
+              if (!response.ok) continue;
+              const data = jsonAfter(await response.text(), /(?:var\s+)?ytInitialData\s*=\s*/);
+              original = findStandardFeedItem(data, card.videoId);
+              if (original) break;
+            }
+            if (!original || state?.day !== day) continue;
+            const item = original.richItemRenderer ? original : { richItemRenderer: { content: original } };
+            if (!cached.items.some(entry => entry.card.videoId === card.videoId)) {
+              cached.items.push({ card, item }); restored++;
+            }
+          } catch { /* Keep the existing selection and retry on the next load. */ }
+        }
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      if (!restored || state?.day !== day) return;
+      cached.items.sort((a, b) => selected.findIndex(card => card.videoId === a.card.videoId) - selected.findIndex(card => card.videoId === b.card.videoId));
+      nativeCache.set(name, cached);
+      try { localStorage.setItem(`vigil-native-feed:${name}`, JSON.stringify(cached)); }
+      catch { return; }
+      if (feedName() === name) location.reload();
+    })();
+    try { await feedRecovery; } finally { feedRecovery = null; }
   }
   // Page-world optimizations must never prevent Safari's isolated controls
   // from starting. Its isolated APIs do not intercept YouTube's own requests.
@@ -519,6 +595,10 @@
     lastFilteredFeed = name;
     document.documentElement.toggleAttribute('data-vigil-feed-pending', !state);
     if (!state || feedSync) return;
+    if (!websiteFeed) {
+      if (!nativeCache.has(name)) nativeFeedData({ richGridRenderer: { contents: [] } });
+      void recoverNativeFeed(name);
+    }
     const models = websiteFeed ? [] : nativeCache.get(name)?.items.map(entry => entry.card) || [];
     const cards = [...models];
     for (const card of domCards()) if (!cards.some(old => old.videoId === card.videoId)) cards.push(card);

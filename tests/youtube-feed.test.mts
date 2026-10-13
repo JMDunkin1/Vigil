@@ -7,16 +7,79 @@ const helpers = source.slice(source.indexOf('  // Feed metadata'), source.indexO
 const ids = Array.from({ length: 25 }, (_, i) => `video${String(i).padStart(6, '0')}`);
 const renderer = (id: string, i: number) => ({ videoWithContextRenderer: { videoId: id, headline: { runs: [{ text: `Full video title ${i}` }] }, lengthText: { simpleText: '6:15' } } });
 const nativeHelpers = source.slice(source.indexOf('  const nativeCardSelector'), source.indexOf('  // Page-world optimizations'));
-function nativeFixture(initialCache: unknown = null) {
+function nativeFixture(initialCache: unknown = null, selected: unknown[] = []) {
   const cache = new Map<string, string>();
   if (initialCache) cache.set('vigil-native-feed:home', JSON.stringify(initialCache));
   const api = runInNewContext(`${helpers}\n${nativeHelpers}\n({nativeFeedData,standardFeedItem,domCards,feedModuleSelector})`, {
-    state: { day: '2026-10-08' }, feedName: () => 'home',
+    state: { day: '2026-10-08', feeds: { home: selected } }, feedName: () => 'home',
     document: { querySelectorAll: () => [] },
     localStorage: { getItem: (key: string) => cache.get(key), setItem: (key: string, value: string) => cache.set(key, value) }
   });
   return { api, cache };
 }
+
+test('a full protected feed cannot be replaced by a fresh UI cache that shares only two IDs', () => {
+  const selected = ids.slice(0, 20).map((videoId, i) => ({ videoId, title: `Full video title ${i}` }));
+  const freshIDs = [ids[0], ids[1], ...Array.from({ length: 18 }, (_, i) => `fresh${String(i).padStart(6, '0')}`)];
+  const fresh = freshIDs.map((videoId, i) => ({ card: { videoId }, item: renderer(videoId, i) }));
+  const { api, cache } = nativeFixture({ schemaVersion: 2, day: '2026-10-08', items: fresh }, selected);
+  const continuation = { continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: 'more' } } } };
+  const result = api.nativeFeedData({ richGridRenderer: { contents: [...fresh.map(entry => entry.item), continuation] } });
+  assert.deepEqual(Array.from(result.richGridRenderer.contents.slice(0, 2), (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice(0, 2));
+  assert.equal(result.richGridRenderer.contents[2], continuation);
+  const stored = JSON.parse(cache.get('vigil-native-feed:home')!);
+  assert.deepEqual(stored.items.map((entry: { card: { videoId: string } }) => entry.card.videoId), ids.slice(0, 2));
+  const recovered = api.nativeFeedData({ richGridRenderer: { contents: ids.slice(0, 20).reverse().map(renderer) } });
+  assert.deepEqual(Array.from(recovered.richGridRenderer.contents, (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice(0, 20));
+});
+
+test('feed recovery retrieves exact saved native models and preserves the twenty daily IDs', async () => {
+  const selected = ids.slice(0, 20).map((videoId, i) => ({ videoId, title: `Full video title ${i}` }));
+  const stored = new Map<string, string>();
+  const requests: string[] = [];
+  let reloads = 0;
+  const api = runInNewContext(`${helpers}\n${nativeHelpers}\n({nativeFeedData, recoverNativeFeed, findStandardFeedItem})`, {
+    state: { day: '2026-10-08', feeds: { home: selected } }, feedName: () => 'home',
+    document: { querySelectorAll: () => [] }, AbortSignal,
+    localStorage: { getItem: () => null, setItem: (key: string, value: string) => stored.set(key, value) },
+    location: { reload: () => reloads++ },
+    accountFetch: async (url: string) => {
+      requests.push(url);
+      const query = new URL(url, 'https://m.youtube.com').searchParams.get('search_query')!;
+      const id = selected.find(card => card.title === query)?.videoId || query;
+      // One saved video is searchable only by title; still require its exact ID.
+      const resultID = query === ids[2] ? 'wrong000001' : id;
+      return { ok: true, text: async () => `var ytInitialData = ${JSON.stringify({ sectionListRenderer: { contents: [{ itemSectionRenderer: { contents: [renderer('wrong000001', 0), renderer(resultID, 1)] } }] } })};` };
+    }
+  });
+  api.nativeFeedData({ richGridRenderer: { contents: ids.slice(0, 2).map(renderer) } });
+  await api.recoverNativeFeed('home');
+  assert.equal(requests.length, 19);
+  assert.equal(reloads, 1);
+  const cached = JSON.parse(stored.get('vigil-native-feed:home')!);
+  assert.deepEqual(cached.items.map((entry: { card: { videoId: string } }) => entry.card.videoId), ids.slice(0, 20));
+  assert.equal(cached.items[2].item.richItemRenderer.content.videoWithContextRenderer.videoId, ids[2]);
+  assert.equal(api.findStandardFeedItem({ reelShelfRenderer: { items: [renderer(ids[0], 0)] } }, ids[0]), null);
+  assert.equal(api.findStandardFeedItem({ brandVideoShelfRenderer: { items: [renderer(ids[0], 0)] } }, ids[0]), null);
+  assert.deepEqual(selected.map(card => card.videoId), ids.slice(0, 20));
+  await api.recoverNativeFeed('home');
+  assert.equal(reloads, 1);
+});
+
+test('document-start status seed expires instead of carrying yesterday into a later reload', () => {
+  const begin = source.indexOf('  let state =');
+  const end = source.indexOf('  let lease =', begin);
+  function seeded(age: number, native = true) {
+    const window = { webkit: native ? { messageHandlers: { vigilYouTube: {} } } : null,
+      __vigilYouTubeInitialStatus: { ok: true, day: '2026-10-08', serverTime: Date.now() - age } };
+    const state = runInNewContext(`${source.slice(begin, end)}\nstate`, { window });
+    assert.equal('__vigilYouTubeInitialStatus' in window, false);
+    return state;
+  }
+  assert.equal(seeded(0).day, '2026-10-08');
+  assert.equal(seeded(7000), null);
+  assert.equal(seeded(0, false), null);
+});
 function fixture() {
   const requests: string[] = [];
   const page = { contents: ids.slice(0, 4).map(renderer), next: { continuationCommand: { token: 'page-two' } } };

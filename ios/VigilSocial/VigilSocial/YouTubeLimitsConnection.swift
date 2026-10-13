@@ -26,6 +26,16 @@ enum YouTubeLimitsConnection {
     }
 
     static func send(_ body: [String: Any], bundle: Bundle = .main) async -> [String: Any] {
+        perform(body, bundle: bundle)
+    }
+
+    // Seed document-start feed filtering from the same protected ledger used
+    // by the bridge, before YouTube can choose a different renderer cache.
+    static func statusSnapshot(bundle: Bundle = .main) -> [String: Any] {
+        perform(["action": "status"], bundle: bundle)
+    }
+
+    private static func perform(_ body: [String: Any], bundle: Bundle) -> [String: Any] {
         do {
             let (configuration, context) = try runtime(bundle: bundle)
             context.exception = nil

@@ -531,7 +531,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient))
             if let resource = bundle.url(forResource: "youtube-limits", withExtension: "js"),
                let source = try? String(contentsOf: resource, encoding: .utf8) {
-                controller.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+                let snapshot = YouTubeLimitsConnection.statusSnapshot(bundle: bundle)
+                let seed = (try? JSONSerialization.data(withJSONObject: snapshot))
+                    .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+                controller.addUserScript(WKUserScript(source: "window.__vigilYouTubeInitialStatus = \(seed);\n" + source,
+                    injectionTime: .atDocumentStart, forMainFrameOnly: false))
             }
         }
         controller.addUserScript(WKUserScript(
