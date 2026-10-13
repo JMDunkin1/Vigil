@@ -4906,7 +4906,51 @@ enum DOMAdapters {
             border-bottom: 1px solid var(--sigDivider);
           }
           [data-vigil-snap-layout] .NvRM8 { border-radius: 0; border: 0; }
-          [data-vigil-snap-layout] .sT7ta { padding: 8px 8px 10px; }
+          [data-vigil-snap-layout] .sT7ta {
+            padding: 8px 8px 10px; flex-shrink: 0;
+            background: var(--sigSurface, #fff);
+          }
+          /* The native reply preview is transparent over the desktop composer.
+             Give its enlarged mobile area one solid surface, keeping Snapchat's
+             original message nodes, close action, and privacy detection intact. */
+          [data-vigil-snap-layout] .aXEpU .Hts9j {
+            background: var(--sigBackgroundPrimary, var(--sigSurface, #fff));
+            max-height: min(180px, calc(var(--vigil-snap-height, 100dvh) * .28));
+            overflow-y: auto; overscroll-behavior: contain;
+          }
+          [data-vigil-snap-layout] .Hts9j .oqVsN {
+            margin: 8px; padding-inline-end: 48px;
+          }
+          [data-vigil-snap-layout] .Hts9j .ZvWBE {
+            inset-block-start: 0; inset-inline-end: 0;
+            min-width: 44px; min-height: 44px;
+          }
+          /* Keep the dismissal backdrop clear; the enlarged action panels and
+             the space between reactions and Reply must be opaque. */
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] #portal-container) .MOJCa { z-index: 30; }
+          html[data-vigil-snap-mobile] #portal-container > .MOJCa {
+            position: fixed;
+            inset: var(--vigil-snap-top, 0px) 0 auto;
+            height: var(--vigil-snap-height, 100dvh);
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] #portal-container) .MOJCa .IxaB_ {
+            width: max-content; max-width: calc(100% - 24px);
+            max-height: min(calc(100% - 24px), calc(var(--vigil-snap-height, 100dvh) - 24px));
+            box-sizing: border-box; padding: 8px; border-radius: 16px;
+            overflow-y: auto; overscroll-behavior: contain;
+            translate: var(--vigil-snap-menu-x, 0px) var(--vigil-snap-menu-y, 0px);
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] #portal-container) :is(.MOJCa .IxaB_, .MOJCa .DPxkw, .MOJCa .c6OV2, .gFryU) {
+            background: var(--sigBackgroundPrimary, var(--sigSurface, #fff));
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] #portal-container) .MOJCa .lF7xe {
+            min-height: 44px; box-sizing: border-box; font-size: 16px;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] #portal-container) .MOJCa .DPxkw ul:first-of-type { flex-wrap: wrap; }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] #portal-container) :is(.MOJCa .DPxkw button, .gFryU .NcaQH) {
+            min-width: 44px; min-height: 44px; touch-action: manipulation;
+          }
+          [data-vigil-snap-layout] :is(.gFryU, .gFryU .gPAXk) { height: auto; min-height: 44px; }
           [data-vigil-snap-layout] [role="textbox"][contenteditable="true"] {
             font-size: 16px !important; min-height: 44px;
           }
@@ -4929,6 +4973,7 @@ enum DOMAdapters {
         const shell = feed?.parentElement;
         const main = shell?.querySelector(':scope > .Vbjsg, :scope > .c1qK9');
         if (!shell?.matches('.Fpg8t, .svUon') || !main) {
+          document.documentElement.removeAttribute('data-vigil-snap-mobile');
           currentShell?.removeAttribute('data-vigil-snap-layout');
           currentShell?.querySelectorAll('.vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat').forEach(node => node.remove());
           currentShell = null;
@@ -4936,6 +4981,7 @@ enum DOMAdapters {
         }
         if (currentShell && currentShell !== shell) currentShell.removeAttribute('data-vigil-snap-layout');
         currentShell = shell;
+        document.documentElement.toggleAttribute('data-vigil-snap-mobile', matchMedia('(max-width: 600px)').matches);
         let viewport = document.querySelector('meta[name="viewport"]');
         if (!viewport) {
           viewport = document.createElement('meta');
@@ -5015,7 +5061,9 @@ enum DOMAdapters {
             shell.toggleAttribute('data-vigil-snap-search', expanded);
             button.setAttribute('aria-expanded', String(expanded));
             if (expanded) {
-              const input = search.matches('input') ? search : search.querySelector('input');
+              // React can replace the input without remounting the toolbar.
+              const field = feed.querySelector('[data-testid="app.feed.Search"], .yC1EG input[role="searchbox"]');
+              const input = field?.matches('input') ? field : field?.querySelector('input');
               input?.focus();
             }
           });
@@ -5027,8 +5075,36 @@ enum DOMAdapters {
         const normalScale = !visual || Math.abs(visual.scale - 1) < .05;
         const height = Math.round(normalScale && visual ? visual.height : window.innerHeight);
         const top = Math.round(normalScale && visual ? visual.offsetTop : 0);
-        for (const [name, value] of [['--vigil-snap-height', `${height}px`], ['--vigil-snap-top', `${top}px`]]) {
-          if (shell.style.getPropertyValue(name) !== value) shell.style.setProperty(name, value);
+        const portal = document.getElementById('portal-container');
+        for (const surface of [shell, portal].filter(Boolean)) {
+          for (const [name, value] of [['--vigil-snap-height', `${height}px`], ['--vigil-snap-top', `${top}px`]]) {
+            if (surface.style.getPropertyValue(name) !== value) surface.style.setProperty(name, value);
+          }
+        }
+        // Snapchat positions its menu once using desktop pointer coordinates.
+        // Clamp the rendered panel after enlargement and keyboard/viewport
+        // changes without rewriting React's inline coordinates or click actions.
+        for (const menu of document.querySelectorAll('[data-vigil-snap-layout] .MOJCa .IxaB_, #portal-container > .MOJCa .IxaB_')) {
+          const previous = {
+            x: parseFloat(menu.style.getPropertyValue('--vigil-snap-menu-x')) || 0,
+            y: parseFloat(menu.style.getPropertyValue('--vigil-snap-menu-y')) || 0
+          };
+          let x = 0, y = 0;
+          if (normalScale && matchMedia('(max-width: 600px)').matches) {
+            const rect = menu.getBoundingClientRect();
+            const backdrop = menu.closest('.MOJCa').getBoundingClientRect();
+            const left = Math.max(0, backdrop.left) + 12;
+            const right = Math.min(innerWidth, backdrop.right) - 12;
+            const bottom = Math.min(top + height, backdrop.bottom) - 12;
+            const upper = Math.max(top, backdrop.top) + 12;
+            const originalLeft = rect.left - previous.x;
+            const originalTop = rect.top - previous.y;
+            x = Math.max(left, Math.min(originalLeft, right - rect.width)) - originalLeft;
+            y = Math.max(upper, Math.min(originalTop, bottom - rect.height)) - originalTop;
+          }
+          for (const [name, value] of [['--vigil-snap-menu-x', `${x}px`], ['--vigil-snap-menu-y', `${y}px`]]) {
+            if (menu.style.getPropertyValue(name) !== value) menu.style.setProperty(name, value);
+          }
         }
       };
       const schedule = () => {
@@ -5038,7 +5114,7 @@ enum DOMAdapters {
       };
       new MutationObserver(schedule).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true,
-        attributeFilter: ['class', 'style', 'data-testid']
+        attributeFilter: ['class', 'style', 'data-testid', 'theme', 'dir']
       });
       addEventListener('resize', schedule);
       addEventListener('popstate', schedule);
@@ -5054,13 +5130,17 @@ enum DOMAdapters {
       }, true);
       // Back-swipe closes an already opened chat via Snapchat's own action.
       // Deliberately never mount a conversation to fake an unread half-swipe.
+      const hasGestureOverlay = () => currentShell?.querySelector(
+        '.S4e9r, .hpge3, .Rnl06, .PvwWu, .MOJCa, .gFryU, [role="dialog"], [role="menu"]'
+      ) || document.querySelector('#portal-container > .MOJCa');
       let edgeSwipe = null;
       document.addEventListener('touchstart', event => {
         edgeSwipe = null;
         if (!matchMedia('(max-width: 600px)').matches || event.touches.length !== 1
             || currentShell?.getAttribute('data-vigil-snap-layout') !== 'detail'
             || !event.target.closest?.('.aXEpU')
-            || currentShell.querySelector('.S4e9r, .hpge3, .Rnl06, .PvwWu, [role="dialog"], [role="menu"]')
+            || hasGestureOverlay()
+            || event.target.closest?.('.Hts9j')
             || event.target.closest?.('input, textarea, [contenteditable], video, canvas, button, a, [role="dialog"]')) return;
         const touch = event.touches[0];
         const rtl = getComputedStyle(currentShell).direction === 'rtl';
@@ -5083,7 +5163,8 @@ enum DOMAdapters {
         const swipe = edgeSwipe;
         edgeSwipe = null;
         if (!swipe || event.changedTouches.length !== 1 || !swipe.close.isConnected
-            || currentShell?.getAttribute('data-vigil-snap-layout') !== 'detail') return;
+            || currentShell?.getAttribute('data-vigil-snap-layout') !== 'detail'
+            || hasGestureOverlay()) return;
         const touch = event.changedTouches[0];
         const dx = (touch.clientX - swipe.x) * (swipe.rtl ? -1 : 1);
         if (dx >= 80 && dx > Math.abs(touch.clientY - swipe.y) * 2) swipe.close.click();

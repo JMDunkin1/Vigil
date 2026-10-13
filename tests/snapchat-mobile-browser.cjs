@@ -12,13 +12,17 @@ async function main() {
   const policy = extract('snapchat');
   const fixture = fs.readFileSync('tests/fixtures/snapchat-desktop-shell.html','utf8');
   await win.webContents.session.protocol.handle('https', () => new Response(fixture,{headers:{'content-type':'text/html; charset=utf-8'}}));
-  const run = script => win.webContents.executeJavaScript(script);
+  const run = async script => {
+    try { return await win.webContents.executeJavaScript(script); }
+    catch (error) { console.error('Fixture script failed:',script); throw error; }
+  };
   const settle = () => run('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
   const hidden = id => run(`getComputedStyle(document.querySelector(${JSON.stringify(id)})).display === 'none'`);
   await win.loadURL('https://www.snapchat.com/web/');
   assert.equal(await hidden('.BbZFb'),true,'fixture reproduces the desktop collapsed feed');
   // Production Snapchat strips test IDs; verify the observed semantic fallback.
   await run("document.querySelector('[data-testid=\"app.feed.Search\"]').removeAttribute('data-testid')");
+  await run("window.__vigilBridge=message=>{if(message.type==='chromeColor')window.fixtureChrome=message.rgb};void 0");
   await run(policy + mobile); await settle();
   assert.equal(await hidden('.yC1EG'),true);
   await run("document.querySelector('.vigil-snap-search').click()");await settle();
@@ -39,6 +43,7 @@ async function main() {
   assert.equal(await hidden('.Vbjsg'),false);
   const bounded = selector => run(`(() => {const el=document.querySelector(${JSON.stringify(selector)});const r=el.getBoundingClientRect();return r.left>=0 && r.right<=innerWidth && r.top>=0 && r.bottom<=innerHeight})()`);
   const hit = selector => run(`(() => {const el=document.querySelector(${JSON.stringify(selector)});const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))})()`);
+  const tap = selector => run(`(() => {const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();document.elementFromPoint(r.left+r.width/2,r.top+r.height/2).click()})()`);
   for(const height of [420,780]){
     win.setContentSize(390,height);await settle();
     assert.equal(await bounded('.JB8Z3'),true,'real friend panel fits keyboard-sized viewport');
@@ -50,6 +55,9 @@ async function main() {
   assert.equal(await hit('[title="View friend requests"]'),true,'original dismissal toggle receives touches');
   await run(`document.querySelector('[title="View friend requests"]').click()`);await settle();
   assert.equal(await run(`document.querySelector('.LtQF8')`),null);
+  await run(`document.querySelector('.yC1EG input').replaceWith(document.querySelector('.yC1EG input').cloneNode());document.querySelector('.vigil-snap-search').click()`);await settle();
+  assert.equal(await run(`document.activeElement===document.querySelector('.yC1EG input')`),true,'search toolbar focuses React replacement input');
+  await run(`document.querySelector('.vigil-snap-search').click()`);await settle();
   await run(`fixtureSwipe('.O4POs',[[5,150],[160,152]])`);await settle();
   assert.equal(await run(`document.querySelector('#shell').dataset.vigilSnapLayout`),'feed','feed half swipe must never open/read a chat');
   await run("document.querySelector('.vigil-snap-tabs [data-panel=camera]').click()");await settle();
@@ -62,6 +70,53 @@ async function main() {
   await run(`document.querySelector('[contenteditable]').textContent='draft';document.querySelector('[aria-label=Send]').click();document.querySelector('[aria-label="Audio call"]').click()`);
   assert.deepEqual(await run('[fixtureSent,callOpened]'),['draft',true]);
   for(const height of [420,780]){win.setContentSize(390,height);await settle();assert.ok(await run(`document.querySelector('[contenteditable]').getBoundingClientRect().bottom <= innerHeight`));}
+  // Exercise genuine message-action structures over a visibly patterned chat
+  // background. Enlargement must paint the entire panel and remain tappable.
+  await run(`document.querySelector('.NvRM8').style.backgroundImage='repeating-linear-gradient(45deg,#0fadff 0 10px,#fffc00 10px 20px)'`);
+  for(const theme of ['light','dark']){
+    await run(`document.documentElement.setAttribute('theme',${JSON.stringify(theme)})`);await settle();
+    assert.deepEqual(await run('fixtureChrome'),theme==='dark'?[18,18,18]:[255,255,255],'native safe areas update with Snapchat theme toggle');
+    for(const width of [320,390,430]){
+      win.setContentSize(width,780);await settle();
+      for(const [left,top] of [[width-15,765],[-40,-40]]){
+        await run(`fixtureOpenMessageMenu(${left},${top})`);await settle();
+        assert.equal(await bounded('.IxaB_'),true,'enlarged context menu stays within viewport at either edge');
+        assert.equal(await hit('#fixture-reply'),true,'Reply receives the actual touch target');
+        assert.equal(await run(`['.IxaB_','.DPxkw','.c6OV2'].every(s=>{const c=getComputedStyle(document.querySelector(s)).backgroundColor;return c.startsWith('rgb(') || /, 1\\)$/.test(c)})`),true,'menu panels and enlarged gap are opaque');
+        await run(`fixtureSwipe('.messages',[[5,180],[160,180]])`);await settle();
+        assert.equal(await run(`!!document.querySelector('.aXEpU')`),true,'message menu prevents accidental back swipe');
+        win.setContentSize(width,420);await settle();
+        assert.equal(await bounded('.IxaB_'),true,'open menu reclamps when keyboard reduces viewport');
+        assert.equal(await hit('#fixture-reply'),true);
+        if(out && width===390 && left>0)fs.writeFileSync(path.join(out,`reply-menu-${theme}.png`),(await win.webContents.capturePage()).toPNG());
+        await tap('#fixture-reply');await settle();
+        assert.equal(await run(`document.querySelector('.MOJCa')===null && !!document.querySelector('.Hts9j')`),true,'original Reply and backdrop dismissal both work');
+        assert.equal(await run(`getComputedStyle(document.querySelector('.Hts9j')).backgroundColor.startsWith('rgb(')`),true,'quoted preview is opaque');
+        await run(`document.querySelector('#fixture-quote').innerHTML='<div>Quoted fixture text</div>'.repeat(40);document.querySelector('[contenteditable]').textContent='fixture draft\\n'.repeat(12)`);await settle();
+        assert.equal(await run(`document.querySelector('.Hts9j').scrollHeight>document.querySelector('.Hts9j').clientHeight`),true,'long quote scrolls inside bounded preview');
+        assert.equal(await bounded('[contenteditable]'),true,'long reply preserves composer above keyboard');
+        assert.equal(await hit('[aria-label="Send"]'),true,'Send remains tappable with long quoted reply');
+        assert.equal(await hit('[aria-label="Cancel reply"]'),true,'enlarged cancel reply button remains tappable');
+        if(out && width===390 && left>0)fs.writeFileSync(path.join(out,`reply-preview-${theme}.png`),(await win.webContents.capturePage()).toPNG());
+        await tap('[aria-label="Cancel reply"]');await settle();
+        assert.equal(await run(`!!window.replyCancelled && document.querySelector('.Hts9j')===null`),true);
+        await run(`document.querySelector('[contenteditable]').textContent='draft'`);
+        win.setContentSize(width,780);await settle();
+      }
+    }
+  }
+  win.setContentSize(390,780);await settle();
+  await run(`fixtureOpenMessageMenu(375,765,false)`);await settle();
+  assert.equal(await bounded('.IxaB_'),true,'older in-chat menu also remains bounded');
+  await tap('#fixture-reply');await settle();
+  await tap('[aria-label="Cancel reply"]');await settle();
+  await run(`fixtureOpenMessageMenu(20,80)`);await settle();
+  await tap('.DPxkw li:first-child button');await settle();
+  assert.equal(await run('fixtureReaction'),'❤️','original reaction action remains functional');
+  await run(`fixtureOpenMessageMenu(20,80)`);await settle();
+  await run(`document.querySelector('.MOJCa').click()`);await settle();
+  assert.equal(await run(`document.querySelector('.MOJCa')===null`),true,'outside-tap dismissal remains functional');
+  await run(`document.querySelector('.NvRM8').style.removeProperty('background-image');document.documentElement.setAttribute('theme','light')`);await settle();
   if(out)fs.writeFileSync(path.join(out,'conversation-light.png'),(await win.webContents.capturePage()).toPNG());
   await run(`document.documentElement.setAttribute('theme','dark')`);await settle();
   if(out)fs.writeFileSync(path.join(out,'conversation-dark.png'),(await win.webContents.capturePage()).toPNG());
@@ -129,7 +184,7 @@ async function main() {
   assert.equal(await run('spotlightClosed'),1,'reconciliation does not repeatedly close one player');
   await win.loadURL('https://accounts.snapchat.com/v2/login');await run(mobile);
   assert.equal(await run(`!!window.__vigilSnapchatMobileInstalled`),false,'authentication remains untouched');
-  console.log('Snapchat mobile layout passed: 320/390/430px, desktop, chat/back, search, compose, camera/call controls, dialogs, keyboard-sized viewport, dark mode, remount, fallback, authentication, and restricted features.');
+  console.log('Snapchat mobile layout passed: 320/390/430px, opaque Reply menus/previews, menu edge/keyboard positioning, reactions/cancel/dismiss, long replies, desktop, chat/back, search remount, camera/call controls, dialogs, theme sync, fallback, authentication, and restricted features.');
   win.destroy();app.quit();
 }
 void main().catch(error=>{console.error(error);app.exit(1)});

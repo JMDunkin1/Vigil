@@ -995,6 +995,71 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-layout]') === null", in: webView)
     }
 
+    @MainActor
+    func testSnapchatMobileReplyPanelsRemainOpaqueAndReachable() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-layout=feed]') !== null", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.O4POs').click()")
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-layout=detail]') !== null", in: webView)
+        for theme in ["light", "dark"] {
+            for width in [320, 390, 430] {
+                webView.frame.size = CGSize(width: width, height: 780)
+                try await waitForJavaScriptCondition("innerWidth === \(width) && innerHeight === 780", in: webView)
+                _ = try await webView.evaluateJavaScript("document.documentElement.setAttribute('theme','\(theme)'); fixtureOpenMessageMenu(innerWidth - 15, 765)")
+                webView.frame.size.height = 420
+                try await waitForJavaScriptCondition("innerHeight === 420", in: webView)
+                let menu = try await webView.callAsyncJavaScript("""
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    const panel = document.querySelector('.IxaB_');
+                    const rect = panel.getBoundingClientRect();
+                    const reply = document.getElementById('fixture-reply');
+                    const button = reply.getBoundingClientRect();
+                    const opaque = ['.IxaB_', '.DPxkw', '.c6OV2'].every(s =>
+                      getComputedStyle(document.querySelector(s)).backgroundColor.startsWith('rgb('));
+                    fixtureSwipe('.messages', [[5,180],[160,180]]);
+                    const stayed = !!document.querySelector('.aXEpU');
+                    const target = document.elementFromPoint(button.left + button.width/2, button.top + button.height/2);
+                    const reachable = reply.contains(target);
+                    target.click();
+                    return [opaque, rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight,
+                      reachable, button.height >= 44, stayed, !document.querySelector('.MOJCa') && !!document.querySelector('.Hts9j')];
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+                XCTAssertEqual(menu, Array(repeating: true, count: 6), "\(theme), \(width)px")
+                let preview = try await webView.callAsyncJavaScript("""
+                    document.querySelector('#fixture-quote').innerHTML = '<div>Quoted fixture text</div>'.repeat(40);
+                    document.querySelector('[contenteditable]').textContent = 'fixture draft\\n'.repeat(12);
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    const preview = document.querySelector('.Hts9j');
+                    const composer = document.querySelector('[contenteditable]').getBoundingClientRect();
+                    const cancel = document.querySelector('.ZvWBE');
+                    const rect = cancel.getBoundingClientRect();
+                    const target = document.elementFromPoint(rect.left + rect.width/2, rect.top + rect.height/2);
+                    const reachable = cancel.contains(target);
+                    const result = [getComputedStyle(preview).backgroundColor.startsWith('rgb('),
+                      preview.scrollHeight > preview.clientHeight, composer.bottom <= innerHeight,
+                      reachable, rect.width >= 44 && rect.height >= 44];
+                    target.click();
+                    result.push(!document.querySelector('.Hts9j') && window.replyCancelled === true);
+                    return result;
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+                XCTAssertEqual(preview, Array(repeating: true, count: 6), "\(theme), \(width)px")
+            }
+        }
+    }
+
     private static let snapchatMobileShellFixture = #"""
     <!doctype html><html theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -1006,13 +1071,17 @@ final class VigilSocialTests: XCTestCase {
     .Fpg8t{position:absolute;inset:0;display:grid;grid-template-columns:340px minmax(0,1fr);overflow:hidden}.BL7do{width:100%;height:100%;display:flex;flex-direction:column;background:var(--sigMain);z-index:1}.XlW_1{display:flex;justify-content:space-between;height:60px;gap:8px;padding:12px;border-bottom:1px solid var(--sigDivider)}.AbUJt,.toJ1p{display:flex;align-items:center;gap:8px}.JM4Qm{display:flex}.yC1EG{display:flex;height:60px;gap:8px;padding:12px;border-bottom:1px solid var(--sigDivider)}nav{flex:1;min-height:0;overflow:auto}.O4POs{display:flex;align-items:center;justify-content:space-between;padding:0 12px;cursor:pointer;height:74px;width:340px;border-bottom:.5px solid var(--sigDivider);background:var(--sigSurface)}.LNwMF{width:54px;height:54px;border-radius:50%;background:#eee6ff;display:grid;place-items:center;font-size:28px;flex-shrink:0}.BbZFb{display:flex;flex-direction:column;flex:1;height:54px;width:0;margin-inline-start:10px;justify-content:space-evenly}.BbZFb strong{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.status{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--sigTextSecondary)}.status i{width:9px;height:9px;border:1.5px solid #0fadff;border-radius:2px}.status.unread{color:#0fadff}.status.unread i{background:#0fadff}.w15C2{display:flex;flex-shrink:0;margin-inline-start:12px}.Vbjsg{display:grid;min-height:0;padding:0 10px 10px;grid-template-rows:minmax(0,1fr)}._XMCw{display:grid;grid-template-rows:minmax(0,1fr);padding-inline-end:10px;max-height:100vh}.ChLAv{grid-area:1/1;min-height:0}.aXEpU{height:100%;display:flex;flex-direction:column}.k1IaM{display:flex;align-items:center;justify-content:space-between;height:60px;padding:12px}.iLVEm{display:flex;align-items:center;gap:8px;min-width:0}.NvRM8{height:100%;border:1px solid var(--sigDivider);border-radius:12px;display:flex;flex-direction:column;overflow:hidden;background:var(--sigSurface)}.messages{flex:1;min-height:0;overflow:auto;padding:18px 16px}.message{padding-left:12px;border-left:2px solid #0fadff;margin:14px 0;line-height:1.5}.message.me{border-color:#f23c57}.message b{font-size:11px;letter-spacing:.6px;color:#0fadff}.message.me b{color:#f23c57}.sT7ta{padding:8px 10px 20px;background:var(--sigMain)}.composer-row{display:flex;align-items:center;gap:8px}.composer-row button{flex-shrink:0;width:36px;height:44px}.euyIb{font-size:16px;min-height:38px;max-height:100px;overflow:auto;flex:1;border-radius:24px;background:var(--sigTextField);padding:10px 14px}.euyIb:empty:before{content:'Send a chat';color:var(--sigTextSecondary)}.landing{display:grid;place-items:center;height:100%;background:#f4f4f4;color:#333}
     .LtQF8{position:fixed;align-self:flex-start;top:8px;z-index:102}.sjdIo{position:relative;z-index:200}.c9yiB{height:95vh;width:327px;background:var(--sigMain);border:1px solid var(--sigDivider);border-radius:12px;display:flex;flex-direction:column;padding:12px}.tZiHC{width:100%}.buksD{overflow-x:hidden;scrollbar-width:none}.zYgGl{z-index:200;width:320px}.JB8Z3{display:flex;flex-direction:column;gap:12px;padding:12px;width:100%;max-height:90vh;background:var(--sigMain);border:1px solid var(--sigDivider);border-radius:12px}.Vbjsg{z-index:1}
     @media(max-width:850px){.LtQF8{top:44px;left:98px}.BL7do{z-index:3}.Fpg8t{grid-template-columns:82px minmax(0,1fr)}.BbZFb,.w15C2,.yC1EG,.KcY9t{display:none}.O4POs{width:100%}.LsbRg{position:absolute;right:-18px}.k1IaM{padding-inline-start:34px}}
+    .aXEpU{will-change:transform}
+    /* Current client b00815e2 message actions: the menu wrapper and quoted preview
+       have no background; only the small desktop action groups paint a surface. */
+    .NvRM8{position:relative}.MOJCa{position:absolute;inset:0;z-index:1;width:100%;height:100%;background:transparent}.MOJCa .IxaB_{position:absolute;display:flex;flex-direction:column;gap:8px}.MOJCa :is(.DPxkw,.c6OV2){background:var(--sigMain);border-radius:10px;box-shadow:0 0 8px #0002}.DPxkw ul{display:flex;gap:2px;margin:3px;padding:0;list-style:none}.DPxkw button{padding:0;width:28px;height:32px}.lF7xe{display:flex;align-items:center;gap:10px;padding:12px;color:var(--sigTextSecondary);cursor:pointer}.Hts9j{border-bottom:.5px solid var(--sigDivider)}.oqVsN{margin:14px;padding:12px;border:1px solid var(--sigDivider);border-radius:10px;position:relative}.ZvWBE{position:absolute;top:-6px;right:-6px;min-width:22px;min-height:22px;padding:0;background:var(--sigMain)}.gFryU{height:36px;display:flex;background:var(--sigMain);border-radius:30px;padding:0 8px;gap:3px}.gPAXk{height:36px}.NcaQH{height:36px;border:0;background:none;padding:2px;display:flex;align-items:center}
     </style></head><body>
     <div class="Fpg8t" id="shell"><aside class="BL7do">
     <header class="XlW_1"><div class="AbUJt"><button aria-label="Profile" onclick="window.profileOpened=true" style="background:#fffc00;width:40px;height:40px;color:#16191c">☺</button></div><div class="JM4Qm">Snapchat</div><div class="toJ1p"><div class="KcY9t"><button title="View friend requests" onclick="toggleFriends()">♧</button></div><div class="LsbRg"><button title="New Chat" onclick="openNewChat()">✎</button></div></div></header>
     <div class="yC1EG"><input role="searchbox" placeholder="Search" aria-label="Search"></div>
     <nav aria-label="Chat feed"><div role="list" id="friends"></div></nav>
     <button aria-label="Spotlight" id="restricted">Spotlight</button><a href="/discover/test" id="discover">Discover</a>
-    </aside><main class="Vbjsg"><div class="_XMCw"><div class="ChLAv" id="conversation"><div class="landing">Snapchat for Web</div></div></div></main></div>
+    </aside><main class="Vbjsg"><div class="_XMCw"><div class="ChLAv" id="conversation"><div class="landing">Snapchat for Web</div></div></div></main></div><div id="portal-container"></div>
     <script>
     const contacts=[['Alex','New Chat','👩🏻','unread'],['Jordan','Received · 12m','🧑🏽',''],['Sam','Opened · 1h','👨🏼',''],['Weekend plans','Received · 2h','👥',''],['Taylor','Delivered · 3h','👩🏾',''],['Morgan','Opened · 5h','🧑🏻',''],['Casey','Received · 1d','👨🏽',''],['Riley','Opened · 1d','👩🏼','']];
     document.getElementById('friends').innerHTML=contacts.map(([name,status,avatar,unread],i)=>`<div role="listitem" style="height:74px"><div class="O4POs" role="button" tabindex="0" aria-labelledby="title-${i}" onclick="openChat('${name}')"><div class="LNwMF">${avatar}</div><div class="BbZFb"><strong id="title-${i}">${name}</strong><span class="status ${unread}"><i></i>${status}</span></div><div class="w15C2"><button aria-label="Camera" onclick="event.stopPropagation(); window.cameraOpened=true">◎</button></div></div></div>`).join('');
@@ -1023,6 +1092,20 @@ final class VigilSocialTests: XCTestCase {
     function fixtureAddFriend(){window.friendAdded=document.querySelector('.JB8Z3 input').value}
     function toggleFriends(){if(document.querySelector('.zYgGl')){closeDialog();return}window.friendsOpened=true;openDialog('<div class="zYgGl"><div class="JB8Z3"><span>Add Friends</span><input aria-label="Find friends" placeholder="Search by username"><div class="tZiHC"><div class="buksD" style="max-height:65vh;overflow-y:auto"><button onclick="fixtureAddFriend()">Add</button><div style="height:600px">Other matching friends</div></div></div></div></div>')}
     function openNewChat(){if(document.querySelector('.c9yiB')){closeDialog();return}openDialog('<div class="sjdIo"><div class="c9yiB"><button onclick="closeDialog()">Cancel</button><input data-testid="app.users.chooseUsers.CreateConversation.Search" placeholder="To:"></div></div>')}
+    function fixtureOpenMessageMenu(left=innerWidth-15,top=innerHeight-15,portalled=true){
+      document.querySelector('.MOJCa')?.remove();
+      const backdrop=document.createElement('div');backdrop.className='MOJCa';
+      backdrop.onclick=()=>{window.menuDismissed=true;backdrop.remove()};
+      backdrop.innerHTML=`<div class="IxaB_" style="left:${left}px;top:${top}px"><div class="DPxkw"><ul>${['❤️','😂','😮','😢','😡','👍'].map(emoji=>`<li><button aria-label="React ${emoji}" onclick="window.fixtureReaction='${emoji}'">${emoji}</button></li>`).join('')}</ul></div><div class="c6OV2"><div class="lF7xe" onclick="window.fixtureSaved=true">Save in Chat</div><div class="lF7xe" id="fixture-reply" onclick="fixtureShowReply()">Reply</div><div class="lF7xe" onclick="window.fixtureCopied=true">Copy Text</div></div></div>`;
+      (portalled ? document.getElementById('portal-container') : document.querySelector('.NvRM8')).appendChild(backdrop);
+    }
+    function fixtureShowReply(){
+      document.querySelector('.Hts9j')?.remove();
+      const preview=document.createElement('div');preview.className='Hts9j';
+      preview.innerHTML='<div class="oqVsN"><button class="ZvWBE" aria-label="Cancel reply" onclick="this.closest(\'.Hts9j\').remove();window.replyCancelled=true">×</button><b>ALEX</b><div id="fixture-quote">Want to grab coffee later?</div></div>';
+      document.querySelector('.sT7ta').prepend(preview);
+      document.querySelector('[contenteditable]').focus();
+    }
     // Synthetic DOM gesture dispatch checks the adapter state machine only; it does
     // not claim to simulate WKWebView's physical scrolling or OS back gesture.
     function fixtureSwipe(selector,points,options={}){const target=document.querySelector(selector);const fire=(type,point,count)=>{const touches=Array.from({length:count},(_,i)=>({identifier:i,target,clientX:point[0]+i,clientY:point[1],pageX:point[0]+i,pageY:point[1]}));const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(event,{touches:{value:type==='touchend'?[]:touches},changedTouches:{value:touches}});target.dispatchEvent(event)};fire('touchstart',points[0],options.startCount||1);for(const point of points.slice(1))fire('touchmove',point,options.moveCount||1);fire(options.cancel?'touchcancel':'touchend',points.at(-1),1)}
