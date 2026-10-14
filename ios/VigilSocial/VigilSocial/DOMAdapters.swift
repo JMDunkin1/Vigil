@@ -1939,6 +1939,20 @@ enum DOMAdapters {
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (node.scrollTop !== position) node.scrollTop = position;
       });
+      const reelAdvanceControl = target => target?.closest?.(
+        '[aria-label="Next" i], [aria-label="Next reel" i], [aria-label="Previous reel" i]'
+      );
+      const containPress = event => {
+        if (!syncRoute() || inSheet(event.target)) return false;
+        if (reelAdvanceControl(event.target)) { cancel(event); return true; }
+        const control = event.target?.closest?.('button, a[href], [role="button"]');
+        if (control && !control.querySelector('video') && !mediaRoute(control.href)) return false;
+        // A hold can arm Instagram's recommendation viewer before any move
+        // event occurs. Keep press/release listeners away from the media while
+        // retaining the browser's ordinary click for playback and pinch zoom.
+        event.stopImmediatePropagation();
+        return true;
+      };
       const mediaSource = video => video.getAttribute('src') || video.currentSrc || video.querySelector('source')?.src || '';
       const reconcile = () => {
         if (!syncRoute()) return;
@@ -2013,7 +2027,8 @@ enum DOMAdapters {
       };
       window.addEventListener('touchstart', event => {
         if (!syncRoute() || inSheet(event.target) || event.touches.length !== 1) { gesture = null; return; }
-        gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, blocked: false };
+        gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, blocked: false,
+          contained: containPress(event) };
       }, { capture: true, passive: true });
       window.addEventListener('touchmove', event => {
         if (!syncRoute() || !gesture || event.touches.length !== 1) return;
@@ -2027,10 +2042,13 @@ enum DOMAdapters {
       }, { capture: true, passive: false });
       for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
         if (gesture?.blocked) cancel(event);
+        else if (gesture?.contained) event.stopImmediatePropagation();
         gesture = null;
       }, { capture: true, passive: false });
       window.addEventListener('pointerdown', event => {
-        pointerGesture = syncRoute() && !inSheet(event.target) ? { x: event.clientX, y: event.clientY, blocked: false } : null;
+        pointerGesture = syncRoute() && !inSheet(event.target) ? {
+          x: event.clientX, y: event.clientY, blocked: false, contained: containPress(event)
+        } : null;
       }, true);
       window.addEventListener('pointermove', event => {
         if (!syncRoute() || !pointerGesture) return;
@@ -2042,7 +2060,11 @@ enum DOMAdapters {
       }, true);
       for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
         if (pointerGesture?.blocked) cancel(event);
+        else if (pointerGesture?.contained) event.stopImmediatePropagation();
         pointerGesture = null;
+      }, true);
+      for (const type of ['mousedown', 'mouseup', 'contextmenu']) window.addEventListener(type, event => {
+        if (containPress(event) && type === 'contextmenu') cancel(event);
       }, true);
       window.addEventListener('wheel', event => {
         if (syncRoute() && !inSheet(event.target) && event.deltaY) cancel(event);
@@ -2058,7 +2080,7 @@ enum DOMAdapters {
             && location.pathname.startsWith('/direct/')) {
           sharedIntent = { route: shared, source: location.pathname, at: Date.now() };
         }
-        const next = event.target?.closest?.('[aria-label="Next" i], [aria-label="Next reel" i], [aria-label="Previous reel" i]');
+        const next = reelAdvanceControl(event.target);
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
       }, true);
       window.addEventListener('scroll', event => {
