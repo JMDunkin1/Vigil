@@ -791,33 +791,36 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
-    // Prepare the foreground responder while the verified access gate still
-    // covers the page. Snapchat treats late focus as awaiting reactivation;
-    // its real chat-opening click must occur after focus has reached WebKit.
+    // Native chrome/service switching can leave a visible document unfocused.
+    // Restore real WebKit focus before taps so the site can maintain presence
+    // and read acknowledgments. Never synthesize those events or clear badges.
     func prepareForegroundInteraction() async {
-        guard let view = eligibleSnapchatFocusView(),
-              let documentID = mainDocumentIDs[.snapchat] else { return }
+        guard let view = eligibleForegroundFocusView(),
+              let documentID = mainDocumentIDs[fixedService] else { return }
         let focused = try? await view.evaluateJavaScript("document.hasFocus()")
         guard focused as? Bool == false,
               !Task.isCancelled,
-              eligibleSnapchatFocusView() === view,
-              mainDocumentIDs[.snapchat] == documentID else { return }
-        view.becomeFirstResponder()
+              eligibleForegroundFocusView() === view,
+              mainDocumentIDs[fixedService] == documentID,
+              view.becomeFirstResponder() else { return }
         // Wait for WebKit to process the real focus event before enabling taps.
         // Do not fake a focus/click event or acknowledge its privacy screen.
         _ = try? await view.evaluateJavaScript("document.hasFocus(); window.__vigilPublishSnapchatRenderState?.();")
     }
 
-    private func eligibleSnapchatFocusView() -> WKWebView? {
-        guard fixedService == .snapchat,
+    private func eligibleForegroundFocusView() -> WKWebView? {
+        guard fixedService == .snapchat || fixedService == .instagram,
               playbackServiceIsVisible, !playbackIsBackgrounded,
               hasRecentConfirmedAccess, accessRestriction?() != true,
               UIApplication.shared.applicationState == .active,
-              let view = webViews[.snapchat], !view.isLoading,
+              let view = webViews[fixedService], !view.isLoading,
               view.window?.isKeyWindow == true,
-              let url = view.url, SocialService.snapchat.allowsNavigation(to: url),
-              ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(url.host?.lowercased() ?? ""),
-              url.path == "/web" || url.path.hasPrefix("/web/") else { return nil }
+              let url = view.url, fixedService.allowsNavigation(to: url),
+              fixedService.isCanonicalAppHost(url.host?.lowercased() ?? ""),
+              !fixedService.usesUnmodifiedAuthenticationDocument(url),
+              !fixedService.isRestrictedSurface(url) else { return nil }
+        if fixedService == .snapchat,
+           !(url.path == "/web" || url.path.hasPrefix("/web/")) { return nil }
         return view
     }
 

@@ -1113,6 +1113,80 @@ final class VigilSocialTests: XCTestCase {
     """#
 
     @MainActor
+    func testInstagramReadSurfacesRecoverRealFocusWithoutResettingSession() async throws {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false,
+                                      websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .instagram)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let controller = UIViewController()
+        window.rootViewController = controller
+        webView.frame = window.bounds
+        controller.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        // Fictional local state, with no Instagram account or read-ack requests.
+        // Recover native document focus; leave all unread decisions to the site.
+        webView.loadHTMLString("""
+            <html><body><main>
+              <h1>Messages</h1><div id="unread">2 new messages</div>
+              <textarea id="draft">Unsent reply</textarea>
+            </main><script>
+              window.fixtureFocusEvents = 0;
+              window.addEventListener('focus', () => fixtureFocusEvents++);
+              window.fixtureReady = true;
+            </script></body></html>
+            """, baseURL: URL(string: "https://www.instagram.com/direct/inbox/")!)
+        try await waitForJavaScriptCondition("window.fixtureReady === true && document.readyState === 'complete'", in: webView)
+        _ = try await webView.callAsyncJavaScript(
+            "globalThis.fetch = async url => ({status:200,url}); return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+
+        let otherResponder = UITextField(frame: CGRect(x: 0, y: 0, width: 100, height: 40))
+        controller.view.addSubview(otherResponder)
+        for path in ["/direct/inbox/", "/direct/t/123/", "/accounts/activity/"] {
+            _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '\(path)')")
+            XCTAssertTrue(otherResponder.becomeFirstResponder())
+            try await waitForJavaScriptCondition("!document.hasFocus()", in: webView)
+            let allowed = await store.confirmServiceAccess()
+            XCTAssertTrue(allowed)
+            // Hidden, backgrounded and restricted companions cannot take focus.
+            await store.handleSceneActivity(true, isServiceVisible: false)
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder)
+            await store.handleSceneActivity(false, isServiceVisible: true)
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder)
+            store.accessRestriction = { true }
+            await store.handleSceneActivity(true, isServiceVisible: true)
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder)
+            store.accessRestriction = nil
+            store.requestFreshServiceAccessReceipt()
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder, "An unverified session must not take focus")
+
+            let reconfirmed = await store.confirmServiceAccess()
+            XCTAssertTrue(reconfirmed)
+            store.suspendAllMedia(relinquishExternalPlayback: false)
+            await store.prepareForegroundInteraction()
+            let focused = try await webView.evaluateJavaScript("document.hasFocus()") as? Bool
+            XCTAssertEqual(focused, true, "Instagram's visible \(path) needs real WebKit focus before interaction")
+            let unchanged = try await webView.evaluateJavaScript("""
+                document.getElementById('unread').textContent === '2 new messages'
+                  && document.getElementById('draft').value === 'Unsent reply'
+                """) as? Bool
+            XCTAssertEqual(unchanged, true, "Focus recovery must preserve unread state and unsent replies")
+            let events = try await webView.evaluateJavaScript("fixtureFocusEvents") as? Int
+            await store.prepareForegroundInteraction()
+            let repeatedEvents = try await webView.evaluateJavaScript("fixtureFocusEvents") as? Int
+            XCTAssertEqual(repeatedEvents, events, "Periodic access checks must not keep refocusing the page")
+        }
+        withExtendedLifetime(store) {}
+    }
+
+    @MainActor
     func testSnapchatGroupChatRecoversRealFocusWithoutRemovingPrivacyScreen() async throws {
         let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
             mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
