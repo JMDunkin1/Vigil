@@ -118,19 +118,31 @@ enum LinkedInAppleAuthentication {
 }
 
 enum InstagramSingleReelPolicy {
-    static func blocksNavigation(from source: URL?, to destination: URL) -> Bool {
-        guard let source, let current = mediaRoute(source), ["reel", "p"].contains(current.kind),
-              let next = mediaRoute(destination) else { return false }
+    static func blocksNavigation(from source: URL?, to destination: URL, sharedStory: URL? = nil) -> Bool {
+        guard let source, let current = mediaRoute(source),
+              ["reel", "p"].contains(current.kind)
+                || (current.kind == "story" && sharedStory.flatMap(mediaRoute)?.id == current.id) else { return false }
+        if ["/reels", "/reels/"].contains(destination.path.lowercased()),
+           ["instagram.com", "www.instagram.com"].contains(destination.host?.lowercased() ?? "") { return true }
+        if current.kind == "story", destination.path.lowercased().hasPrefix("/stories"),
+           ["instagram.com", "www.instagram.com"].contains(destination.host?.lowercased() ?? ""),
+           mediaRoute(destination)?.id != current.id { return true }
+        guard let next = mediaRoute(destination) else { return false }
         return next.kind != current.kind || current.id != next.id
     }
 
     private static func mediaRoute(_ url: URL) -> (kind: String, id: String)? {
         guard ["instagram.com", "www.instagram.com"].contains(url.host?.lowercased() ?? "") else { return nil }
         let parts = url.path.split(separator: "/").map(String.init)
+        if parts.count == 3, parts[0].lowercased() == "stories", !parts[2].isEmpty,
+           parts[2].allSatisfy({ $0.isNumber }) {
+            return ("story", "\(parts[1].lowercased())/\(parts[2])")
+        }
         let offset = parts.count == 3 ? 1 : 0
         guard parts.count == offset + 2,
               ["reel", "reels", "p"].contains(parts[offset].lowercased()) else { return nil }
-        return (parts[offset].lowercased(), parts[offset + 1])
+        let kind = parts[offset].lowercased()
+        return (kind == "reels" ? "reel" : kind, parts[offset + 1])
     }
 }
 

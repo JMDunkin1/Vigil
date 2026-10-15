@@ -292,6 +292,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     @Published private(set) var instagramInformationalAccounts: [String] = []
     private var instagramControlsUserScript: WKUserScript?
+    private var instagramDocumentStartUserScript: WKUserScript?
+    private var instagramIncomingSharedURL: URL?
+    private var instagramPendingIncomingURL: URL?
 
     let fixedService: SocialService
     private let defaults: UserDefaults
@@ -458,6 +461,26 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func open(_ link: SocialIncomingLink) {
         guard link.service == fixedService, accessRestriction?() != true else { return }
         let destination = link.destination
+        if link.service == .instagram {
+            let controller = webView(for: .instagram).configuration.userContentController
+            instagramIncomingSharedURL = destination
+            instagramPendingIncomingURL = destination
+            let replacement = DOMAdapters.documentStartScript(
+                for: .instagram, unclassifiedMediaPolicy: unclassifiedMediaPolicy,
+                audioEnabled: audioEnabled(for: .instagram), contentSafetyEnabled: false,
+                sharedContentURL: destination)
+            // Rebuild just the bootstrap, preserving every other protection.
+            // The seed binds an incoming story to its exact URL at document
+            // start, before the normal mutual-friend gate can reject it.
+            let scripts = controller.userScripts.map { script in
+                script.source == instagramDocumentStartUserScript?.source
+                    ? WKUserScript(source: replacement, injectionTime: script.injectionTime,
+                        forMainFrameOnly: script.isForMainFrameOnly) : script
+            }
+            controller.removeAllUserScripts()
+            for script in scripts { controller.addUserScript(script) }
+            instagramDocumentStartUserScript = scripts.first { $0.source == replacement }
+        }
         if link.service == .youtube, link.grantsExternalPlayback,
            let id = SocialIncomingLink.youtubeVideoID(destination) {
             Task { @MainActor in
@@ -539,7 +562,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                     injectionTime: .atDocumentStart, forMainFrameOnly: false))
             }
         }
-        controller.addUserScript(WKUserScript(
+        let documentStartUserScript = WKUserScript(
             source: DOMAdapters.documentStartScript(
                 for: service,
                 unclassifiedMediaPolicy: unclassifiedMediaPolicy,
@@ -548,7 +571,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
-        ))
+        )
+        controller.addUserScript(documentStartUserScript)
+        if service == .instagram { instagramDocumentStartUserScript = documentStartUserScript }
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.installedFrameSafetyScript(
                 for: service,
@@ -2054,11 +2079,16 @@ extension SocialWebViewStore: WKNavigationDelegate {
                 decisionHandler(.cancel, preferences)
                 return
             }
-            if service == .instagram,
-               InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url) {
+            let isIncomingInstagramShare = service == .instagram
+                && navigationAction.navigationType == .other && instagramPendingIncomingURL == url
+            if isIncomingInstagramShare { instagramPendingIncomingURL = nil }
+            if service == .instagram, !isIncomingInstagramShare,
+               InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url, sharedStory: instagramIncomingSharedURL) {
                 decisionHandler(.cancel, preferences)
                 return
             }
+            if service == .instagram, webView.url?.path.hasPrefix("/direct/") == true,
+               url.path.hasPrefix("/stories/") { instagramIncomingSharedURL = url }
             if service == .tiktok,
                TikTokSingleItemPolicy.blocksNavigation(from: webView.url, to: url) {
                 decisionHandler(.cancel, preferences)
