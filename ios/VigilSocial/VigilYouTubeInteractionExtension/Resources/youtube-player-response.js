@@ -3,6 +3,7 @@
   const allowedHosts = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com']);
   if (!allowedHosts.has(location.hostname) || window.__vigilYouTubeResponseGuard) return;
   window.__vigilYouTubeResponseGuard = true;
+  const nativeParse = JSON.parse;
   const PLAYER_RESPONSE_PATHS = new Set([
     '/youtubei/v1/player', '/youtubei/v1/get_watch', '/youtubei/v1/next', '/get_watch', '/playlist'
   ]);
@@ -20,7 +21,11 @@
   const plainRecord = value => {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const prototype = Object.getPrototypeOf(value);
-    return prototype === Object.prototype || prototype === null;
+    return prototype === Object.prototype || prototype === null
+      || (Object.getPrototypeOf(prototype) === null
+        && Object.prototype.hasOwnProperty.call(prototype, 'constructor')
+        && typeof prototype.constructor === 'function'
+        && Function.prototype.toString.call(prototype.constructor) === Function.prototype.toString.call(Object));
   };
   const playablePlayerResponse = value => plainRecord(value)
     && plainRecord(value.videoDetails)
@@ -42,19 +47,55 @@
     }
     // Mobile watch responses wrap the player beneath several renderer layers.
     // Remove only ad arrays belonging to a positively identified player.
-    return Object.values(value).every(item => !item || typeof item !== 'object'
-      || collectPlayerAdFields(item, targets, seen));
+    return Object.entries(value).every(([key, item]) => {
+      // Older and mobile bootstrap data also carry the player as JSON inside
+      // ytInitialData or ytplayer.config.args. Preserve the surrounding data.
+      if (['playerResponse', 'player_response'].includes(key) && typeof item === 'string') {
+        let player;
+        try { player = nativeParse(item); } catch { return true; }
+        if (!playablePlayerResponse(player)) return true;
+        const nested = [];
+        if (!collectPlayerAdFields(player, nested, seen)) return false;
+        if (!nested.length) return true;
+        const descriptor = Object.getOwnPropertyDescriptor(value, key);
+        if (!descriptor?.writable) return false;
+        for (const [target, field, replacement] of nested) {
+          if (replacement === undefined) Reflect.deleteProperty(target, field);
+          else Reflect.set(target, field, replacement);
+        }
+        targets.push([value, key, JSON.stringify(player)]);
+        return true;
+      }
+      return !item || typeof item !== 'object' || collectPlayerAdFields(item, targets, seen);
+    });
   };
   const prunePlayerResponse = value => {
     const targets = [];
     try {
       if (!collectPlayerAdFields(value, targets) || targets.length === 0) return false;
-      return targets.every(([target, key]) => Reflect.deleteProperty(target, key));
+      return targets.every(([target, key, replacement]) => replacement === undefined
+        ? Reflect.deleteProperty(target, key) : Reflect.set(target, key, replacement));
     } catch { return false; }
   };
   const clonedPrunedPlayerResponse = value => {
     try {
-      const clone = JSON.parse(JSON.stringify(value));
+      // Bootstrap containers can also own player methods. A JSON round trip
+      // drops those functions and changes unrelated values such as undefined.
+      const seen = new WeakMap();
+      const copy = item => {
+        if (!item || typeof item !== 'object') return item;
+        if (seen.has(item)) return seen.get(item);
+        if (!Array.isArray(item) && !plainRecord(item)) throw new Error('Unknown player container');
+        const clone = Array.isArray(item) ? [] : Object.create(Object.getPrototypeOf(item));
+        seen.set(item, clone);
+        for (const key of Reflect.ownKeys(item)) {
+          const descriptor = Object.getOwnPropertyDescriptor(item, key);
+          if (!descriptor || !('value' in descriptor)) throw new Error('Unknown player property');
+          Object.defineProperty(clone, key, { ...descriptor, value: copy(descriptor.value) });
+        }
+        return clone;
+      };
+      const clone = copy(value);
       return prunePlayerResponse(clone) ? clone : null;
     } catch { return null; }
   };
@@ -118,7 +159,7 @@
         if (!['', 'text', 'json'].includes(String(this.responseType || ''))) return raw;
         try {
           const wasText = typeof raw === 'string';
-          const payload = wasText ? JSON.parse(raw) : clonedPrunedPlayerResponse(raw);
+          const payload = wasText ? nativeParse(raw) : clonedPrunedPlayerResponse(raw);
           if (!payload || (wasText && !prunePlayerResponse(payload))) return raw;
           return wasText ? JSON.stringify(payload) : payload;
         } catch { return raw; }
@@ -129,23 +170,50 @@
       }
     };
   };
-  const installInitialPlayerResponseGuard = () => {
-    const key = 'ytInitialPlayerResponse';
-    const descriptor = Object.getOwnPropertyDescriptor(window, key);
-    if (descriptor && (!descriptor.configurable || !('value' in descriptor) || !descriptor.writable)) return;
-    let current = descriptor?.value;
-    current = clonedPrunedPlayerResponse(current) || current;
+  const cleanInitialValue = value => {
+    if (typeof value !== 'string') return clonedPrunedPlayerResponse(value) || value;
     try {
+      const payload = nativeParse(value);
+      return prunePlayerResponse(payload) ? JSON.stringify(payload) : value;
+    } catch { return value; }
+  };
+  const installInitialPlayerResponseGuard = key => {
+    const descriptor = Object.getOwnPropertyDescriptor(window, key);
+    if (descriptor && (!descriptor.configurable
+        || ('value' in descriptor ? !descriptor.writable : !descriptor.get || !descriptor.set))) return;
+    let current = descriptor?.value;
+    try {
+      if (descriptor?.get) current = descriptor.get.call(window);
+      current = cleanInitialValue(current);
+      if (descriptor?.set) descriptor.set.call(window, current);
       Object.defineProperty(window, key, {
         configurable: true,
         enumerable: descriptor?.enumerable ?? true,
-        get: () => current,
-        set: value => { current = clonedPrunedPlayerResponse(value) || value; }
+        get: () => descriptor?.get ? descriptor.get.call(window) : current,
+        set: value => {
+          current = cleanInitialValue(value);
+          if (descriptor?.set) descriptor.set.call(window, current);
+        }
       });
     } catch {}
   };
+  const installParsedPlayerResponseGuard = () => {
+    // Some mobile startup and SPA responses bypass both globals and fetch by
+    // parsing inline JSON. Only recognize complete player schemas with ads;
+    // normal JSON and malformed/unknown schemas retain their original result.
+    JSON.parse = new Proxy(nativeParse, {
+      apply(target, thisArg, argumentsList) {
+        const result = Reflect.apply(target, thisArg, argumentsList);
+        const text = argumentsList[0];
+        if (typeof text === 'string' && text.includes('"videoDetails"')
+            && PLAYER_AD_KEYS.some(key => text.includes(`"${key}"`))) prunePlayerResponse(result);
+        return result;
+      }
+    });
+  };
   installFetchPlayerResponseGuard();
   installXHRPlayerResponseGuard();
-  installInitialPlayerResponseGuard();
+  for (const key of ['ytInitialPlayerResponse', 'ytInitialData', 'ytplayer']) installInitialPlayerResponseGuard(key);
+  installParsedPlayerResponseGuard();
 
 })();

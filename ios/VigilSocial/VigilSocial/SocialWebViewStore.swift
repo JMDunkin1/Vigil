@@ -920,7 +920,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     private func receivedYouTubePlaybackAuthorization(body: [String: Any], reply: [String: Any]) async {
-        guard fixedService == .youtube else { return }
+        guard fixedService == .youtube,
+              let action = body["action"] as? String,
+              ["start", "renew", "settle"].contains(action) else { return }
         if let lease = reply["lease"] as? [String: Any], let id = lease["videoId"] as? String {
             guard let url = webViews[.youtube]?.url,
                   ["/watch", "/watch/"].contains(url.path),
@@ -952,8 +954,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             while !Task.isCancelled {
                 guard let self, self.externalPlaybackAuthorization.hasLease else { return }
                 guard let snapshot = await self.youtubePlaybackSnapshot() else {
-                    if !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation { self.suspendAllMedia() }
-                    return
+                    guard !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation else { return }
+                    self.youtubeExternalPlaybackAvailable = false
+                    self.updateYouTubePictureInPicturePermission()
+                    // Foreground playback already has the page's ledger and
+                    // safety gates. A busy WebKit process must not let this
+                    // auxiliary PiP probe suspend the entire visible player.
+                    // External playback still fails closed on a missing probe.
+                    if self.playbackIsBackgrounded { self.suspendAllMedia(); return }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    continue
                 }
                 guard !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation else { return }
                 self.externalPlaybackAuthorization.sample(snapshot)

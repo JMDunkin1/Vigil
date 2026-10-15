@@ -22,6 +22,22 @@
   let intent = '', busy = false, waiting = false, deadline = 0, route = location.href;
   let menuVideo = null, replayingSave = false;
   let spacePress = null, idleSince = null, playbackClock = null;
+  let preparation = null;
+  let pressedControl = null;
+  const playControlSelector = '.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]';
+  const controlLabel = control => (control.getAttribute('aria-label') || control.getAttribute('title') || '').trim();
+  const rememberPressedControl = event => {
+    pressedControl = null;
+    if (!event.isTrusted || !(event.target instanceof Element)) return;
+    const control = event.target.closest(playControlSelector);
+    if (control && currentID()) pressedControl = { control, id: currentID(), label: controlLabel(control), at: performance.now() };
+  };
+  // Mobile YouTube can handle touchend before the compatibility click and
+  // change Play to Pause (or the reverse). Preserve what the user pressed.
+  document.addEventListener('pointerdown', rememberPressedControl, true);
+  document.addEventListener('touchstart', rememberPressedControl, { capture: true, passive: true });
+  document.addEventListener('touchcancel', () => { pressedControl = null; }, true);
+  document.addEventListener('pointercancel', () => { pressedControl = null; }, true);
   const idFrom = value => {
     try {
       const url = new URL(value, location.href);
@@ -121,12 +137,17 @@
     busy = true;
     updateHeldPlayer();
     try {
+      // Start the account lookup on navigation. Opening a video never obtains
+      // a playback lease; the real Start still validates the durable ledger.
+      // Saved/search/external videos can Start immediately even if an account
+      // lookup is pending. Only a save-first reply needs its membership result.
+      void prepareCurrentVideo();
       let sent = performance.now(), response;
       try { response = await request({ action: 'start', videoId: id }); }
       catch (error) {
         if (error.message !== 'Save this video to Watch Later before playing.') throw error;
         show('Checking Watch Later…');
-        const saved = await watchLaterMembership(id);
+        const saved = await preparedMembership(id);
         if (!saved) throw error;
         await request({ action: 'save', ...saved });
         sent = performance.now(); response = await request({ action: 'start', videoId: id });
@@ -339,6 +360,36 @@
     }
     throw new Error('Could not find this video in Watch Later. Open the playlist and try again.');
   }
+  function prepareCurrentVideo() {
+    const id = currentID();
+    if (!playerFrame || !id) { preparation = null; return Promise.resolve(); }
+    if (preparation?.id === id && preparation.day === state?.day
+        && performance.now() - preparation.at < 30000) return preparation.promise;
+    const entry = { id, day: state?.day, at: performance.now(), membership: null, membershipChecked: false, promise: null };
+    preparation = entry;
+    entry.promise = (async () => {
+      try { await request({ action: 'check', videoId: id }); }
+      catch (error) {
+        if (error.message !== 'Save this video to Watch Later before playing.') throw error;
+        entry.membership = await watchLaterMembership(id);
+        entry.membershipChecked = true;
+      }
+      // A status reply can establish today's ledger for the first time.
+      entry.day = state?.day;
+    })();
+    // Navigation prepares silently; Play reports a failed check if necessary.
+    void entry.promise.catch(() => {});
+    return entry.promise;
+  }
+  async function preparedMembership(id) {
+    const entry = preparation;
+    if (entry?.id === id && entry.day === state?.day
+        && performance.now() - entry.at < 30000) {
+      try { await entry.promise; } catch { return watchLaterMembership(id); }
+      if (entry.membershipChecked) return entry.membership;
+    }
+    return watchLaterMembership(id);
+  }
   function rememberMenuVideo(target) {
     const card = target.closest(`${nativeCardSelector},ytm-playlist-video-renderer,ytd-playlist-video-renderer`);
     const anchor = card?.querySelector('a[href*="watch?v="]');
@@ -348,6 +399,7 @@
     if (card || videoId) menuVideo = videoId ? { videoId, title } : null;
   }
   async function standardWatchLaterChange(target, remove) {
+    preparation = null;
     const video = menuVideo;
     if (!video) { show('Open the video’s menu again to change Watch Later.'); return; }
     const before = state?.slots.find(slot => slot?.videoId === video.videoId);
@@ -666,8 +718,10 @@
       style.textContent += 'html[data-vigil-standard-feed] ytm-rich-grid-renderer .rich-grid-sticky-header:has(ytm-feed-filter-chip-bar-renderer){display:none!important}';
       style.textContent += `html[data-vigil-standard-feed] :is(ytd-rich-item-renderer,ytm-rich-item-renderer):not(:has(:is(ytd-rich-grid-media,ytm-rich-grid-media,ytd-video-renderer,ytm-video-with-context-renderer,ytd-grid-video-renderer,ytm-compact-video-renderer,yt-lockup-view-model,ytm-lockup-view-model))){display:none!important}`;
       if (!topFrame) style.textContent += '.ytp-endscreen-content,.ytp-ce-element,.ytp-cards-button,.ytp-cards-teaser,.ytp-next-button,.ytp-playlist-menu-button,.ytp-pause-overlay,.ytp-suggestion-set,a[href*="feature=endscreen"]{display:none!important}';
-      style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}html[data-vigil-playback-held] .ytp-large-play-button,html[data-vigil-playback-held] .ytp-cued-thumbnail-overlay{display:block!important}html[data-vigil-playback-held] .ytp-chrome-bottom{display:block!important;opacity:1!important}';
-      style.textContent += 'html[data-vigil-playback-pending] .ytp-large-play-button{display:none!important}';
+      // YouTube owns control visibility and hit testing, including miniplayer
+      // transitions. Forcing its hidden thumbnail/toolbar visible creates a
+      // second, stale Play/Pause overlay over the real controls.
+      style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}';
       document.documentElement.append(style);
     }
     for (const media of document.querySelectorAll('video,audio')) {
@@ -755,15 +809,17 @@
       return;
     }
     rememberMenuVideo(event.target);
-    const playControl = event.target.closest('.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]');
+    const playControl = event.target.closest(playControlSelector);
     if (playControl && currentID()) {
       // A tap on the playing surface belongs to YouTube's controls and seek
       // gestures; only its explicit Play/Pause buttons need direct toggling.
       if (playControl.tagName === 'VIDEO' && lease && playing && performance.now() < deadline) return;
-      const controlLabel = (playControl.getAttribute('aria-label') || playControl.getAttribute('title') || '').trim();
-      const explicitPlay = /^play\b/i.test(controlLabel)
+      const press = pressedControl; pressedControl = null;
+      const labelAtPress = press?.control === playControl && press.id === currentID()
+        && performance.now() - press.at < 1500 ? press.label : controlLabel(playControl);
+      const explicitPlay = /^play\b/i.test(labelAtPress)
         || playControl.matches?.('.ytp-large-play-button,.ytp-cued-thumbnail-overlay');
-      const explicitPause = /^pause\b/i.test(controlLabel);
+      const explicitPause = /^pause\b/i.test(labelAtPress);
       const applyControl = () => {
         if (explicitPause) pauseAuthorized();
         else if (explicitPlay && busy) { wantsPlayback = true; queuedStart = true; }
@@ -842,6 +898,7 @@
       // YouTube rewrites list/index/time parameters while opening Watch Later.
       // Those same-video updates must not cancel a pending or active Play.
       if (!previousID || previousID !== currentID()) {
+        preparation = null;
         intent = ''; resumeMedia = null; wantsPlayback = false; queuedStart = false;
         void stop().then(() => request({ action: 'switch', videoId: currentID() })).catch(error => show(error.message));
       }
@@ -896,9 +953,11 @@
   }
   setInterval(() => {
     if (playbackClock === null) playbackTick();
+    void prepareCurrentVideo();
     clean();
   }, 500);
   setInterval(() => { if (!lease && !busy) void request({ action: 'status' }).catch(error => show(error.message)); }, 30000);
   if (document.documentElement) clean();
   else document.addEventListener('DOMContentLoaded', clean, { once: true });
+  void prepareCurrentVideo();
 })();

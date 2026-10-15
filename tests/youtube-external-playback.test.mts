@@ -142,3 +142,12 @@ test('a changed video source cannot reuse the old safe frame', () => {
   assert.equal(page.primary.webkitPresentationMode, 'inline');
   assert.equal(page.primary.paused, true);
 });
+
+test('buffering keeps an authorized Play active while a real Pause remains paused', () => {
+  const page = fixture(); page.markSafe(); page.authorize('abcdefghijk', true);
+  page.primary.readyState = 1;
+  assert.equal((page.snapshot() as unknown as { playing: boolean }).playing, true);
+  assert.equal(page.request(), true);
+  page.primary.pause();
+  assert.equal((page.snapshot() as unknown as { playing: boolean }).playing, false);
+});

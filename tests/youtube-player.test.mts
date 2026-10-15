@@ -9,8 +9,10 @@ import { youtubeAction, YOUTUBE_BASE_MS } from '../src/youtubeLimits.js';
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
 const id = 'video000000';
 type Callback = (event?: unknown) => unknown;
-async function playerFixture(nativeReply: boolean | 'safari' = false, initiallySaved = true, renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = "") {
-  let accountSaved = initiallySaved;
+async function playerFixture(nativeReply: boolean | 'safari' = false, initiallySaved = true, renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = "", accountInitiallySaved = initiallySaved, holdAccountLookup = false) {
+  let accountSaved = accountInitiallySaved;
+  let finishAccountLookup: (() => void) | undefined;
+  const accountRequests: string[] = [];
   let clock = 0;
   const nodes: Node[] = [], intervals: { callback: Callback; ms: number; active: boolean }[] = [];
   const handlers = new Map<string, Callback[]>();
@@ -72,7 +74,7 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
     setInterval(callback: Callback, ms: number) { const timer = { callback, ms, active: true }; intervals.push(timer); return timer; },
     clearInterval(timer: {active: boolean}) { timer.active = false; },
     setTimeout, clearTimeout, AbortSignal,
-    fetch: async () => ({ ok: true, text: async () => `var ytInitialData = ${JSON.stringify({ contents: accountSaved ? [{ playlistVideoRenderer: { videoId: id, title: { simpleText: 'Real Watch Later video' } } }] : [] })};` }),
+    fetch: async (url: string) => { accountRequests.push(url); if (holdAccountLookup) await new Promise<void>(resolve => { finishAccountLookup = resolve; }); return { ok: true, text: async () => `var ytInitialData = ${JSON.stringify({ contents: accountSaved ? [{ playlistVideoRenderer: { videoId: id, title: { simpleText: 'Real Watch Later video' } } }] : [] })};` }; },
     browser: nativeReply === 'safari' ? { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return delayedAct(message.youtube); } } } : undefined,
     chrome: nativeReply === 'safari' ? undefined : { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return delayedAct(message.youtube); } } }
   });
@@ -140,8 +142,55 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
     await flush();
     return initializations;
   };
-  return { replaceMedia: () => { Object.assign(media, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...media, isConnected:true, paused:true, play: async () => { selectedMedia.paused = false; for (const callback of handlers.get('play') || []) callback({target:selectedMedia,isTrusted:true}); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
+  const mobileTap = async (initialLabel: string, finalLabel: string) => {
+    media.attributes.set('aria-label', initialLabel);
+    for (const callback of handlers.get('touchstart') || []) callback({ isTrusted: true, target: media });
+    if (initialLabel === 'Play') await media.play(); else media.pause();
+    media.attributes.set('aria-label', finalLabel);
+    for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: media, preventDefault() {}, stopImmediatePropagation() {} });
+    await flush();
+  };
+  return { finishAccountLookup: () => finishAccountLookup?.(), accountRequests, mobileTap, replaceMedia: () => { Object.assign(media, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...media, isConnected:true, paused:true, play: async () => { selectedMedia.paused = false; for (const callback of handlers.get('play') || []) callback({target:selectedMedia,isTrusted:true}); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
 }
+
+test('opening a video checks Watch Later before Play without allocating a slot or playback lease', async () => {
+  const f = await playerFixture('safari', false, 0, 50, 0, '', true);
+  assert.deepEqual(f.accountRequests, ['/playlist?list=WL']);
+  assert.equal(f.media.paused, true);
+  assert.equal(f.state.youtubeLimits!.lease, null);
+  assert.equal(f.state.youtubeLimits!.usedMs, 0);
+  assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 0);
+  await f.click('Play this video');
+  assert.equal(f.media.paused, false);
+  assert.equal(f.accountRequests.length, 1, 'Play reuses the lookup completed on opening');
+  assert.equal(f.state.youtubeLimits!.slots[0]?.videoId, id);
+});
+
+test('mobile touch handling cannot turn the original Play tap into Pause', async () => {
+  const f = await playerFixture(true);
+  await f.mobileTap('Play', 'Pause');
+  assert.equal(f.media.paused, false);
+  await f.mobileTap('Pause', 'Play');
+  assert.equal(f.media.paused, true, 'the corresponding Pause tap must also survive a changed label');
+  await f.mobileTap('Play', 'Pause');
+  assert.equal(f.media.paused, false);
+});
+
+test('an incoming external grant does not wait behind a slow Watch Later preflight', async () => {
+  const f = await playerFixture('safari', false, 0, 50, 0, '', false, true);
+  assert.equal(f.accountRequests.length, 1);
+  // The navigation authority can finish after the document-start Check.
+  f.state.youtubeLimits!.external.push(id);
+  await f.click('Play this video');
+  assert.equal(f.media.paused, false);
+  assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 0);
+  f.finishAccountLookup(); await f.flush();
+  assert.equal(f.media.paused, false);
+});
+
+test('the allowance gate never forces hidden YouTube controls into the miniplayer', () => {
+  assert.doesNotMatch(source, /\.ytp-(?:large-play-button|cued-thumbnail-overlay|chrome-bottom)\{[^}]*display:block!important/);
+});
 test('player gates autoplay and meters the first playback seconds', async () => {
   const { state, media, click, advance } = await playerFixture();
   await media.play(); assert.equal(media.paused, true);
