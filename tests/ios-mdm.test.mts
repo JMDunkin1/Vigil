@@ -50,7 +50,7 @@ if (removeTestUrlFilterService) {
   assert.equal(allPrioritySites.every((site) => exportedDenyUrls.includes(`https://${site}/`)), true,
     "every curated priority site must remain in an exported BuiltIn payload");
   assert.equal(targets.deniedUrls.includes("https://deviantart.com/"), true, "DeviantArt must be blocked when SafeSearch cannot sanitize it");
-  assert.equal(targets.deniedUrls.includes("https://reddit.com/over18"), true, "Reddit's mature-content gate must be blocked on the supervised phone");
+  assert.equal(targets.deniedUrls.includes("https://reddit.com/over18/"), true, "Reddit's mature-content gate must be blocked on the supervised phone");
   assert.equal(targets.deniedUrls.includes("https://reddit.com/"), false, "ordinary Reddit must remain available");
   assert.equal(targets.deniedUrls.includes("http://croxyproxy.com/"), false, "HTTPS-only proxy roots preserve capacity for modern services");
   assert.equal(exportedDenyUrls.includes("http://anonymouse.com/"), true, "confirmed plain-HTTP proxies need a second scheme entry in the exported BuiltIn filters");
@@ -203,12 +203,13 @@ if (removeTestUrlFilterService) {
   assert.equal(enabledWebFilter.AutoFilterEnabled, true);
   assert.equal(enabledWebFilter.FilterType, "BuiltIn");
   const levelOneDeniedUrls = enabledWebFilter.DenyListURLs as unknown[];
-  assert.equal(levelOneDeniedUrls.includes("https://youtube.com/shorts"), true);
-  assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/spotlight"), true);
-  assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/discover"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://youtube.com/shorts/"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/spotlight/"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://snapchat.com/discover/"), true);
   assert.equal(levelOneDeniedUrls.includes("https://pornhub.com/"), true);
-  assert.equal(levelOneDeniedUrls.includes("https://www.google.com/search?q=porn"), true);
-  assert.equal(levelOneDeniedUrls.includes("https://duckduckgo.com/?q=nsfw"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://www.google.com/search?q=porn%20videos"), true);
+  assert.equal(levelOneDeniedUrls.includes("https://duckduckgo.com/?q=nsfw"), false, "automatic keyword boundaries are handled by the companion, not an Apple substring prefix");
+  assert.ok(levelOneDeniedUrls.includes("https://duckduckgo.com/?q=porn+videos"));
   const enabledSafeSearchDns = enabledParsed.PayloadContent
     .map((item) => recordValue(item, "enabled phone DNS payload"))
     .find((payload) => payload.PayloadType === "com.apple.dnsSettings.managed");
@@ -363,8 +364,8 @@ if (removeTestUrlFilterService) {
   assert.equal((limitOnlyRestrictions?.blockedAppBundleIDs as unknown[] | undefined)?.includes("com.google.chrome.ios"), true);
   const limitOnlyWebFilter = profilePayload(limitOnlyParsed, "com.apple.webcontent-filter");
   assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://youtube.com/"));
-  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://www.google.com/search?q=porn"), "standalone time limits must preserve permanent explicit-search protection");
-  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.some(prefix => typeof prefix === "string" && "https://youtube.com/shorts".startsWith(prefix)), "standalone time limits must preserve permanent Shorts coverage, including when the whole site is blocked");
+  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.includes("https://www.google.com/search?q=porn%20videos"), "standalone time limits must preserve permanent explicit-search protection");
+  assert.ok((limitOnlyWebFilter?.DenyListURLs as unknown[] | undefined)?.some(prefix => typeof prefix === "string" && "https://youtube.com/shorts/".startsWith(prefix)), "standalone time limits must preserve permanent Shorts coverage, including when the whole site is blocked");
   assert.match(limitOnlyProfile, /com\.burbn\.instagram/);
   state.limitBlocks = [];
   assert.equal(activeLimitPolicy(state, phoneUsage, { app: "com.google.ios.youtube", hostname: "youtube.com", device: "phone" }, now), null);
@@ -410,10 +411,10 @@ if (removeTestUrlFilterService) {
     const deniedUrls = webFilter?.DenyListURLs as unknown[] | undefined;
     assert.ok(Array.isArray(deniedUrls));
     assert.equal(deniedUrls.length, 500, "Apple's built-in web filter deny list must never exceed 500 URLs");
-    assert.equal(deniedUrls.includes("https://www.google.com/search?q=porn"), true, "permanent explicit-search protection must have first priority");
-    assert.equal(deniedUrls.includes("https://archive.org/search?query=porn"), true, "Internet Archive search must retain permanent explicit-query protection");
-    assert.equal(deniedUrls.includes("https://archive.org/advancedsearch.php?q=porn"), true, "Internet Archive advanced search must retain permanent explicit-query protection");
-    assert.equal(deniedUrls.includes("https://youtube.com/shorts"), true, "permanent default protection must have first priority");
+    assert.equal(deniedUrls.includes("https://www.google.com/search?q=porn%20videos"), true, "permanent explicit-search protection must have first priority");
+    assert.equal(deniedUrls.includes("https://archive.org/search?query=porn%20videos"), true, "Internet Archive search must retain permanent explicit-query protection");
+    assert.equal(deniedUrls.includes("https://archive.org/advancedsearch.php?q=porn%20videos"), true, "Internet Archive advanced search must retain permanent explicit-query protection");
+    assert.equal(deniedUrls.includes("https://youtube.com/shorts/"), true, "permanent default protection must have first priority");
     assert.equal(deniedUrls.includes("https://honeytoon.com/"), true, "named explicit comic sites must be retained ahead of the bulk adult preload");
     assert.equal(deniedUrls.includes("https://toongod.org/"), true, "known Toongod domains must be retained ahead of the bulk adult preload");
     assert.equal(deniedUrls.includes(policyUrls.at(-1)), true, "policy URLs must be retained ahead of user and bulk adult entries");
@@ -609,7 +610,7 @@ if (removeTestUrlFilterService) {
     .find((payload) => payload.PayloadType === "com.apple.webcontent-filter");
   assert.ok(webFilter, "custom Shorts profile should include a web filter");
   assert.ok(Array.isArray(webFilter.DenyListURLs), "custom Shorts profile should include denied URLs");
-  assert.equal(webFilter.DenyListURLs.some((prefix: unknown) => typeof prefix === "string" && "https://youtube.com/shorts".startsWith(prefix)), true);
+  assert.equal(webFilter.DenyListURLs.some((prefix: unknown) => typeof prefix === "string" && "https://youtube.com/shorts/".startsWith(prefix)), true);
   assert.equal(webFilter.DenyListURLs.includes("https://www.youtube.com/shorts"), false, "Apple normalizes bare and www hosts, so the redundant twin must not consume a slot");
   assert.equal(webFilter.DenyListURLs.some((prefix) => typeof prefix === "string" && "https://youtube.com/shorts/".startsWith(prefix)), true, "permanent Shorts variants must remain covered by retained prefixes in custom profile snapshots");
 }
@@ -654,7 +655,7 @@ if (removeTestUrlFilterService) {
   assert.ok(webFilter, "brick web clip profile should include a web filter");
   assert.equal(webFilter.AllowListBookmarks, undefined, "Full Brick must not turn unrelated web access into an allowlist");
   assert.ok(Array.isArray(webFilter.DenyListURLs), "Level 3 should keep targeted social and explicit-content denies");
-  assert.equal(webFilter.DenyListURLs.some((prefix: unknown) => typeof prefix === "string" && "https://youtube.com/shorts".startsWith(prefix)), true);
+  assert.equal(webFilter.DenyListURLs.some((prefix: unknown) => typeof prefix === "string" && "https://youtube.com/shorts/".startsWith(prefix)), true);
   assert.equal(webFilter.DenyListURLs.includes("https://instagram.com/"), true);
   assert.equal(webFilter.SafariHistoryRetentionEnabled, false);
 }
@@ -799,7 +800,7 @@ if (removeTestUrlFilterService) {
     "the supervised YouTube companion allowlist must not open the whole accounts.youtube.com origin"
   );
   assert.equal(
-    activeYouTubeTargets.deniedUrls.includes("https://youtube.com/shorts"),
+    activeYouTubeTargets.deniedUrls.includes("https://youtube.com/shorts/"),
     true,
     "admitting YouTube authentication helpers must preserve the permanent Shorts deny rule"
   );

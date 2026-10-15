@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +14,7 @@ import {
 import { buildExplicitContentTextPolicy } from "../src/explicitContentPolicy.js";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const projectRoot = dirname(dirname(runtimeRoot));
+const projectRoot = existsSync(join(process.cwd(), "ios")) ? process.cwd() : dirname(dirname(runtimeRoot));
 const policyPath = join(projectRoot, "ios", "VigilSocial", "VigilSocial", "ExplicitContentPolicy.json");
 const swiftPath = join(projectRoot, "ios", "VigilSocial", "VigilSocial", "ContentSafetyClassifier.swift");
 
@@ -29,6 +30,9 @@ assert.deepEqual(committed, expected, "the iOS text policy must stay generated f
 assert.ok(expected.terms.includes("toongod"));
 assert.ok(expected.terms.includes("honeytoon"));
 assert.ok(expected.terms.includes("porn"));
+for (const genre of ["mawha", "manhwa", "manhua", "manga", "webtoon", "webtoons", "doujin", "doujinshi"]) {
+  assert.equal(expected.terms.includes(genre), false, `generic ${genre} is a contextual genre, not a standalone explicit page term`);
+}
 assert.equal(expected.terms.includes("xxx"), false, "page prose must not be classified by incidental XXX or Roman numerals");
 assert.ok(expected.phrases.includes("xxx videos"));
 assert.equal(expected.terms.includes("18+"), false, "ambiguous age-gate text remains a URL-only rule");
@@ -50,6 +54,8 @@ assert.doesNotMatch(
   /private static let explicitPhrases/,
   "the app must not silently return to the old hard-coded seven-phrase subset"
 );
+assert.doesNotMatch(swift, /token\.value\.hasPrefix/, "ordinary names cannot be classified by an arbitrary porn prefix");
+assert.match(swift, /normalizedEvidence\(pageText\)/, "policy terms and phrases must consume the same precise ordinary evidence as the shared matcher");
 
 const buildScript = await readFile(join(projectRoot, "scripts", "build-ios-social-app.mts"), "utf8");
 assert.match(

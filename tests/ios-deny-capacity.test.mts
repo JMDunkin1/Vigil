@@ -55,7 +55,7 @@ for (const profileId of [NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PR
     for (const scheme of ["http", "https"]) {
       for (const host of ["youtube.com", "m.youtube.com"]) {
         const removed = `${scheme}://${host}/shorts/`;
-        assert.equal(denied.includes(removed), false, "a covered trailing-slash twin should not consume a slot");
+        assert.ok(denied.includes(removed), "the automatic route uses Apple's bounded root-and-subtree form");
         assert.ok(denied.some(prefix => removed.startsWith(prefix)), `removed ${removed} must remain covered`);
       }
     }

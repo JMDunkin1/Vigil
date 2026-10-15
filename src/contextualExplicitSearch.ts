@@ -1,4 +1,4 @@
-import { containsContextualExplicitMedia, containsMultilingualExplicitText, normalizeExplicitVocabulary, containsExplicitSearchAliases } from "./explicitMediaContext.js";
+import { containsContextualExplicitMedia, containsMultilingualExplicitText, normalizeExplicitVocabulary, normalizeAutomaticExplicitText, containsExplicitSearchAliases } from "./explicitMediaContext.js";
 import { decodeSearchQueryValue, searchQueries } from "./searchQueryContext.js";
 
 export function containsExplicitMediaLabel(value: string): boolean {
@@ -17,7 +17,22 @@ export const CONTEXTUAL_SEARCH_PLATFORMS = [
   "patreon.com", "itch.io", "discord.com", "discordapp.com"
 ];
 export const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
-export const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
+export const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
+
+const comicSearchBoundary = "(?:^|[^\\p{L}\\p{N}])";
+const comicSearchEnd = "(?:$|[^\\p{L}\\p{N}])";
+const comicSearchGenres = "(?:comics?|manga|manhwa|manhua|mawha|webtoons?|doujin(?:shi)?)";
+const comicSearchMarker = "(?:adults?|mature|uncensored|lewd|erotic|nsfw|hentai|porn|r18|18(?:\\s*\\+|plus))";
+const ageSearchMarker = "(?:18\\s*\\+|18[\\s_-]*plus)";
+const ageSearchMedia = "(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?)";
+export const EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS = [
+  `${comicSearchBoundary}(?:${comicSearchMarker}[\\s_.-]*${comicSearchGenres}|${comicSearchGenres}[\\s_.-]*${comicSearchMarker})${comicSearchEnd}`,
+  `${comicSearchBoundary}(?:${ageSearchMarker}[\\s_-]+${ageSearchMedia}|${ageSearchMedia}[\\s_-]+${ageSearchMarker})${comicSearchEnd}`
+] as const;
+
+function containsExplicitComicOrAgeSearch(value: string): boolean {
+  return EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS.some(pattern => new RegExp(pattern, "iu").test(value));
+}
 function contextualSearchDecode(value: string): string {
   return normalizeExplicitVocabulary(decodeSearchQueryValue(value));
 }
@@ -25,14 +40,18 @@ function contextualSearchDecode(value: string): string {
 // Bounded aliases and concatenated blocked words; never fuzzy-match arbitrary
 // substrings such as Middlesex, nudging, or an alphanumeric product identifier.
 export function containsExplicitSearchVariants(query: string): boolean {
-  return containsExplicitSearchAliases(contextualSearchDecode(query));
+  return containsExplicitSearchAliases(normalizeAutomaticExplicitText(contextualSearchDecode(query)));
 }
 
 export function containsContextualExplicitSearch(query: string, hostname = "", includeRedditShorthand = true): boolean {
   const decoded = contextualSearchDecode(query);
-  if (containsContextualExplicitMedia(decoded)) return true;
-  if (containsExplicitSearchVariants(decoded)) return true;
-  const normalized = decoded.replace(/3/gu, "e").replace(/0/gu, "o");
+  // Consume only established ordinary phrases. Separate explicit intent in
+  // the same query remains available to the media/alias checks.
+  const evidence = normalizeAutomaticExplicitText(decoded);
+  if (containsContextualExplicitMedia(evidence)) return true;
+  if (containsExplicitSearchVariants(evidence)) return true;
+  if (containsExplicitComicOrAgeSearch(evidence)) return true;
+  const normalized = evidence.replace(/3/gu, "e").replace(/0/gu, "o");
   const host = hostname.toLowerCase().replace(/\.$/u, "");
   const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
   if ((host === "itch.io" || host.endsWith(".itch.io"))
@@ -57,7 +76,7 @@ export function matchContextualExplicitSearchUrl(value: unknown): boolean {
 // XXX occurs in document IDs, tracking values and Roman numerals. It is only
 // an explicit URL signal in actual search text, never an arbitrary URL substring.
 export function containsExplicitXxxSearchText(query: string): boolean {
-  return /(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)/iu.test(contextualSearchDecode(query));
+  return /(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)/iu.test(normalizeAutomaticExplicitText(contextualSearchDecode(query)));
 }
 
 export function matchExplicitXxxSearchUrl(value: unknown): boolean {

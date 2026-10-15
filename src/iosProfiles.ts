@@ -5,6 +5,8 @@ import {
   DEFAULT_ALWAYS_BANNED_URL_PATTERNS,
   DEFAULT_EXPLICIT_BLOCKED_SITES,
   DEFAULT_EXPLICIT_SEARCH_TERMS,
+  DEFAULT_EXPLICIT_URL_PATTERNS,
+  DEFAULT_SHORT_FORM_URL_PATTERNS,
   DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
   DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES,
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
@@ -21,13 +23,14 @@ import { adultBlocklistPreloadDomains } from "./adultBlocklist.js";
 import { grayscaleDecision, IOS_GRAYSCALE_GUARD_BUNDLE_IDS } from "./grayscale.js";
 import { activeLimitBlocks } from "./limits.js";
 import { toPlist } from "./plist.js";
-import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, normalizeHost, profileById } from "./policy.js";
+import { activePolicy, baselinePolicy, expandSiteTargets, hostMatchesSiteTargets, isFullLockoutPolicy, normalizeHost, normalizeUrlPattern, profileById } from "./policy.js";
 import { IOS_SOCIAL_COMPANION_APPS, IOS_SOCIAL_COMPANION_BUNDLE_IDS, focusedSocialBlockedBundleIds, focusedSocialDeniedUrls, focusedSocialSummary, normalizeFocusedSocialSettings } from "./socialFeatureFilters.js";
 import type { IosManageEngineGeneration, IosSettings, VigilState, UnknownRecord } from "./types.js";
 import { configuredIosPhoneProfileOptions } from "./iosUrlFilterServiceConfiguration.js";
 import type { IosUrlFilterServiceConfiguration } from "./iosUrlFilterServiceConfiguration.js";
 import { IOS_GOOGLE_SAFE_SEARCH_DOMAINS, IOS_SAFE_SEARCH_DOH_URL } from "./iosSafeSearch.js";
 import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_ADULT_PRODUCT_TERMS } from "./explicitMediaContext.js";
+import { isAutomaticExplicitKeywordPattern, matchGeneratedPresetUrlPattern, usesAutomaticExplicitUrlPolicy } from "./automaticExplicitUrlPolicy.js";
 
 export const IOS_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-lock";
 export const IOS_RETIRED_SOCIAL_LAUNCHER_PROFILE_IDENTIFIER = "tech.caseline.vigil.ios-social-launchers";
@@ -498,14 +501,14 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       !IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS.has(normalizedExplicitSearchTerm(term))
     )),
     ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS
-  ]).concat(urlsFromSiteTargets(DEFAULT_EXPLICIT_BLOCKED_SITES));
+  ], true).concat(urlsFromSiteTargets(DEFAULT_EXPLICIT_BLOCKED_SITES));
   const policyDeniedUrls = [
     ...urlsFromSiteTargets(activeLimitSites),
     ...urlsFromSiteTargets(profileBlockedSites),
-    ...urlsFromPatterns(profilePatterns),
-    ...urlsFromPatterns(socialDeniedUrls),
+    ...urlsFromPatterns(profilePatterns, usesAutomaticExplicitUrlPolicy(profile)),
+    ...urlsFromPatterns(socialDeniedUrls, true, true),
     ...urlsFromSiteTargets(retainedBaselineBlockedSites),
-    ...urlsFromPatterns(retainedBaselinePatterns)
+    ...urlsFromPatterns(retainedBaselinePatterns, usesAutomaticExplicitUrlPolicy(baselineProfile))
   ];
   const priorityDeniedUrls = priorityUrlsFromSiteTargets([
     ...IOS_PRIMARY_ADULT_BLOCKED_SITES,
@@ -851,11 +854,61 @@ function deliveredAdultBlocklistDomainCount(state: VigilState, deniedUrls: reado
   ).length;
 }
 
-function urlsFromPatterns(values: readonly unknown[]): string[] {
+function urlsFromPatterns(values: readonly unknown[], automatic = false, trustedRoutes = false): string[] {
   return (values || []).flatMap((value) => {
-    const explicitSearchUrls = urlsForExplicitSearchTerm(value);
-    return explicitSearchUrls.length ? explicitSearchUrls : urlsFromInput(value);
+    const explicitSearchUrls = urlsForExplicitSearchTerm(value, automatic);
+    if (explicitSearchUrls.length) return explicitSearchUrls;
+    if (automatic) {
+      const precise = applePresetUrlPatternVariants(value, trustedRoutes);
+      if (precise !== null) return precise.flatMap(urlsFromInput);
+      if (IOS_EXPLICIT_SEARCH_TERM_KEYS.has(normalizedExplicitSearchTerm(value))) return [];
+    }
+    return urlsFromInput(value);
   });
+}
+
+const APPLE_AUTOMATIC_MEDIA_PHRASES: Record<string, readonly string[]> = {
+  porn: ["porn videos", "porn photos"],
+  porno: ["porno videos"],
+  hentai: ["hentai comics", "hentai manga"],
+  xxx: ["xxx videos"],
+  "18+": ["18+ adult videos"],
+  "18plus": ["18+ adult videos"],
+  "18-plus": ["18+ adult videos"]
+};
+
+function appleMediaPhraseEncodings(value: unknown): string[] {
+  return (APPLE_AUTOMATIC_MEDIA_PHRASES[normalizedExplicitSearchTerm(value)] || [])
+    .flatMap(phrase => {
+      const encoded = encodeURIComponent(phrase);
+      return [encoded, encoded.replaceAll("%20", "+")];
+    });
+}
+
+/**
+ * Apple supports literal substrings, not query-token boundaries or regexes.
+ * Keep automatic lexical checks in the runtime/companions, export conservative
+ * explicit media phrases, and bound generated routes with a terminal slash.
+ * Apple's schema confirms /a/ still matches /a and descendants, without /apple.
+ * https://github.com/apple/device-management/blob/release/mdm/profiles/com.apple.webcontent-filter.yaml
+ * Authored rules return null so their literal-prefix semantics stay intact.
+ */
+export function applePresetUrlPatternVariants(value: unknown, trustedRoute = false): string[] | null {
+  if (isAutomaticExplicitKeywordPattern(value)) return [];
+  const normalized = normalizeUrlPattern(value);
+  const generated = [...DEFAULT_EXPLICIT_URL_PATTERNS, ...DEFAULT_ALWAYS_BANNED_URL_PATTERNS, ...DEFAULT_SHORT_FORM_URL_PATTERNS]
+    .some(pattern => normalizeUrlPattern(pattern) === normalized);
+  if ((!generated && !trustedRoute) || !normalized.includes("/")) return null;
+  const absolute = /^https?:\/\//iu.test(String(value));
+  let parsed: URL;
+  try { parsed = new URL(absolute ? String(value) : `https://${normalized}`); } catch { return null; }
+  if (!trustedRoute && matchGeneratedPresetUrlPattern(value, parsed) === null) return null;
+  if (parsed.search) {
+    return [...parsed.searchParams].flatMap(([name, term]) => appleMediaPhraseEncodings(term)
+      .map(encoded => `${absolute ? `${parsed.protocol}//` : ""}${parsed.hostname}${parsed.pathname}?${name}=${encoded}`));
+  }
+  if (parsed.pathname !== "/" && !parsed.pathname.endsWith("/")) parsed.pathname += "/";
+  return [absolute ? parsed.toString() : `${parsed.hostname}${parsed.pathname}`];
 }
 
 function priorityUrlsFromSiteTargets(values: readonly unknown[]): string[] {
@@ -874,15 +927,16 @@ function priorityUrlsFromSiteTargets(values: readonly unknown[]): string[] {
   ]);
 }
 
-function urlsForExplicitSearchTerm(value: unknown): string[] {
+function urlsForExplicitSearchTerm(value: unknown, automatic = false): string[] {
   const term = normalizedExplicitSearchTerm(value);
   if (!term || !IOS_EXPLICIT_SEARCH_TERM_KEYS.has(term)) return [];
   if (IOS_COMPANION_ONLY_EXPLICIT_SEARCH_TERM_KEYS.has(term)) return [];
-  const encoded = encodeURIComponent(term);
+  const encoded = automatic ? appleMediaPhraseEncodings(term) : [encodeURIComponent(term)];
+  if (!encoded.length) return [];
   const prefixes = [...IOS_EXPLICIT_SEARCH_URL_PREFIXES];
   if (IOS_ARCHIVE_EXPLICIT_SEARCH_TERM_KEYS.has(term)) prefixes.push(IOS_ARCHIVE_EXPLICIT_SEARCH_URL_PREFIX);
   if (term === "porn") prefixes.push(IOS_ARCHIVE_ADVANCED_EXPLICIT_SEARCH_URL_PREFIX);
-  return prefixes.map((prefix) => `${prefix}${encoded}`);
+  return prefixes.flatMap(prefix => encoded.map(query => `${prefix}${query}`));
 }
 
 function normalizedExplicitSearchTerm(value: unknown): string {

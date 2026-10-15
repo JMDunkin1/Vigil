@@ -10,7 +10,7 @@ const blocked = [
   "https://free-porn.example/", "https://p-o-r-n-tube.example/", "https://nsfw.reader.example/",
   "https://reader.example/hentai/chapter/1", "https://reader.example/en/genres/adult-webtoon",
   "https://reader.example/mature-manga/", "https://reader.example/genre/xxx",
-  "https://reader.example/en/adult/comics", "https://reader.example/catalog/18comics",
+  "https://reader.example/en/adult/comics", "https://reader.example/catalog/18pluscomics",
   "https://reader.example/category/%68%65%6e%74%61%69",
   "https://reader.example/category/%2570%256f%2572%256e",
   "https://reader.example////genre///xxx-videos/", "https://site.xxx/",
@@ -48,6 +48,7 @@ const allowed = [
   "https://ordinary.example/search/nude%20art%20figure%20drawing", "https://ordinary.example/search/nude%20makeup%20photos",
   "https://ordinary.example/search/uncensored%20interview%20videos"
 ];
+export { blocked as semanticExplicitUrlBlocked, allowed as semanticExplicitUrlAllowed };
 for (const url of allowed) assert.equal(matchSemanticExplicitUrl(url), null, `ordinary/opaque URL ${url}`);
 for (const url of allowed.filter(url => /^https?:/u.test(url) && !url.includes("q=") && !url.includes("sex-education"))) {
   assert.equal(shouldBlockUrl(profile, url), false, `opaque X sequences remain allowed in main policy: ${url}`);

@@ -187,14 +187,15 @@ const EXPLICIT_MEDIA_ORDINARY_PHRASES = [
 ];
 const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, replacement }) => ({ pattern: new RegExp(pattern, "giu"), replacement }));
 const ordinaryPhrasePatterns = EXPLICIT_MEDIA_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
-const explicitHomoglyphs = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "Α": "A" };
+const explicitHomoglyphs = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "α": "a" };
 function normalizeExplicitVocabulary(value) {
     let text = String(value || "").normalize("NFKC")
         .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
         .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""));
     text = text.replace(/[\p{L}\p{N}]+/gu, token => {
-        const folded = token.replace(/[аеорсхіуΑ]/gu, letter => explicitHomoglyphs[letter]).toLowerCase();
-        return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded) ? folded : token;
+        const folded = token.toLowerCase().replace(/[аеорсхіуα]/gu, letter => explicitHomoglyphs[letter]);
+        return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded)
+            || explicitSearchKeywordTerms.has(folded) || explicitSearchCompoundPattern.test(folded) ? folded : token;
     });
     for (const { pattern, replacement } of vocabularyReplacements)
         text = text.replace(pattern, replacement);
@@ -206,12 +207,62 @@ function normalizeExplicitMediaText(value) {
         text = text.replace(pattern, " vigilordinary ");
     return text;
 }
+// Qualify only an established ordinary phrase, never a whole query. For
+// example, a separate "porn videos" clause survives "pornography blocker".
+const EXPLICIT_AUTOMATIC_ORDINARY_PHRASES = [
+    /\b(?:nissan|skyline|gt[\s_-]?r)[\s_-]+r[\s_-]?34\b/giu.source,
+    /\br[\s_-]?34[\s_-]+(?:nissan|skyline|gt[\s_-]?r)\b/giu.source,
+    /\brule[\s_.-]*34[\s_-]+(?:algorithm|theorem|proof|specification|standard|procedure)\b/giu.source,
+    /\b(?:chapter|book|section|volume|part|appendix|super[\s_-]+bowl)[\s_-]+x{3,}\b/giu.source,
+    /\bx{3,}[\s_-]+chromosomes?\b/giu.source,
+    /\bchromosomes?[\s_-]+x{3,}\b/giu.source,
+    /\bxxx[\s_-]+(?:vin[\s_-]+diesel|return[\s_-]+of[\s_-]+xander[\s_-]+cage|2002[\s_-]+(?:film|movie))\b/giu.source,
+    /\bvin[\s_-]+diesel[\s_-]+xxx\b/giu.source,
+    /\badult[\s_-]+(?:education|learning|training|literacy)\b/giu.source,
+    /\bmature[\s_-]+skin\b/giu.source,
+    /\buncensored[\s_-]+interviews?\b/giu.source,
+    /\bnude[\s_-]+art[\s_-]+(?:figure[\s_-]+)?drawings?\b/giu.source,
+    /\bnude[\s_-]+art[\s_-]+videos?\b/giu.source,
+    /\bnudity[\s_-]+anatomy\b/giu.source,
+    /\bnude[\s_-]+(?:watercolou?r[\s_-]+palettes?|art[\s_-]+sculptures?)\b/giu.source,
+    /\bmature[\s_-]+trees?\b/giu.source,
+    /\berotic[\s_-]+imagery[\s_-]+art[\s_-]+history\b/giu.source,
+    /\b(?:porn|porno|pornography|pornographic)[\s_-]+(?:content[\s_-]+)?(?:blockers?|blocking|filters?|filtering|detection|detectors?|moderation|prevention)\b/giu.source,
+    /\bpornography[\s_-]+(?:laws?|legal[\s_-]+history)\b/giu.source,
+    /\b(?:porn|pornography)[\s_-]+(?:addiction[\s_-]+)?(?:recovery|treatment)\b/giu.source,
+    /\bnsfw[\s_-]+(?:classifiers?|classification|filters?|filtering|detection|detectors?|moderation)\b/giu.source,
+    /\bnsfw[\s_-]+api[\s_-]+(?:reference|documentation)\b/giu.source,
+    /\b18\s*\+[\s_-]+(?:travel[\s_-]+insurance|insurance|(?:voting[\s_-]+)?eligibility|age[\s_-]+requirements?)\b/giu.source
+];
+const automaticOrdinaryPhrasePatterns = EXPLICIT_AUTOMATIC_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
+function normalizeAutomaticExplicitText(value) {
+    let text = normalizeExplicitMediaText(value);
+    for (const pattern of automaticOrdinaryPhrasePatterns)
+        text = text.replace(pattern, " vigilordinary ");
+    return text;
+}
+// Automatic rules use complete vocabulary tokens. User-authored literal URL
+// rules retain their separate matching semantics in the policy engine.
+const EXPLICIT_SEARCH_KEYWORD_TERMS = [
+    "porn", "porno", "prno", "p0rn", "p0rno", "pornography", "pornographic", "nsfw", "hentai", "h3ntai", "rule34",
+    "gonewild", "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube", "youporn", "spankbang",
+    "xvideos", "xnxx", "xhamster", "pornhub", "honeytoon", "honeytoons", "hooneytoon", "hooneytoons", "toongod",
+    ...ADDITIONAL_EXPLICIT_SEARCH_TERMS
+];
+const EXPLICIT_SEARCH_COMPOUND_PATTERN = /^(?:porn|porno|p0rn|hentai|h3ntai|nsfw)(?:videos?|vids?|photos?|pics?|images?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|hub|tube|hd|vr|4k)$/u.source;
+const explicitSearchKeywordTerms = new Set(EXPLICIT_SEARCH_KEYWORD_TERMS);
+const explicitSearchCompoundPattern = new RegExp(EXPLICIT_SEARCH_COMPOUND_PATTERN, "u");
+function containsExplicitSearchKeyword(value) {
+    const text = normalizeAutomaticExplicitText(value).toLowerCase();
+    const tokens = text.match(/[\p{L}\p{N}]+/gu) || [];
+    return tokens.some(token => explicitSearchKeywordTerms.has(token) || explicitSearchCompoundPattern.test(token));
+}
 const EXPLICIT_SEARCH_ALIAS_PATTERNS = [
     /^\s*(?:nud(?:s|3s?)?|nudes)\s*$/iu.source,
     /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.source
 ];
 function containsExplicitSearchAliases(value) {
-    const text = normalizeExplicitVocabulary(value);
+    const text = normalizeAutomaticExplicitText(value);
     return EXPLICIT_SEARCH_ALIAS_PATTERNS.some(pattern => new RegExp(pattern, "iu").test(text));
 }
 // Sources also generate the native phone matcher. All evidence and exceptions
@@ -222,6 +273,7 @@ const EXPLICIT_MEDIA_PATTERNS = {
     sexual: /^(?:erotic|erotica|lewd|horny|sensual|seductive|sex|sexual|sexually|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage)$/u.source,
     acts: /^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|ejaculation|fingering|selfpleasure|creampies?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting)$/u.source,
     strongActs: /^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|bukkake|gangbangs?|fucking|selfpleasure|upskirt|downblouse|nipslips?|cameltoe)$/u.source,
+    strongMediaMarker: /^(?:nud|nuds|nudes?|naked|nudity|lewd|erotic|erotica|x{3,})$/u.source,
     connectors: /^(?:a|an|the|of|with|who|that|are|is|were|was|be|being|their|very|really|absolutely|totally|completely|fully|amazingly|beautiful|gorgeous|amazing|pretty|lovely)$/u.source,
     body: /^(?:boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?)$/u.source,
     people: /^(?:girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?)$/u.source,
@@ -237,7 +289,7 @@ const EXPLICIT_MEDIA_PATTERNS = {
 const explicitMediaPatterns = Object.fromEntries(Object.entries(EXPLICIT_MEDIA_PATTERNS)
     .map(([name, source]) => [name, new RegExp(source, "u")]));
 function containsAdditionalExplicitSearchTerm(value) {
-    const tokens = normalizeExplicitVocabulary(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+    const tokens = normalizeAutomaticExplicitText(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
     return tokens.some(token => ["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS].includes(token));
 }
 function containsMultilingualExplicitText(value) {
@@ -264,7 +316,7 @@ function containsContextualExplicitMedia(value) {
         return true;
     if (containsAdditionalExplicitSearchTerm(value))
         return true;
-    const text = normalizeExplicitMediaText(value).toLowerCase();
+    const text = normalizeAutomaticExplicitText(value).toLowerCase();
     if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
         return true;
     const tokens = text.replace(/\b(?:without(?:[\s_-]+any)?|with[\s_-]+no)[\s_-]+clothes\b/gu, "naked")
@@ -275,7 +327,7 @@ function containsContextualExplicitMedia(value) {
         .replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie")
         .replace(/\bfull[\s_\p{Pd}]+frontal\b/gu, "fullfrontal")
         .replace(/\bsee[\s_\p{Pd}]+through\b/gu, "seethrough").match(/[\p{L}\p{N}]+/gu) || [];
-    const { exposure, sexual, acts, strongActs, connectors, body, people, media, marketing, ordinary, relationship, bodyContext, ordinaryBody, ambiguousBody, nonsexualExposure } = explicitMediaPatterns;
+    const { exposure, sexual, acts, strongActs, strongMediaMarker, connectors, body, people, media, marketing, ordinary, relationship, bodyContext, ordinaryBody, ambiguousBody, nonsexualExposure } = explicitMediaPatterns;
     const marker = /^(?:adults?|spicy|creampies?|nudes?|naked|nudity|erotic|erotica|lewd|x+)$/u;
     // Marketing adjectives need a stronger nearby clue; "mature film" and
     // "uncensored interview" alone do not establish explicit content.
@@ -304,6 +356,10 @@ function containsContextualExplicitMedia(value) {
         // markers and cannot override existing explicit terms or X-rated labels.
         const nearby = tokens.slice(Math.max(0, index - 4), index + 5);
         if (strongActs.test(token) && nearby.some(word => media.test(word) || people.test(word)))
+            return true;
+        // Exact ordinary phrases were consumed above. An unrelated qualification
+        // cannot turn an otherwise clear nude/erotic media request into safe text.
+        if (strongMediaMarker.test(token) && nearby.some(word => media.test(word)))
             return true;
         if (/^x{1,2}$/u.test(tokens[index]) && nearby.some(token => /^(?:model|men|files|axis|chromosomes?)$/u.test(token)))
             continue;
@@ -347,6 +403,7 @@ const SEARCH_PARAMETER_NAMES = new Set([
     "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
     "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
 ]);
+const AMBIGUOUS_SEARCH_PARAMETER_NAMES = new Set(["p", "k", "s", "mode"]);
 // Art categories and product catalogs carry discovery text in the path too;
 // direct category links need the same checks as a site's search box.
 const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=\/|$)/iu;
@@ -371,7 +428,7 @@ function decodeSearchQueryValue(value) {
 }
 function isProtectedSearchParameter(name, onSearchRoute = false) {
     const normalized = decodeSearchQueryValue(name).toLowerCase();
-    return SEARCH_PARAMETER_NAMES.has(normalized)
+    return (SEARCH_PARAMETER_NAMES.has(normalized) && (!AMBIGUOUS_SEARCH_PARAMETER_NAMES.has(normalized) || onSearchRoute))
         || (onSearchRoute && STRUCTURED_SEARCH_PARAMETER_PATTERN.test(normalized));
 }
 function searchRoutePath(value) {
@@ -405,8 +462,18 @@ function searchQueries(value) {
     const fragment = url.hash.replace(/^#!?/u, "");
     const pathIsSearch = looksLikeSearchRoute(url.pathname);
     const fragmentIsSearch = looksLikeSearchRoute(fragment);
+    const hostname = url.hostname.toLowerCase().replace(/\.$/u, "");
+    const protectedParameter = (name) => {
+        const normalized = decodeSearchQueryValue(name).toLowerCase();
+        // These short field names are ordinary configuration/authentication data
+        // elsewhere, but these providers declare their exact discovery meaning.
+        const providerField = (normalized === "p" && hostname === "search.yahoo.com")
+            || (normalized === "mode" && (hostname === "pixiv.net" || hostname.endsWith(".pixiv.net"))
+                && /^\/ranking(?:\.php)?\/?$/u.test(decodeSearchQueryValue(url.pathname).toLowerCase()));
+        return isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch || providerField);
+    };
     const queries = [...url.searchParams]
-        .filter(([name]) => isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch))
+        .filter(([name]) => protectedParameter(name))
         .map(([, query]) => decodeSearchQueryValue(query));
     if (fragmentIsSearch) {
         const queryStart = fragment.indexOf("?");
@@ -439,22 +506,40 @@ const CONTEXTUAL_SEARCH_PLATFORMS = [
     "patreon.com", "itch.io", "discord.com", "discordapp.com"
 ];
 const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
-const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
+const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
+const comicSearchBoundary = "(?:^|[^\\p{L}\\p{N}])";
+const comicSearchEnd = "(?:$|[^\\p{L}\\p{N}])";
+const comicSearchGenres = "(?:comics?|manga|manhwa|manhua|mawha|webtoons?|doujin(?:shi)?)";
+const comicSearchMarker = "(?:adults?|mature|uncensored|lewd|erotic|nsfw|hentai|porn|r18|18(?:\\s*\\+|plus))";
+const ageSearchMarker = "(?:18\\s*\\+|18[\\s_-]*plus)";
+const ageSearchMedia = "(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?)";
+const EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS = [
+    `${comicSearchBoundary}(?:${comicSearchMarker}[\\s_.-]*${comicSearchGenres}|${comicSearchGenres}[\\s_.-]*${comicSearchMarker})${comicSearchEnd}`,
+    `${comicSearchBoundary}(?:${ageSearchMarker}[\\s_-]+${ageSearchMedia}|${ageSearchMedia}[\\s_-]+${ageSearchMarker})${comicSearchEnd}`
+];
+function containsExplicitComicOrAgeSearch(value) {
+    return EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS.some(pattern => new RegExp(pattern, "iu").test(value));
+}
 function contextualSearchDecode(value) {
     return normalizeExplicitVocabulary(decodeSearchQueryValue(value));
 }
 // Bounded aliases and concatenated blocked words; never fuzzy-match arbitrary
 // substrings such as Middlesex, nudging, or an alphanumeric product identifier.
 function containsExplicitSearchVariants(query) {
-    return containsExplicitSearchAliases(contextualSearchDecode(query));
+    return containsExplicitSearchAliases(normalizeAutomaticExplicitText(contextualSearchDecode(query)));
 }
 function containsContextualExplicitSearch(query, hostname = "", includeRedditShorthand = true) {
     const decoded = contextualSearchDecode(query);
-    if (containsContextualExplicitMedia(decoded))
+    // Consume only established ordinary phrases. Separate explicit intent in
+    // the same query remains available to the media/alias checks.
+    const evidence = normalizeAutomaticExplicitText(decoded);
+    if (containsContextualExplicitMedia(evidence))
         return true;
-    if (containsExplicitSearchVariants(decoded))
+    if (containsExplicitSearchVariants(evidence))
         return true;
-    const normalized = decoded.replace(/3/gu, "e").replace(/0/gu, "o");
+    if (containsExplicitComicOrAgeSearch(evidence))
+        return true;
+    const normalized = evidence.replace(/3/gu, "e").replace(/0/gu, "o");
     const host = hostname.toLowerCase().replace(/\.$/u, "");
     const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
     if ((host === "itch.io" || host.endsWith(".itch.io"))
@@ -483,7 +568,7 @@ function matchContextualExplicitSearchUrl(value) {
 // XXX occurs in document IDs, tracking values and Roman numerals. It is only
 // an explicit URL signal in actual search text, never an arbitrary URL substring.
 function containsExplicitXxxSearchText(query) {
-    return /(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)/iu.test(contextualSearchDecode(query));
+    return /(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)/iu.test(normalizeAutomaticExplicitText(contextualSearchDecode(query)));
 }
 function matchExplicitXxxSearchUrl(value) {
     return searchQueries(value).some(({ query }) => containsExplicitXxxSearchText(query));
@@ -579,29 +664,9 @@ function isExplicitLinkCollection(destinations, safeSearchEvidence) {
 }
 
 function browserPermanentBlockedDomains() { return ["1clickvpn.com","1clickvpn.net","4everproxy.com","8muses.com","adultfriendfinder.com","allporncomic.com","allunblocked.com","alohabrowser.com","anontokviewer.com","anonymizer.com","anonymizer.net","anonymizer.org","anonymouse.co","anonymouse.com","anonymouse.info","anonymouse.net","anonymouse.org","archive.org","artmajeur.com","artpal.com","artstation.com","bato.to","beeg.com","betternet.co","blewpass.com","blockaway.com","blockaway.net","blockaway.site","bookwalker.jp","brazzers.com","browsec.com","browser.lol","browserling.com","cam4.com","chaturbate.com","comicland.org","comicporn.xxx","comicsarmy.com","comix.to","comizy.io","coolmic.me","croxy.com","croxy.network","croxy.org","croxyproxy.co","croxyproxy.com","croxyproxy.net","croxyproxy.online","croxyproxy.org","cyberghostvpn.com","daycomics.com","deviantart.com","dlsite.com","dontfilter.us","doujins.com","dxweb003.xyz","e-hentai.org","e621.net","ebookrenta.com","emanga.com","expressvpn.com","expressvpn.info","expressvpn.net","expressvpn.works","expressvpn.xyz","f95zone.to","fakku.net","fanfox.net","fansly.com","fastusaproxy.com","filterbypass.com","filterbypass.me","filterbypass.xyz","fpo.xxx","freebrowser.org","freeopenvpn.org","freeproxy.world","freeproxypro.com","freevideoproxy.com","furaffinity.net","globalcomix.com","go2offer-1.com","gointerstellar.app","gotoonion.site","hanidoll.com","hanime.tv","hdporncomics.com","hentai20.io","hentai2read.com","hentai4manga.com","hentaiclap.com","hentaicomicsfree.com","hentaienvy.com","hentaiera.com","hentaifox.com","hide-me.org","hide.me","hidefromyou.com","hideip.co","hidester.com","hidethisip.net","hiperdex.com","hitomi.la","hola-vpn.com","hola.org","holabrowser.com","hole-house.com","honeytoon.com","hot.com","hotgifs.ai","hotspotshield.com","hoxx.com","huniepop.com","hyperbeam.com","imginn.app","imginn.com","imhentai.xxx","inkbunny.net","inkr.com","inv.nadeko.net","inv.zoomerville.com","invidious.f5.si","invidious.nerdvpn.de","invidious.tiekoetter.com","ipvanish.com","irodoricomics.com","irontechdoll.com","ivacy.com","jerkmate.com","jxdoll.com","jydoll.cn","kinklets.com","kitpipe.com","komiflo.com","kproxy.com","kumadoll.com","kurahentai.com","kuramanga.com","lalatoon.com","lantern.io","lewdmanhwa.com","lezhin.com","lezhinus.com","lezhinx.com","lightbrd.com","limitlessproxy.com","made-in-china.com","mamorumanhwa.com","manga18.art","manga18.me","manga18fx.com","mangaball.com","mangabuddy.com","mangabuddy1.co.uk","mangaforfree.com","mangaforfree.net","mangafox.me","mangagg.com","mangahere.cc","mangahere.com","mangakakalot.gg","mangameow.com","mangaplaza.com","mangavyvy.com","manhwa18.cc","manhwa18.com","manhwa18.net","manhwa18archive.com","manhwahentai.me","manhwaland.tv","manhwara.com","manhwaraw.com","manhwaread.com","manhwaread.org","manhwato.com","manta.net","megaproxy.com","megaproxy.org","mehide.org","mrblue.com","mullvad.net","multporn.net","newgrounds.com","nhentai.io","nhentai.net","nhentai.to","nhentai.website","nhentai.xxx","nitt.tr","nitter.catsarch.com","nitter.kareem.one","nitter.miningtcup.me","nitter.net","nitter.poast.org","nitter.privacyredirect.com","nitter.space","nitter.tiekoetter.com","nordvpn.com","nordvpn.net","nt.vern.cc","nthlink.com","nud3.me","nuku.trabun.org","nyrascans.com","onion.cab","onion.city","onion.link","onion.run","onion.sh","onion.to","onion.ws","onionbrowser.com","onlinevpn.app","onlyfans.com","opera.com","orbot.app","peektok.net","picuki.dev","picuki.net","picuki.site","picuki.tv","piped.private.coffee","piped.video","piratebayproxy.co","pixiv.net","planetvpn.com","pornhub.com","pornhwaz.com","pornpics.com","pornworks.me","privadovpn.com","privateinternetaccess.com","protonvpn.ch","protonvpn.com","proxfree.com","proxify.cc","proxify.info","proxify.me","proxy.al","proxy.org","proxy24.net","proxy4free.com","proxy6.net","proxybreeze.com","proxyium.com","proxyium.com.in","proxyium.in","proxyium.io","proxyium.org","proxyiumfree.com","proxymule.com","proxyorb.com","proxysite.co","proxysite.co.uk","proxysite.com","proxysite.io","proxysite.online","proxysite.org","proxysite.pro","proxysite.us","proxysite.xyz","psiphon.ca","purevpn.com","qorno.com","r.go2offer-1.com","r.jina.ai","realdoll.com","red.artemislena.eu","redgifs.com","redlib.catsarch.com","redlib.cow.rip","redlib.nadeko.net","redlib.privacyredirect.com","redlib.privadency.com","redlib.r4fo.com","redtube.com","reflect4.me","ridibooks.com","riseoferos.com","rule34.xxx","safereddit.com","scramjet.mercurywork.shop","secretflame.ai","send.win","setupvpn.com","sitenable.org","siteproxy.ai","sniffies.com","sofurry.com","spankbang.com","sslsecureproxy.com","ssvtiktok.com","stop-block.com","stripchat.com","surfshark.app","surfshark.com","surfshark.io","swipey.ai","tapas.io","tappytoon.com","theblank.net","theporndude.com","tikstoryview.com","tikt.com","tiktkviewer.com","tikview.io","tikviewer.com","toomics.com","toongod.app","toongod.cc","toongod.com.co","toongod.guru","toongod.org","toonily.com","toonily.me","toontop.io","toptoon.com","tor2web.org","torrentproxy.co","touchvpn.net","tpdoll.com","translated.turbopages.org","tt-view.com","ttanonviewer.com","tunnelbear.com","twiiit.com","ultraproxy.net","unblock-me.org","unblock-proxy.net","unblocker.co","unblocker.org","unblockyoutube.co","undressher.net","unknownproxy.com","urban-vpn.com","urlebird.com","urlebird.us","veepn.com","videoproxy.site","vidproxy.com","vpnbook.com","vpngate.net","vpnunlimited.com","vyprvpn.com","weasyl.com","webcomicsapp.com","webproxy.co","webproxy.one","webproxy.org","webproxy.site","webproxy.to","webproxysite.com","websiteunblocker.io","webtoons.com","webtoonscan.com","wildlife.adult","windscribe.com","windscribe.net","wproxy.net","xcancel.com","xerography14macro.com","xhamster.com","xhamsterlive.com","xnxx.com","xvideos.com","xvideos.es","youporn.com","youqdoll.com","youtubeunblocker.org","yt.chocolatemoo53.com","zelexdoll.com","zend2.com","zenmate.com","zproxy.org"]; }
-const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
-    "honeytoon", "honeytoons", "hooneytoon", "hooneytoons", "mawha"
-];
-// These markers require a comic context, so "uncensored interview" and
-// "mature gardening" remain ordinary searches.
-const DEFAULT_EXPLICIT_CONTEXTUAL_RULES = [
-    {
-        id: "explicit-comics",
-        contexts: ["manhwa", "mawha", "manhua", "webtoon", "webtoons"],
-        markers: ["18", "18plus", "adult", "nsfw", "porn", "hentai", "lewd", "mature", "uncensored"]
-    }
-];
-function containsExplicitComicSearch(value) {
-    const text = value.toLowerCase();
-    // manhwa and toongod already belong to every profile's permanent URL rules.
-    if ([...DEFAULT_EXPLICIT_COMIC_SITE_TERMS, "manhwa", "toongod"].some(term => text.includes(term)))
-        return true;
-    const compact = text.replace(/[^\p{L}\p{N}]/gu, "");
-    return DEFAULT_EXPLICIT_CONTEXTUAL_RULES.some(rule => rule.contexts.some(context => rule.markers.some(marker => compact.includes(context + marker) || compact.includes(marker + context))));
-}
 
 
-/** Self-contained so the browser guards can use this exact implementation. */
+/** Shared by the native policy and the generated browser guards. */
 function matchSemanticExplicitUrl(value) {
     let url;
     try {
@@ -613,6 +678,7 @@ function matchSemanticExplicitUrl(value) {
     if (!/^https?:$/u.test(url.protocol))
         return null;
     const strong = new Set([
+        ...EXPLICIT_SEARCH_KEYWORD_TERMS,
         "porn", "porno", "pornography", "pornographic", "p0rn", "p0rno", "p0rnography", "hentai", "h3ntai", "nhentai", "nsfw",
         "rule34", "sexcam", "sexcams", "camsex", "sextape", "sextapes",
         "futanari", "erotica", "pornhub", "xvideos", "xnxx", "redgifs"
@@ -624,7 +690,6 @@ function matchSemanticExplicitUrl(value) {
     ]);
     const weak = new Set(["adult", "adults", "mature", "uncensored", "lewd", "erotic", "nude", "nudes", "naked", "sex", "sexual", "xxx", "r18", "18plus"]);
     const comics = new Set(["comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi"]);
-    const ordinary = new Set(["education", "medical", "health", "anatomy", "science", "research", "therapy", "history", "report", "news", "chromosome", "chromosomes"]);
     const catalog = new Set(["genre", "genres", "category", "categories", "tag", "tags", "catalog", "browse"]);
     function decode(text) {
         let output = text;
@@ -708,10 +773,9 @@ function matchSemanticExplicitUrl(value) {
         }
     }
     function normalize(text) {
-        return decode(text).normalize("NFKC").toLowerCase()
-            .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
-            .replace(/[аеорсхіу]/gu, c => ({ а: "a", е: "e", о: "o", р: "p", с: "c", х: "x", і: "i", у: "y" })[c])
-            .toLowerCase();
+        // Fold known lookalike vocabulary without partially transliterating real
+        // Cyrillic words before the multilingual matcher can recognize them.
+        return normalizeExplicitVocabulary(decode(text)).toLowerCase();
     }
     function words(text) {
         // Long undelimited identifiers are metadata, not natural-language slugs.
@@ -719,17 +783,19 @@ function matchSemanticExplicitUrl(value) {
             return [];
         if (/^[a-f\d]{16,}$/iu.test(text) || /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/iu.test(text))
             return [];
-        return normalize(text).match(/[\p{L}\p{N}]+/gu) || [];
+        return normalizeAutomaticExplicitText(normalize(text)).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
     }
     function classify(text, previousRoute = "", hostname = false) {
-        const tokens = words(text);
+        if (containsMultilingualExplicitText(normalizeAutomaticExplicitText(normalize(text))))
+            return "explicit-media";
+        const tokens = words(/^(?:chapter|book|section|volume|part|appendix)$/u.test(previousRoute) ? `${previousRoute} ${text}` : text);
         if (!tokens.length)
             return "";
         const explicit = tokens.find(token => strong.has(token));
         if (explicit)
             return explicit;
         const compact = tokens.join("");
-        if (/^(?:p[o0]rn|h[e3]ntai|nsfw|rule34)(?:hub|tube|world|land|zone|site|sites|read|reader|live|free|hd|vr|4k|\d{1,3}|videos?|photos?|pics?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)?$/u.test(compact))
+        if (/^(?!rule34\d)(?:p[o0]rn|h[e3]ntai|nsfw|rule34)(?:hub|tube|world|land|zone|site|sites|read|reader|live|free|hd|vr|4k|\d{1,3}|videos?|photos?|pics?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)?$/u.test(compact))
             return compact;
         if (/^(?:free|best|my|the|all|hd|new|daily|live|watch|read|anime|manga|comic|comics|webtoon|3d|vr|4k)(?:porn|hentai|nsfw)$/u.test(compact))
             return compact;
@@ -738,7 +804,7 @@ function matchSemanticExplicitUrl(value) {
         if (hostname && /^x{3,}$/u.test(compact))
             return "xxx";
         const mediaAlternatives = "(?:videos?|vids?|photos?|pics?|images?|gifs?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))";
-        const markerAlternatives = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18(?:plus)?)";
+        const markerAlternatives = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18plus)";
         const compound = new RegExp(`^(?:${markerAlternatives}${mediaAlternatives}|${mediaAlternatives}${markerAlternatives})$`, "u");
         const compoundToken = tokens.find(token => compound.test(token));
         if (compoundToken)
@@ -748,16 +814,13 @@ function matchSemanticExplicitUrl(value) {
         if (tokens.some(token => /^r34(?:comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)$/u.test(token))
             || (tokens.includes("r34") && (tokens.some(token => comics.has(token)) || catalog.has(previousRoute))))
             return "r34";
-        if (tokens.some(token => ordinary.has(token)))
-            return "";
-        if (tokens.includes("nude") && (tokens.some(token => ["makeup", "lipstick", "lipsticks", "nail", "nails", "palette", "palettes", "manicure", "manicures", "beige"].includes(token))
-            || (tokens.includes("figure") && tokens.some(token => ["drawing", "drawings"].includes(token)))))
-            return "";
-        if (tokens.includes("naked") && tokens.includes("eye"))
+        // A Roman chapter label remains ordinary even when its next route is a
+        // gallery. An unrelated medical/research word cannot excuse nude media.
+        if (/^(?:chapter|book|section|volume|part|appendix)$/u.test(previousRoute) && /^x{3,}$/u.test(text))
             return "";
         const marker = tokens.find((token, index) => (weak.has(token) || /^x{3,}$/u.test(token))
             && !(token === "uncensored" && tokens[index + 1] === "interview"))
-            || (/^18\+$/u.test(text) ? "18plus" : "");
+            || (/(?:^|[^\p{L}\p{N}])18\+(?=$|[^\p{L}\p{N}])/u.test(text) ? "18plus" : "");
         return marker && (tokens.some(token => media.has(token)) || catalog.has(previousRoute)) ? marker : "";
     }
     const labels = url.hostname.toLowerCase().replace(/\.$/u, "").split(".");
@@ -769,21 +832,30 @@ function matchSemanticExplicitUrl(value) {
         const term = classify(normalizedText, "", true);
         if (term)
             return { component: "hostname", term, normalizedText };
-        if (weak.has(normalizedText) && media.has(hostLabels[index + 1] || "")
-            && !hostLabels.some(label => ordinary.has(label))) {
+        if (weak.has(normalizedText) && media.has(hostLabels[index + 1] || "")) {
             return { component: "hostname", term: normalizedText, normalizedText: `${normalizedText}.${hostLabels[index + 1]}` };
         }
     }
     // Query values, fragments, credentials, ports and deep path identifiers are
     // deliberately excluded. Existing explicit search/custom rules handle them.
     const segments = url.pathname.split(/\/+/u, 6).filter(Boolean).slice(0, 4);
+    // Directory separators can delimit the same established ordinary phrase as
+    // hyphens. Qualify only that phrase and retain any separate explicit words.
+    const routeText = segments.map(segment => normalizeAutomaticExplicitText(normalize(segment.slice(0, 512)))).join(" ");
+    const qualifiedRouteText = normalizeAutomaticExplicitText(routeText);
+    if (qualifiedRouteText !== routeText) {
+        const catalogRoute = segments.map(segment => normalize(segment)).find(segment => catalog.has(segment)) || "";
+        const term = classify(qualifiedRouteText, catalogRoute);
+        return term ? { component: "path", term, normalizedText: qualifiedRouteText } : null;
+    }
     for (let i = 0; i < segments.length; i += 1) {
         const normalizedText = normalize(segments[i].slice(0, 512));
         const previousRoute = i ? normalize(segments[i - 1]) : "";
         const term = classify(normalizedText, previousRoute);
         if (term)
             return { component: "path", term, normalizedText };
-        if ((weak.has(normalizedText) || /^x{3,}$/u.test(normalizedText) || /^18\+$/u.test(normalizedText)
+        const romanChapter = /^x{3,}$/u.test(normalizedText) && /^(?:chapter|book|section|volume|part|appendix)$/u.test(previousRoute);
+        if (!romanChapter && (weak.has(normalizedText) || /^x{3,}$/u.test(normalizedText) || /^18\+$/u.test(normalizedText)
             || (normalizedText === "r34" && comics.has(normalize(segments[i + 1] || ""))))
             && i + 1 < segments.length && words(segments[i + 1]).some(token => media.has(token))) {
             return { component: "path", term: normalizedText, normalizedText };
@@ -793,8 +865,6 @@ function matchSemanticExplicitUrl(value) {
 }
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
-const EXPLICIT_SEARCH_PARAMETER_NAMES = SEARCH_PARAMETER_NAMES;
-const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
 const PERSON_EXPOSURE_MARKERS = new Set([
     "leak", "leaks", "leaked", "leakd", "lek", "leks",
     "nud", "nuds", "nude", "nudes", "nued", "naked", "topless"
@@ -868,10 +938,7 @@ function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
 }
 function containsExplicitSearchText(rawValue, hostname = new URL(location.href).hostname, includeRedditShorthand = true) {
     const decoded = decodeNestedSearchValue(rawValue);
-    const vocabulary = normalizeExplicitVocabulary(decoded);
-    return EXPLICIT_SEARCH_PATTERN.test(vocabulary)
-        || EXPLICIT_SEARCH_PATTERN.test(vocabulary.replace(/\+/gu, " "))
-        || containsExplicitComicSearch(vocabulary)
+    return containsExplicitSearchKeyword(decoded)
         || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
         || containsExplicitXxxSearchText(decoded)
         || containsExplicitPersonSearchText(decoded)
@@ -1499,7 +1566,7 @@ function isSearchControl(value) {
         value.getAttribute("placeholder"), value.getAttribute("data-testid")
     ].filter(Boolean).join(" ");
     return type === "search" || role === "searchbox"
-        || EXPLICIT_SEARCH_PARAMETER_NAMES.has((value.getAttribute("name") || "").toLowerCase())
+        || isProtectedSearchParameter(value.getAttribute("name") || "")
         || SEARCH_DESCRIPTOR_PATTERN.test(descriptor)
         || Boolean(value.closest("[role='search'], form[action*='search' i], form[action*='find' i]"));
 }

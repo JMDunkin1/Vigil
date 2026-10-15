@@ -1,0 +1,51 @@
+{
+  "scope": "Follow-up precision and bypass audit: keep verified adult destinations blocked, interpret automatic vocabulary in meaningful URL components, and avoid ordinary words, names, identifiers, age counts and qualified educational/tooling topics.",
+  "previousAudit": "2026-10-13-policy-loophole-audit.json",
+  "browserCompanionVersion": "0.3.20",
+  "changes": [
+    "Complete built-in presets opt into semantic automatic vocabulary; authored URL dictionaries and appended custom literals retain their full-address literal behavior.",
+    "Automatic vocabulary is bounded to actual search text, hostname labels and the first four meaningful path segments. Auth, tracking, signatures and arbitrary query/hash values do not become apparent searches.",
+    "Generated destination rules use canonical host, path and declared query boundaries instead of substring matching foreign domains or filenames.",
+    "Ordinary exceptions consume specific phrases only. Separate explicit media survives medical/research/cosmetics padding, including across early directory separators.",
+    "Bare generic comic genres and numeric counts are not sexual evidence. Adult/mature comic categories and genuine 18+/r18 media context retain enforcement.",
+    "Chrome static queries begin at the actual query delimiter and outer field separators; nested return URLs and pathname ampersands cannot manufacture search fields.",
+    "Legacy Safari and native browser wrappers use the precise shared interpreters, actual form query decoding and provider-specific ambiguous field context.",
+    "Native page text classification uses complete explicit words and deliberate compounds instead of arbitrary porn prefixes. Generated policy excludes bare generic comic genres.",
+    "Known lookalike vocabulary is folded after case normalization without partially transliterating real Cyrillic explicit words.",
+    "Apple static exports retain curated domains, restrictions and removal protection; automatic lexical exports use conservative explicit media phrases instead of bare keyword/age prefixes. Generated routes retain bounded root/subtree syntax."
+  ],
+  "preserved": [
+    "Verified adult-site additions, all committed source snapshot protection and priority domain denies",
+    "Authenticated frame checks, pending concealment, timeout/error blocking and stale response protection",
+    "SafeSearch, native social route restrictions, non-removable supervised profile and compatible free Personal Team companions",
+    "Custom authored URL literals and existing host/blocklist rules"
+  ],
+  "platformLimits": [
+    "Apple's BuiltIn iOS lists match literal URL substrings. They cannot express arbitrary host/query word boundaries, and a literal denied URL inside another requested URL can still match.",
+    "Apple explicitly documents terminal-slash root/subtree semantics for iOS BuiltIn filtering. Applying this form to the Mac parental-control payload is an inference; profile installation and signatures do not prove native route matching behavior.",
+    "Tests execute generated browser scripts and actual Foundation native policy code without browsing explicit pages. Chrome reload and actual supervised iPhone deployment must be verified separately."
+  ],
+  "primarySources": [
+    "https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.webcontent-filter.yaml",
+    "https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.familycontrols.contentfilter.yaml"
+  ],
+  "deployment": {
+    "sourceDelivery": "Commit and push after final integrated verification",
+    "mac": "Protected updater and signed Safari companion",
+    "chrome": "Prepare 0.3.20 companion; reload verification remains separate",
+    "phone": "Deferred by user until USB, preserve verified app-and-policy transaction"
+  },
+  "validation": {
+    "at": "2026-10-13T23:26:29.414Z",
+    "passedSuites": 43,
+    "failedSuites": 0,
+    "sourceLintFiles": 470,
+    "adversarialQueries": 306,
+    "adversarialUrlCases": 69,
+    "adversarialNavigationVariants": 1599,
+    "nativeSemanticUrlControls": 99,
+    "ordinaryPhraseControls": 51,
+    "explicitKeywordControls": 20,
+    "independentReviews": "Cross-reviewed core, browser, native and exporters; reproduced findings patched and rechecked."
+  }
+}

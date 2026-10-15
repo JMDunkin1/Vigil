@@ -68,15 +68,16 @@ export const EXPLICIT_MEDIA_ORDINARY_PHRASES = [
 ] as const;
 const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, replacement }) => ({ pattern: new RegExp(pattern, "giu"), replacement }));
 const ordinaryPhrasePatterns = EXPLICIT_MEDIA_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
-const explicitHomoglyphs: Record<string, string> = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "Α": "A" };
+const explicitHomoglyphs: Record<string, string> = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "α": "a" };
 
 export function normalizeExplicitVocabulary(value: string): string {
   let text = String(value || "").normalize("NFKC")
     .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
     .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""));
   text = text.replace(/[\p{L}\p{N}]+/gu, token => {
-    const folded = token.replace(/[аеорсхіуΑ]/gu, letter => explicitHomoglyphs[letter]).toLowerCase();
-    return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded) ? folded : token;
+    const folded = token.toLowerCase().replace(/[аеорсхіуα]/gu, letter => explicitHomoglyphs[letter]);
+    return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded)
+      || explicitSearchKeywordTerms.has(folded) || explicitSearchCompoundPattern.test(folded) ? folded : token;
   });
   for (const { pattern, replacement } of vocabularyReplacements) text = text.replace(pattern, replacement);
   return text;
@@ -88,12 +89,65 @@ export function normalizeExplicitMediaText(value: string): string {
   return text;
 }
 
+// Qualify only an established ordinary phrase, never a whole query. For
+// example, a separate "porn videos" clause survives "pornography blocker".
+export const EXPLICIT_AUTOMATIC_ORDINARY_PHRASES = [
+  /\b(?:nissan|skyline|gt[\s_-]?r)[\s_-]+r[\s_-]?34\b/giu.source,
+  /\br[\s_-]?34[\s_-]+(?:nissan|skyline|gt[\s_-]?r)\b/giu.source,
+  /\brule[\s_.-]*34[\s_-]+(?:algorithm|theorem|proof|specification|standard|procedure)\b/giu.source,
+  /\b(?:chapter|book|section|volume|part|appendix|super[\s_-]+bowl)[\s_-]+x{3,}\b/giu.source,
+  /\bx{3,}[\s_-]+chromosomes?\b/giu.source,
+  /\bchromosomes?[\s_-]+x{3,}\b/giu.source,
+  /\bxxx[\s_-]+(?:vin[\s_-]+diesel|return[\s_-]+of[\s_-]+xander[\s_-]+cage|2002[\s_-]+(?:film|movie))\b/giu.source,
+  /\bvin[\s_-]+diesel[\s_-]+xxx\b/giu.source,
+  /\badult[\s_-]+(?:education|learning|training|literacy)\b/giu.source,
+  /\bmature[\s_-]+skin\b/giu.source,
+  /\buncensored[\s_-]+interviews?\b/giu.source,
+  /\bnude[\s_-]+art[\s_-]+(?:figure[\s_-]+)?drawings?\b/giu.source,
+  /\bnude[\s_-]+art[\s_-]+videos?\b/giu.source,
+  /\bnudity[\s_-]+anatomy\b/giu.source,
+  /\bnude[\s_-]+(?:watercolou?r[\s_-]+palettes?|art[\s_-]+sculptures?)\b/giu.source,
+  /\bmature[\s_-]+trees?\b/giu.source,
+  /\berotic[\s_-]+imagery[\s_-]+art[\s_-]+history\b/giu.source,
+  /\b(?:porn|porno|pornography|pornographic)[\s_-]+(?:content[\s_-]+)?(?:blockers?|blocking|filters?|filtering|detection|detectors?|moderation|prevention)\b/giu.source,
+  /\bpornography[\s_-]+(?:laws?|legal[\s_-]+history)\b/giu.source,
+  /\b(?:porn|pornography)[\s_-]+(?:addiction[\s_-]+)?(?:recovery|treatment)\b/giu.source,
+  /\bnsfw[\s_-]+(?:classifiers?|classification|filters?|filtering|detection|detectors?|moderation)\b/giu.source,
+  /\bnsfw[\s_-]+api[\s_-]+(?:reference|documentation)\b/giu.source,
+  /\b18\s*\+[\s_-]+(?:travel[\s_-]+insurance|insurance|(?:voting[\s_-]+)?eligibility|age[\s_-]+requirements?)\b/giu.source
+] as const;
+const automaticOrdinaryPhrasePatterns = EXPLICIT_AUTOMATIC_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
+
+export function normalizeAutomaticExplicitText(value: string): string {
+  let text = normalizeExplicitMediaText(value);
+  for (const pattern of automaticOrdinaryPhrasePatterns) text = text.replace(pattern, " vigilordinary ");
+  return text;
+}
+
+// Automatic rules use complete vocabulary tokens. User-authored literal URL
+// rules retain their separate matching semantics in the policy engine.
+export const EXPLICIT_SEARCH_KEYWORD_TERMS = [
+  "porn", "porno", "prno", "p0rn", "p0rno", "pornography", "pornographic", "nsfw", "hentai", "h3ntai", "rule34",
+  "gonewild", "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube", "youporn", "spankbang",
+  "xvideos", "xnxx", "xhamster", "pornhub", "honeytoon", "honeytoons", "hooneytoon", "hooneytoons", "toongod",
+  ...ADDITIONAL_EXPLICIT_SEARCH_TERMS
+] as const;
+export const EXPLICIT_SEARCH_COMPOUND_PATTERN = /^(?:porn|porno|p0rn|hentai|h3ntai|nsfw)(?:videos?|vids?|photos?|pics?|images?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|hub|tube|hd|vr|4k)$/u.source;
+const explicitSearchKeywordTerms = new Set<string>(EXPLICIT_SEARCH_KEYWORD_TERMS);
+const explicitSearchCompoundPattern = new RegExp(EXPLICIT_SEARCH_COMPOUND_PATTERN, "u");
+
+export function containsExplicitSearchKeyword(value: string): boolean {
+  const text = normalizeAutomaticExplicitText(value).toLowerCase();
+  const tokens = text.match(/[\p{L}\p{N}]+/gu) || [];
+  return tokens.some(token => explicitSearchKeywordTerms.has(token) || explicitSearchCompoundPattern.test(token));
+}
+
 export const EXPLICIT_SEARCH_ALIAS_PATTERNS = [
   /^\s*(?:nud(?:s|3s?)?|nudes)\s*$/iu.source,
   /(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.source
 ] as const;
 export function containsExplicitSearchAliases(value: string): boolean {
-  const text = normalizeExplicitVocabulary(value);
+  const text = normalizeAutomaticExplicitText(value);
   return EXPLICIT_SEARCH_ALIAS_PATTERNS.some(pattern => new RegExp(pattern, "iu").test(text));
 }
 
@@ -105,6 +159,7 @@ export const EXPLICIT_MEDIA_PATTERNS = {
   sexual: /^(?:erotic|erotica|lewd|horny|sensual|seductive|sex|sexual|sexually|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage)$/u.source,
   acts: /^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|ejaculation|fingering|selfpleasure|creampies?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting)$/u.source,
   strongActs: /^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|bukkake|gangbangs?|fucking|selfpleasure|upskirt|downblouse|nipslips?|cameltoe)$/u.source,
+  strongMediaMarker: /^(?:nud|nuds|nudes?|naked|nudity|lewd|erotic|erotica|x{3,})$/u.source,
   connectors: /^(?:a|an|the|of|with|who|that|are|is|were|was|be|being|their|very|really|absolutely|totally|completely|fully|amazingly|beautiful|gorgeous|amazing|pretty|lovely)$/u.source,
   body: /^(?:boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?)$/u.source,
   people: /^(?:girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?)$/u.source,
@@ -121,7 +176,7 @@ const explicitMediaPatterns = Object.fromEntries(Object.entries(EXPLICIT_MEDIA_P
   .map(([name, source]) => [name, new RegExp(source, "u")])) as Record<keyof typeof EXPLICIT_MEDIA_PATTERNS, RegExp>;
 
 export function containsAdditionalExplicitSearchTerm(value: string): boolean {
-  const tokens = normalizeExplicitVocabulary(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
+  const tokens = normalizeAutomaticExplicitText(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
   return tokens.some(token => ["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS].includes(token));
 }
 
@@ -145,7 +200,7 @@ export function containsMultilingualExplicitText(value: string): boolean {
 export function containsContextualExplicitMedia(value: string): boolean {
   if (containsMultilingualExplicitText(value)) return true;
   if (containsAdditionalExplicitSearchTerm(value)) return true;
-  const text = normalizeExplicitMediaText(value).toLowerCase();
+  const text = normalizeAutomaticExplicitText(value).toLowerCase();
   if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text)) return true;
   const tokens = text.replace(/\b(?:without(?:[\s_-]+any)?|with[\s_-]+no)[\s_-]+clothes\b/gu, "naked")
     .replace(/\b(?:wearing[\s_-]+nothing|(?:in[\s_-]+(?:the|their|a)[\s_-]+)?birthday[\s_-]+suits?|in[\s_-]+the[\s_-]+buff)\b/gu, "naked")
@@ -155,7 +210,7 @@ export function containsContextualExplicitMedia(value: string): boolean {
     .replace(/\bcream[\s_\p{Pd}]+pies?\b/gu, "creampie")
     .replace(/\bfull[\s_\p{Pd}]+frontal\b/gu, "fullfrontal")
     .replace(/\bsee[\s_\p{Pd}]+through\b/gu, "seethrough").match(/[\p{L}\p{N}]+/gu) || [];
-  const { exposure, sexual, acts, strongActs, connectors, body, people, media, marketing, ordinary, relationship, bodyContext, ordinaryBody, ambiguousBody, nonsexualExposure } = explicitMediaPatterns;
+  const { exposure, sexual, acts, strongActs, strongMediaMarker, connectors, body, people, media, marketing, ordinary, relationship, bodyContext, ordinaryBody, ambiguousBody, nonsexualExposure } = explicitMediaPatterns;
   const marker = /^(?:adults?|spicy|creampies?|nudes?|naked|nudity|erotic|erotica|lewd|x+)$/u;
   // Marketing adjectives need a stronger nearby clue; "mature film" and
   // "uncensored interview" alone do not establish explicit content.
@@ -179,6 +234,9 @@ export function containsContextualExplicitMedia(value: string): boolean {
     // markers and cannot override existing explicit terms or X-rated labels.
     const nearby = tokens.slice(Math.max(0, index - 4), index + 5);
     if (strongActs.test(token) && nearby.some(word => media.test(word) || people.test(word))) return true;
+    // Exact ordinary phrases were consumed above. An unrelated qualification
+    // cannot turn an otherwise clear nude/erotic media request into safe text.
+    if (strongMediaMarker.test(token) && nearby.some(word => media.test(word))) return true;
     if (/^x{1,2}$/u.test(tokens[index]) && nearby.some(token => /^(?:model|men|files|axis|chromosomes?)$/u.test(token))) continue;
     if (nearby.some(token => ordinary.test(token))) continue;
     if (token === "sex" && nearby.some(word => relationship.test(word))) continue;

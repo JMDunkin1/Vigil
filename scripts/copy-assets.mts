@@ -40,12 +40,14 @@ const brandIcon = (await readFile(join(projectRoot, "extension/icons/icon-128.pn
 const diagnosticHelpers = (await readFile(join(runtimeRoot, "src/blockPageDiagnostics.js"), "utf8")).replace(/^export /gmu, "");
 const legacyProtectionCss = `${PROTECTION_PAGE_CSS}\n.brand-mark { background-image: url("data:image/png;base64,${brandIcon}"); }`;
 const sharedMediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "")
+  + "\n" + (await readFile(join(runtimeRoot, "src/explicitUrlContext.js"), "utf8"))
+    .replace(/^import .*\sfrom\s["'][^"']+["'];?\s*$/gmu, "").replace(/^export /gmu, "")
   + "\n" + (await readFile(join(runtimeRoot, "src/searchQueryContext.js"), "utf8")).replace(/^export /gmu, "")
   + "\n" + (await readFile(join(runtimeRoot, "src/contextualExplicitSearch.js"), "utf8"))
     .replace(/^import .*\sfrom\s["'][^"']+["'];?\s*$/gmu, "").replace(/^export /gmu, "");
 await writeFile(legacyBrowserPath, (await readFile(legacyBrowserPath, "utf8")).replace(
   /\/\/ BEGIN GENERATED EXPLICIT MEDIA CONTEXT[\s\S]*?\/\/ END GENERATED EXPLICIT MEDIA CONTEXT/u,
-  `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${sharedMediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
+  () => `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${sharedMediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
 ).replace(
   /\/\/ BEGIN GENERATED BLOCK DIAGNOSTICS[\s\S]*?\/\/ END GENERATED BLOCK DIAGNOSTICS/u,
   `// BEGIN GENERATED BLOCK DIAGNOSTICS\n${diagnosticHelpers}// END GENERATED BLOCK DIAGNOSTICS`
@@ -164,7 +166,8 @@ async function makeExtensionScriptsClassic(): Promise<void> {
       source += "\nexport {};\n";
     }
     if (name === "google-safe-search.js") {
-      const semanticUrlMatcher = (await readFile(join(runtimeRoot, "src/explicitUrlContext.js"), "utf8")).replace(/^export /gmu, "");
+      const semanticUrlMatcher = (await readFile(join(runtimeRoot, "src/explicitUrlContext.js"), "utf8"))
+        .replace(/^import .*\sfrom\s["'][^"']+["'];?\s*$/gmu, "").replace(/^export /gmu, "");
       source = source.replace(/^import .*explicitUrlContext\.js["'];?\s*$/mu,
         () => semanticUrlMatcher);
       source = source.replace(/^import .*browserStaticProtection\.js["'];?\s*$/mu,
@@ -225,7 +228,7 @@ await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace
   `// BEGIN GENERATED CONTEXTUAL PLATFORMS\n  const contextualHosts = ${JSON.stringify(CONTEXTUAL_SEARCH_PLATFORMS)};\n  const currentHost = location.hostname.toLowerCase().replace(/\\.$/u, '');\n  const isContextualPlatform = contextualHosts.some(domain => currentHost === domain || currentHost.endsWith('.' + domain));\n// END GENERATED CONTEXTUAL PLATFORMS`
 ).replace(
   /\/\/ BEGIN GENERATED EXPLICIT MEDIA CONTEXT[\s\S]*?\/\/ END GENERATED EXPLICIT MEDIA CONTEXT/u,
-  `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${mediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
+  () => `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${mediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
 ));
 await cp(mediaGuardPath, join(runtimeRoot, "extension/media-child-lock.js"));
 // A normal build must refresh Safari's generated guards too, so the two

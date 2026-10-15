@@ -4,7 +4,6 @@ import {
   ALWAYS_ALLOWED_APPS,
   BRICK_MODE_PROFILE_ID,
   DEVICE_TARGETS,
-  DEFAULT_EXPLICIT_SEARCH_TERMS,
   NORMAL_PROFILE_ID,
   PANIC_LOCK_PROFILE_ID,
   PROCESS_SWEEP_EXEMPT_APPS,
@@ -16,8 +15,10 @@ import {
 } from "./defaults.js";
 import { matchExplicitPersonSearchUrl } from "./explicitPersonSearch.js";
 import { matchSemanticExplicitUrl } from "./explicitUrlContext.js";
-import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_EXPLICIT_TERMS, containsAdditionalExplicitSearchTerm, containsMultilingualExplicitText } from "./explicitMediaContext.js";
+import { containsExplicitSearchKeyword, normalizeAutomaticExplicitText } from "./explicitMediaContext.js";
 import { matchContextualExplicitSearchUrl, matchExplicitXxxSearchUrl } from "./contextualExplicitSearch.js";
+import { isAutomaticExplicitKeywordPattern, matchGeneratedPresetUrlPattern, usesAutomaticExplicitUrlPolicy } from "./automaticExplicitUrlPolicy.js";
+import { searchQueries } from "./searchQueryContext.js";
 import { integrityLockdownPolicy } from "./integrityLockdown.js";
 import { parseClock } from "./time.js";
 import type { ActivePolicy, DeviceTarget, DeviceTargetInput, IntentionalPlanBlock, LockLevel, PolicyPhase, PolicyPhaseKind, Profile, Schedule, VigilState, Session } from "./types.js";
@@ -746,7 +747,7 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   if (!parsed) return null;
   const rawPatterns = profile.blockedUrlPatterns || [];
   const patterns = rawPatterns.map(normalizeUrlPattern);
-  const explicitSearchProtection = patterns.includes("porn") && patterns.includes("onlyfans");
+  const explicitSearchProtection = usesAutomaticExplicitUrlPolicy(profile);
 
   if (explicitSearchProtection && matchContextualExplicitSearchUrl(parsed)) {
     return {
@@ -771,41 +772,32 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
       url: parsed.toString()
     };
   }
+  if (explicitSearchProtection && searchQueries(parsed).some(({ query }) => containsExplicitSearchKeyword(normalizeAutomaticExplicitText(query)))) {
+    return {
+      pattern: "automatic-explicit-search", label: "Explicit search vocabulary",
+      hostname: normalizeHost(parsed.hostname), url: parsed.toString()
+    };
+  }
+  if (explicitSearchProtection && matchExplicitXxxSearchUrl(parsed)) {
+    return {
+      pattern: "xxx", label: "Explicit search based on context",
+      hostname: normalizeHost(parsed.hostname), url: parsed.toString()
+    };
+  }
   const candidates = urlPatternCandidates(parsed);
   const compactCandidates = candidates.map(compactUrlPatternText).filter(Boolean);
-  // Opaque analytics values do not describe the page/search content. Apply
-  // this only to built-in content vocabulary; explicit custom URL rules keep
-  // matching the full address, including any deliberately selected metadata.
-  const withoutTracking = new URL(parsed.href);
-  for (const name of [...withoutTracking.searchParams.keys()]) {
-    if (/^(?:ei|ved|sca_esv|sxsrf|iflsig|gclid|fbclid|msclkid|utm_[a-z_]+)$/iu.test(name)) withoutTracking.searchParams.delete(name);
-  }
-  const contentCandidates = urlPatternCandidates(withoutTracking);
   for (let index = 0; index < patterns.length; index += 1) {
     const pattern = patterns[index];
     if (!pattern) continue;
-    // Translated labels use their shared word/phrase matcher. An incidental
-    // substring in an ordinary name is not a translated explicit label.
-    if (MULTILINGUAL_EXPLICIT_TERMS.some(term => normalizeUrlPattern(term) === pattern)
-      && !candidates.some(containsMultilingualExplicitText)) continue;
-    if ((ADDITIONAL_EXPLICIT_SEARCH_TERMS as readonly string[]).includes(pattern)
-      && !candidates.some(containsAdditionalExplicitSearchTerm)) continue;
-    const explicitXxx = pattern === "xxx" && (normalizeHost(parsed.hostname).endsWith(".xxx") || matchExplicitXxxSearchUrl(parsed));
-    if (pattern === "xxx" && !explicitXxx) continue;
-    // Vigil's Reddit child lock adds nsfw=0 to turn adult results OFF. Only
-    // that exact safety flag is metadata for the generic "nsfw" keyword;
-    // search text, paths, fragments, enabled flags and custom URL rules remain
-    // subject to their original checks.
-    const patternCandidates = pattern === "nsfw"
-      ? urlPatternCandidates(withoutRedditSafeSearchFlag(withoutTracking))
-      : DEFAULT_EXPLICIT_SEARCH_TERMS.some(term => normalizeUrlPattern(term) === pattern) ? contentCandidates : candidates;
+    // Generated vocabulary has already been interpreted in meaningful URL
+    // components above. Never fall back to substring/compaction on metadata.
+    if (explicitSearchProtection && isAutomaticExplicitKeywordPattern(pattern)) continue;
+    const generatedMatch = explicitSearchProtection ? matchGeneratedPresetUrlPattern(pattern, parsed) : null;
+    if (generatedMatch === false) continue;
     const compactPattern = compactUrlPatternText(pattern);
-    const matchesRaw = explicitXxx || patternCandidates.some((candidate) => candidate.includes(pattern));
-    const patternCompactCandidates = patternCandidates !== candidates
-      ? patternCandidates.map(compactUrlPatternText)
-      : compactCandidates;
+    const matchesRaw = generatedMatch === true || candidates.some((candidate) => candidate.includes(pattern));
     const matchesCompact = compactPattern.length >= 4
-      && patternCompactCandidates.some((candidate) => candidate.includes(compactPattern));
+      && compactCandidates.some((candidate) => candidate.includes(compactPattern));
     if (!matchesRaw && !matchesCompact) continue;
     const raw = rawPatterns[index];
     return {
@@ -823,16 +815,6 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
   }
 
   return null;
-}
-
-function withoutRedditSafeSearchFlag(url: URL): URL {
-  const host = normalizeHost(url.hostname);
-  if ((host !== "reddit.com" && !host.endsWith(".reddit.com"))
-    || !/^\/(?:r\/[^/]+\/)?search(?:\.json)?\/?$/iu.test(url.pathname)
-    || !url.searchParams.getAll("nsfw").includes("0")) return url;
-  const search = new URL(url.href);
-  search.searchParams.delete("nsfw", "0");
-  return search;
 }
 
 export function expandSiteTargets(values: readonly unknown[] = []): string[] {

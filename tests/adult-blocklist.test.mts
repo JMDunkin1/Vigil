@@ -351,7 +351,7 @@ bad_domain
   state.deviceControls.ios.enabled = true;
   const levelOneIosTargets = iosPolicyTargets(state, now);
   assert.equal(levelOneIosTargets.deniedUrls.includes("https://exampleadult.test/"), true);
-  assert.equal(levelOneIosTargets.deniedUrls.includes("https://youtube.com/shorts"), true);
+  assert.equal(levelOneIosTargets.deniedUrls.includes("https://youtube.com/shorts/"), true);
   const softProfile = state.profiles.find((profile) => profile.id === SOFT_BLOCK_PROFILE_ID);
   assert.ok(softProfile, "Soft Lock profile should exist");
   state.activeSessions.phone = {
