@@ -63,7 +63,7 @@ enum DOMAdapters {
                 )
             : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
-            (service == .snapchat ? snapchatDesktopIdentityBootstrap : "")
+            (service == .snapchat ? snapchatDesktopIdentityBootstrap + snapchatCameraBootstrap : "")
             + (service == .linkedin ? linkedin : "")
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
@@ -129,6 +129,48 @@ enum DOMAdapters {
         }
       `;
       document.documentElement.appendChild(style);
+    })();
+    """#
+
+    private static let snapchatCameraBootstrap = #"""
+    (() => {
+      if (window !== window.top || window.__vigilSnapchatCameraInstalled
+          || !['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+          || !/^\/web(?:\/|$)/.test(location.pathname)) return;
+      const devices = navigator.mediaDevices;
+      if (typeof devices?.getUserMedia !== 'function') return;
+      window.__vigilSnapchatCameraInstalled = true;
+      const getUserMedia = devices.getUserMedia.bind(devices);
+      // The desktop client requests 406x720 or an exact 9:16 stream. On a
+      // phone that can crop the sensor before either preview or capture sees
+      // it. Prefer a full sensor mode; keep the chosen camera, mic, frame rate,
+      // permissions, and Snapchat's original stream/capture lifecycle.
+      const uncropped = video => {
+        const result = { ...video };
+        for (const key of ['width', 'height', 'aspectRatio', 'resizeMode', 'zoom']) delete result[key];
+        if (Array.isArray(result.advanced)) result.advanced = result.advanced.map(uncropped);
+        return result;
+      };
+      devices.getUserMedia = async function(constraints) {
+        if (!constraints?.video || !matchMedia('(max-width: 600px)').matches
+            || !/^\/web(?:\/|$)/.test(location.pathname)) return getUserMedia(constraints);
+        const video = uncropped(constraints.video === true ? {} : constraints.video);
+        video.width = { ideal: 1920 };
+        video.height = { ideal: 1920 };
+        if (!video.deviceId && !video.facingMode) video.facingMode = { ideal: 'user' };
+        if (devices.getSupportedConstraints?.().resizeMode) video.resizeMode = { ideal: 'none' };
+        const stream = await getUserMedia({ ...constraints, video });
+        for (const track of stream.getVideoTracks()) {
+          try {
+            const zoom = track.getCapabilities?.().zoom;
+            if (Number.isFinite(zoom?.min) && typeof track.applyConstraints === 'function') {
+              const current = track.getConstraints?.() || video;
+              await track.applyConstraints({ ...current, advanced: [...(current.advanced || []), { zoom: zoom.min }] });
+            }
+          } catch (_) { /* Optional zoom support must not discard a usable stream. */ }
+        }
+        return stream;
+      };
     })();
     """#
 
@@ -1401,7 +1443,8 @@ enum DOMAdapters {
     static func controlsScript(for service: SocialService, informationalAccounts: [String] = []) -> String {
         let accounts = informationalAccounts.compactMap(InstagramInformationalAccounts.normalizedUsername)
         let encoded = (try? JSONEncoder().encode(accounts)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        return (service == .instagram ? instagramSingleReelGuard : "") + lockdownProbe(service) + serviceScript(service)
+        return (service == .instagram ? instagramSingleReelGuard : "")
+            + (service == .snapchat ? snapchatCameraBootstrap : "") + lockdownProbe(service) + serviceScript(service)
             .replacingOccurrences(of: "/* VIGIL_INFORMATIONAL_ACCOUNTS */ []", with: encoded)
     }
 
@@ -4762,8 +4805,9 @@ enum DOMAdapters {
     """#
 
     // Snapchat's desktop breakpoint hides the chat names and search below 850px.
-    // Adapt only the verified chat shell (client 9a9dc856); unknown layouts retain
-    // Snapchat's original UI. Never copy messages, replace React nodes, alter its
+    // Adapt only verified chat/media shells (clients 9a9dc856 and a4b70008);
+    // unknown layouts retain Snapchat's original UI. Never copy messages,
+    // replace React nodes, alter its
     // privacy screens, or couple this presentation layer to policy enforcement.
     private static let snapchatMobileLayout = #"""
     (() => {
@@ -4982,6 +5026,64 @@ enum DOMAdapters {
             font-size: 16px !important; min-height: 44px;
           }
           [data-vigil-snap-layout] .hpge3 { max-width: 100%; max-height: 100%; }
+          /* The lightbox uses a second desktop grid track, often half the
+             phone's height. Give the original player the whole main panel. */
+          [data-vigil-snap-media="viewer"] ._XMCw {
+            grid-template-areas: "main" !important;
+            grid-template-columns: minmax(0, 1fr) !important;
+            grid-template-rows: minmax(0, 1fr) !important;
+            gap: 0 !important; height: 100% !important;
+          }
+          [data-vigil-snap-media="viewer"] ._XMCw > .ChLAv { visibility: hidden; }
+          [data-vigil-snap-media="viewer"] ._XMCw > .S4e9r:has(.ecBYF) {
+            grid-area: main !important; position: relative !important;
+            inset: auto !important; width: 100% !important; height: 100% !important;
+            max-width: none !important; min-height: 0; box-sizing: border-box;
+            border: 0 !important; padding: 0 !important; margin: 0 !important;
+            transform: none !important; animation: none !important;
+            background: #000;
+          }
+          [data-vigil-snap-media="viewer"] .ecBYF {
+            position: relative; inset: 0; margin: 0; gap: 0; background: #000;
+          }
+          [data-vigil-snap-media="viewer"] .RdKti { position: relative; flex: 1; min-height: 0; }
+          [data-vigil-snap-media="viewer"] .vDdE2 {
+            width: 100% !important; height: 100% !important;
+            margin: 0 !important; padding: 0 !important; aspect-ratio: auto !important;
+          }
+          [data-vigil-snap-media="viewer"] .b2f4R { width: 100% !important; height: 100% !important; }
+          [data-vigil-snap-media="viewer"] .b2f4R :is(img, video) { object-fit: contain !important; }
+          [data-vigil-snap-media="viewer"] .QQxLo {
+            position: absolute; top: 8px; width: 44px; height: 44px; margin: 0; z-index: 1;
+          }
+          [data-vigil-snap-media="viewer"] .Z8KwB { inset-inline-start: 8px; }
+          [data-vigil-snap-media="viewer"] .fOsry { inset-inline-end: 8px; }
+          [data-vigil-snap-media="viewer"] .hRnph { width: 44px; height: 44px; }
+          [data-vigil-snap-media] > :is(.bkCIM, .vigil-snap-tabs) { display: none !important; }
+          /* Reply cameras are portalled outside the chat shell. Preserve the
+             complete captured frame rather than covering a narrow 9:16 box. */
+          html[data-vigil-snap-mobile] .AEZEl:has(.BN1L1) {
+            position: fixed; inset: var(--vigil-snap-top, 0px) 0 auto !important;
+            width: 100% !important; max-width: none !important;
+            height: var(--vigil-snap-height, 100dvh) !important; max-height: none !important;
+            margin: 0 !important; padding: 0 !important; aspect-ratio: auto !important;
+            background: #000;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .acEGc:has(.BN1L1),
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .acEGc:has(.BN1L1) > .aTkGG {
+            width: 100% !important; height: 100% !important; min-width: 0; min-height: 0;
+            aspect-ratio: auto !important;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .BN1L1 .Nuu9e {
+            aspect-ratio: auto !important; background: #000;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .BN1L1 .lnAeT {
+            object-fit: contain !important; background: #000;
+          }
+          [data-vigil-snap-layout="camera"] :is(.G3Z4U, .L3KxA, .IiObz):has(.BN1L1) {
+            width: 100% !important; height: 100% !important; max-width: none; max-height: none;
+            padding: 0 !important; inset: auto; border-radius: 0; aspect-ratio: auto;
+          }
         }
         @media (min-width: 601px) { .vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat { display: none; } }
       `;
@@ -5031,12 +5133,16 @@ enum DOMAdapters {
         if (!shell?.matches('.Fpg8t, .svUon') || !main) {
           document.documentElement.removeAttribute('data-vigil-snap-mobile');
           currentShell?.removeAttribute('data-vigil-snap-layout');
+          currentShell?.removeAttribute('data-vigil-snap-media');
           currentShell?.querySelectorAll('.vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat').forEach(node => node.remove());
           currentShell = null;
           publishRenderState();
           return;
         }
-        if (currentShell && currentShell !== shell) currentShell.removeAttribute('data-vigil-snap-layout');
+        if (currentShell && currentShell !== shell) {
+          currentShell.removeAttribute('data-vigil-snap-layout');
+          currentShell.removeAttribute('data-vigil-snap-media');
+        }
         currentShell = shell;
         document.documentElement.toggleAttribute('data-vigil-snap-mobile', matchMedia('(max-width: 600px)').matches);
         let viewport = document.querySelector('meta[name="viewport"]');
@@ -5052,6 +5158,10 @@ enum DOMAdapters {
         const detail = main.querySelector('.aXEpU, .S4e9r, .Rnl06, .hpge3')
           || !/^\/web\/?$/.test(location.pathname);
         set(shell, 'data-vigil-snap-layout', dialog ? 'dialog' : detail ? 'detail' : preferredPanel);
+        const viewer = main.querySelector('._XMCw > .S4e9r .ecBYF .RdKti .vDdE2');
+        const camera = document.querySelector('.AEZEl .BN1L1');
+        if (viewer || camera) set(shell, 'data-vigil-snap-media', camera ? 'camera' : 'viewer');
+        else shell.removeAttribute('data-vigil-snap-media');
         if (detail) preferredPanel = 'feed';
         // Hiding the formerly focused feed can leave embedded WebKit without
         // a native responder. Ask the host to restore real focus for this chat;
@@ -5141,7 +5251,7 @@ enum DOMAdapters {
         const height = Math.round(normalScale && visual ? visual.height : window.innerHeight);
         const top = Math.round(normalScale && visual ? visual.offsetTop : 0);
         const portal = document.getElementById('portal-container');
-        for (const surface of [shell, portal].filter(Boolean)) {
+        for (const surface of [document.documentElement, shell, portal].filter(Boolean)) {
           for (const [name, value] of [['--vigil-snap-height', `${height}px`], ['--vigil-snap-top', `${top}px`]]) {
             if (surface.style.getPropertyValue(name) !== value) surface.style.setProperty(name, value);
           }
@@ -5200,7 +5310,7 @@ enum DOMAdapters {
       // Deliberately never mount a conversation to fake an unread half-swipe.
       const hasGestureOverlay = () => currentShell?.querySelector(
         '.S4e9r, .hpge3, .Rnl06, .PvwWu, .MOJCa, .gFryU, [role="dialog"], [role="menu"]'
-      ) || document.querySelector('#portal-container > .MOJCa');
+      ) || document.querySelector('#portal-container > .MOJCa, .AEZEl .BN1L1');
       let edgeSwipe = null;
       document.addEventListener('touchstart', event => {
         edgeSwipe = null;

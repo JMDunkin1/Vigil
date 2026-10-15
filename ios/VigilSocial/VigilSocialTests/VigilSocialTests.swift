@@ -1060,6 +1060,97 @@ final class VigilSocialTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSnapchatSnapViewerAndReplyCameraUsePhoneFrame() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: #"""
+            Object.defineProperty(navigator, 'mediaDevices', { value: {
+              getSupportedConstraints: () => ({ resizeMode: true }),
+              getUserMedia: async constraints => {
+                window.fixtureCameraRequest = constraints;
+                return { getVideoTracks: () => [] };
+              }
+            }});
+            """#, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatCameraInstalled && document.querySelector('[data-vigil-snap-layout=feed]') !== null", in: webView)
+        for width in [320, 390, 430] {
+            webView.frame.size = CGSize(width: width, height: 780)
+            try await waitForJavaScriptCondition("innerWidth === \(width)", in: webView)
+            for split in ["rows", "columns"] {
+                _ = try await webView.evaluateJavaScript("fixtureOpenSnap('\(split)')")
+                try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=viewer]') !== null", in: webView)
+                let viewer = try await webView.callAsyncJavaScript("""
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    const player = document.querySelector('.b2f4R').getBoundingClientRect();
+                    const reply = document.getElementById('fixture-reply-snap');
+                    const r = reply.getBoundingClientRect();
+                    const target = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+                    return [player.width >= innerWidth-1, player.height >= 700,
+                      getComputedStyle(document.querySelector('.ChLAv')).visibility === 'hidden',
+                      reply.contains(target), document.documentElement.scrollWidth <= innerWidth];
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+                XCTAssertEqual(viewer, Array(repeating: true, count: 5), "\(width)px, \(split)")
+            }
+        }
+        let privacy = try await webView.evaluateJavaScript("""
+            (() => {
+              document.querySelector('.ecBYF').classList.add('ATeie');
+              const shield = document.querySelector('.ecBYF > .ejVI4');
+              shield.style.display = 'grid';
+              const image = document.getElementById('fixture-snap-image');
+              const r = image.getBoundingClientRect();
+              const result = [getComputedStyle(image).filter.includes('blur'),
+                document.elementFromPoint(r.left+r.width/2,r.top+r.height/2) === shield];
+              shield.style.display = 'none';
+              document.querySelector('.ecBYF').classList.remove('ATeie');
+              document.querySelector('.ecBYF > .eNF_J').style.display = 'grid';
+              result.push(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2).classList.contains('eNF_J'));
+              document.querySelector('.ecBYF > .eNF_J').style.display = 'none';
+              return result;
+            })()
+            """) as? [Bool]
+        XCTAssertEqual(privacy, [true, true, true])
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-reply-snap').click()")
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=camera]') !== null", in: webView)
+        for height in [780, 420] {
+            webView.frame.size.height = CGFloat(height)
+            try await waitForJavaScriptCondition("innerHeight === \(height)", in: webView)
+            let camera = try await webView.callAsyncJavaScript("""
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                await navigator.mediaDevices.getUserMedia({ audio:false, video: {
+                  width:{ideal:406}, height:{ideal:720}, aspectRatio:{exact:9/16}, deviceId:{exact:'selected-camera'}
+                }});
+                const box = document.querySelector('.AEZEl').getBoundingClientRect();
+                const video = document.getElementById('local-video');
+                const close = document.getElementById('fixture-close-camera');
+                const r = close.getBoundingClientRect();
+                return [Math.abs(box.width-innerWidth)<1 && Math.abs(box.height-innerHeight)<1,
+                  getComputedStyle(video).objectFit === 'contain',
+                  !fixtureCameraRequest.video.aspectRatio && fixtureCameraRequest.audio === false,
+                  fixtureCameraRequest.video.deviceId.exact === 'selected-camera',
+                  close.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))];
+                """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+            XCTAssertEqual(camera, Array(repeating: true, count: 5), "\(height)px")
+        }
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-close-camera').click()")
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=viewer]') !== null", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-close-snap').click()")
+        try await waitForJavaScriptCondition("!document.querySelector('[data-vigil-snap-media]') && getComputedStyle(document.querySelector('.ChLAv')).visibility === 'visible'", in: webView)
+    }
+
     private static let snapchatMobileShellFixture = #"""
     <!doctype html><html theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -1075,6 +1166,10 @@ final class VigilSocialTests: XCTestCase {
     /* Current client b00815e2 message actions: the menu wrapper and quoted preview
        have no background; only the small desktop action groups paint a surface. */
     .NvRM8{position:relative}.MOJCa{position:absolute;inset:0;z-index:1;width:100%;height:100%;background:transparent}.MOJCa .IxaB_{position:absolute;display:flex;flex-direction:column;gap:8px}.MOJCa :is(.DPxkw,.c6OV2){background:var(--sigMain);border-radius:10px;box-shadow:0 0 8px #0002}.DPxkw ul{display:flex;gap:2px;margin:3px;padding:0;list-style:none}.DPxkw button{padding:0;width:28px;height:32px}.lF7xe{display:flex;align-items:center;gap:10px;padding:12px;color:var(--sigTextSecondary);cursor:pointer}.Hts9j{border-bottom:.5px solid var(--sigDivider)}.oqVsN{margin:14px;padding:12px;border:1px solid var(--sigDivider);border-radius:10px;position:relative}.ZvWBE{position:absolute;top:-6px;right:-6px;min-width:22px;min-height:22px;padding:0;background:var(--sigMain)}.gFryU{height:36px;display:flex;background:var(--sigMain);border-radius:30px;padding:0 8px;gap:3px}.gPAXk{height:36px}.NcaQH{height:36px;border:0;background:none;padding:2px;display:flex;align-items:center}
+    /* Media shell observed in client a4b70008: the secondary grid track and
+       desktop lightbox gutters are deliberately retained to reproduce the bug. */
+    .S4e9r{position:relative;z-index:98;border-top:12px solid var(--sigMain);background:var(--sigMain)}.Mn1n9{grid-area:secondary}.ecBYF{box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;position:absolute;inset:0;gap:12px;align-items:stretch}.RdKti{display:flex;justify-content:center;min-height:0;height:100%;width:auto}.vDdE2{position:relative;display:flex;justify-content:center;align-items:center;margin:0 40px;padding:20px 0 40px;max-height:100%;min-width:0;overflow:hidden}.b2f4R{width:100%;height:100%;min-width:0}.b2f4R img{width:100%;height:100%;object-fit:contain}.QQxLo{height:100%;display:flex;width:36px;align-items:center;flex-shrink:0}.Z8KwB{margin-inline-start:2vh}.fOsry{margin-inline-end:2vh}.hRnph{background:#3338;color:#fff;border-radius:50%;width:36px;height:36px}.ATeie img,.ATeie video{filter:blur(10px)}.ecBYF>.ejVI4,.ecBYF>.eNF_J{position:absolute;inset:0;z-index:10;background:#888;display:grid;place-items:center}.fixture-snap-toolbar{display:flex;justify-content:space-between;color:#fff;background:#222;flex-shrink:0;height:48px}.fixture-snap-toolbar button{min-width:60px}
+    .fixture-camera-backdrop{position:fixed;inset:0;z-index:210;display:flex;align-items:center;justify-content:center;background:#0008}.AEZEl{height:90%;display:flex;align-items:center;justify-content:center;padding:0;aspect-ratio:9/16}.acEGc{height:100%;max-width:100%;display:flex;align-items:center;justify-content:center;aspect-ratio:9/16}.aTkGG{width:100%;aspect-ratio:9/16}.VZx_k{display:flex;align-items:center;justify-content:center;width:100%;height:100%}.BN1L1{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000;border-radius:15px}.Nuu9e{display:flex;position:relative;width:100%;height:100%;aspect-ratio:9/16}.CYQZP{position:relative;width:100%;height:100%}.lnAeT{width:100%;height:100%;object-fit:cover}.MQv99{position:absolute;top:0;width:100%;z-index:1;display:flex;justify-content:space-between}.MQv99 button,.ph8Kn button{min-width:48px;min-height:48px;color:white;background:#2229}.ph8Kn{position:absolute;bottom:0;width:100%;height:90px;display:flex;justify-content:center;align-items:center;gap:12px}
     </style></head><body>
     <div class="Fpg8t" id="shell"><aside class="BL7do">
     <header class="XlW_1"><div class="AbUJt"><button aria-label="Profile" onclick="window.profileOpened=true" style="background:#fffc00;width:40px;height:40px;color:#16191c">☺</button></div><div class="JM4Qm">Snapchat</div><div class="toJ1p"><div class="KcY9t"><button title="View friend requests" onclick="toggleFriends()">♧</button></div><div class="LsbRg"><button title="New Chat" onclick="openNewChat()">✎</button></div></div></header>
@@ -1106,6 +1201,24 @@ final class VigilSocialTests: XCTestCase {
       document.querySelector('.sT7ta').prepend(preview);
       document.querySelector('[contenteditable]').focus();
     }
+    function fixtureMediaImage(width,height){return 'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#84b4d4"/><rect x="0" y="0" width="12%" height="100%" fill="#f4b942"/><rect x="88%" y="0" width="12%" height="100%" fill="#df635d"/><circle cx="50%" cy="42%" r="18%" fill="#d5e6ef"/><text x="50%" y="75%" text-anchor="middle" font-family="sans-serif" font-size="${width/22}">COMPLETE FRAME</text></svg>`)}
+    function fixtureOpenSnap(split='rows',width=900,height=1600){
+      if(!document.querySelector('.aXEpU'))openChat('Alex');
+      fixtureCloseSnap();
+      const grid=document.querySelector('._XMCw');
+      grid.style.cssText=split==='rows'?'grid-template-areas:"secondary" "main";grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px':'grid-template-areas:"main secondary";grid-template-columns:minmax(0,500px) minmax(60%,1fr);grid-template-rows:minmax(0,1fr);gap:8px';
+      document.querySelector('.ChLAv').style.gridArea='main';
+      grid.insertAdjacentHTML('beforeend',`<div class="S4e9r Mn1n9"><div class="ecBYF"><div class="fixture-snap-toolbar"><button id="fixture-close-snap" onclick="fixtureCloseSnap()">Back</button><span>Alex</span><button id="fixture-reply-snap" onclick="fixtureOpenReplyCamera()">Reply</button></div><div class="RdKti" aria-label="media content"><div class="QQxLo Z8KwB"><button class="hRnph" aria-label="previous" onclick="window.fixturePrevious=true">❮</button></div><div class="vDdE2 hJysT" style="aspect-ratio:${width}/${height}"><div class="b2f4R"><img id="fixture-snap-image" alt="Fictional snap" src="${fixtureMediaImage(width,height)}"></div></div><div class="QQxLo fOsry"><button class="hRnph" aria-label="next" onclick="window.fixtureNext=true">❯</button></div></div><div class="ejVI4" style="display:none">Click to view media</div><div class="eNF_J" style="display:none">Screenshot privacy screen</div></div></div>`);
+    }
+    function fixtureCloseSnap(){document.querySelector('._XMCw > .S4e9r')?.remove();document.querySelector('._XMCw').style.cssText='';document.querySelector('.ChLAv').style.gridArea='1/1'}
+    function fixtureOpenReplyCamera(){
+      fixtureCloseCamera();
+      const backdrop=document.createElement('div');backdrop.className='fixture-camera-backdrop';
+      backdrop.innerHTML=`<div class="AEZEl xmrlf"><div class="acEGc" style="aspect-ratio:9/16"><div class="aTkGG" style="aspect-ratio:9/16"><div class="VZx_k"><div class="BN1L1"><div class="Nuu9e"><div class="MQv99"><button id="fixture-close-camera" onclick="fixtureCloseCamera()">Back</button><button id="fixture-switch-camera" onclick="window.fixtureCameraSwitched=true">Flip</button></div><div class="CYQZP"><video id="local-video" class="lnAeT" muted autoplay playsinline poster="${fixtureMediaImage(1200,900)}"></video></div><div class="ph8Kn"><button id="fixture-capture" onclick="fixtureCaptureReply()">Capture</button><button id="fixture-send-camera" onclick="window.fixtureCameraSent=true">Send</button></div></div></div></div></div></div></div>`;
+      document.getElementById('portal-container').appendChild(backdrop);
+    }
+    function fixtureCloseCamera(){document.querySelector('.fixture-camera-backdrop')?.remove()}
+    function fixtureCaptureReply(){const video=document.getElementById('local-video'),canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);window.fixtureCapturedDimensions=[canvas.width,canvas.height];window.fixtureCapturedPixels=[...canvas.getContext('2d').getImageData(0,0,1,1).data,...canvas.getContext('2d').getImageData(canvas.width-1,0,1,1).data]}
     // Synthetic DOM gesture dispatch checks the adapter state machine only; it does
     // not claim to simulate WKWebView's physical scrolling or OS back gesture.
     function fixtureSwipe(selector,points,options={}){const target=document.querySelector(selector);const fire=(type,point,count)=>{const touches=Array.from({length:count},(_,i)=>({identifier:i,target,clientX:point[0]+i,clientY:point[1],pageX:point[0]+i,pageY:point[1]}));const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(event,{touches:{value:type==='touchend'?[]:touches},changedTouches:{value:touches}});target.dispatchEvent(event)};fire('touchstart',points[0],options.startCount||1);for(const point of points.slice(1))fire('touchmove',point,options.moveCount||1);fire(options.cancel?'touchcancel':'touchend',points.at(-1),1)}
