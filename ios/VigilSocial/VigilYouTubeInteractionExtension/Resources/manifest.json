@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Vigil Focused Web Controls",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Keeps Reddit limited to one externally searched post, preserves explicit-content protection, and adds focused YouTube controls.",
   "host_permissions": [
     "https://youtube.com/*",
@@ -122,7 +122,8 @@
     "nativeMessaging",
     "webNavigation",
     "storage",
-    "tabs"
+    "tabs",
+    "declarativeNetRequest"
   ],
   "background": {
     "scripts": [
@@ -142,5 +143,14 @@
     "32": "icons/icon-32.png",
     "48": "icons/icon-48.png",
     "128": "icons/icon-128.png"
+  },
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "vigil_reddit_navigation",
+        "enabled": true,
+        "path": "reddit-navigation-rules.json"
+      }
+    ]
   }
 }

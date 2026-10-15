@@ -14,6 +14,7 @@ final class SocialContainerStore: ObservableObject {
     @Published private(set) var selectedService: SocialService?
     @Published private(set) var stores: [SocialService: SocialWebViewStore] = [:]
     @Published private(set) var migrationReady = false
+    @Published private(set) var isResolvingLaunch = true
     let preferences: SocialPreferences
     private var didApplyStartupPreference = false
     private let bundle: Bundle
@@ -169,16 +170,25 @@ final class SocialContainerStore: ObservableObject {
         let next = store(for: service)
         next.requestFreshServiceAccessReceipt()
         selectedService = service
+        finishLaunchHandoff()
         writeSelectionReceipt()
         // The combined view rechecks the system web policy before resuming.
         if !isCombined { next.resumeSuspendedMedia() }
     }
+
+    func beginLaunchHandoff() {
+        guard isCombined else { return }
+        isResolvingLaunch = true
+    }
+
+    func finishLaunchHandoff() { isResolvingLaunch = false }
 
     func showHome() {
         guard isCombined else { return }
         stores.values.forEach { $0.suspendAllMedia(relinquishExternalPlayback: false) }
         InstagramExternalPlaybackPolicy.relinquish()
         selectedService = nil
+        finishLaunchHandoff()
         writeSelectionReceipt()
     }
 
@@ -238,19 +248,22 @@ enum InstagramExternalPlaybackPolicy {
 // first result after each launcher selection without rewriting every poll.
 struct SocialServiceAccessReceipt {
     private var lastConfirmed: Bool?
+    private var lastDetail: String?
 
-    mutating func invalidate() { lastConfirmed = nil }
+    mutating func invalidate() { lastConfirmed = nil; lastDetail = nil }
 
-    mutating func write(confirmed: Bool, service: SocialService, directory: URL, now: Date = Date()) throws {
-        guard lastConfirmed != confirmed else { return }
+    mutating func write(confirmed: Bool, service: SocialService, directory: URL, now: Date = Date(), detail: String = "") throws {
+        guard lastConfirmed != confirmed || lastDetail != detail else { return }
         let data = try JSONSerialization.data(withJSONObject: [
             "service": service.rawValue,
             "accessConfirmed": confirmed,
-            "checkedAt": ISO8601DateFormatter().string(from: now)
+            "checkedAt": ISO8601DateFormatter().string(from: now),
+            "detail": String(detail.prefix(2048))
         ])
         try data.write(to: directory.appendingPathComponent("vigil-social-access-\(service.rawValue).json"), options: .atomic)
         // A failed write must remain retryable on the next check.
         lastConfirmed = confirmed
+        lastDetail = detail
     }
 }
 
@@ -292,6 +305,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     @Published private(set) var instagramInformationalAccounts: [String] = []
     private var instagramControlsUserScript: WKUserScript?
+    private var instagramDocumentStartUserScript: WKUserScript?
+    private var instagramIncomingSharedURL: URL?
+    private var instagramPendingIncomingURL: URL?
 
     let fixedService: SocialService
     private let defaults: UserDefaults
@@ -335,6 +351,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackPolicyProbe: Task<Void, Never>?
     private var externalPlaybackCreditDeadline: Task<Void, Never>?
     private var lastConfirmedServiceAccess: TimeInterval?
+    private var serviceNavigationDiagnostic = ""
+    private(set) var serviceAccessIsSettling = true
+    private(set) var serviceAccessDetail = "The protected page is still opening."
     private var playbackIsBackgrounded = false
     private var playbackServiceIsVisible = false
     private var sceneActivityGeneration: UInt64 = 0
@@ -413,41 +432,90 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func requestFreshServiceAccessReceipt() {
         serviceAccessReceipt.invalidate()
         lastConfirmedServiceAccess = nil
+        serviceAccessIsSettling = true
     }
 
     func confirmServiceAccess() async -> Bool {
         var confirmed = false
         defer {
+            if !confirmed, !serviceNavigationDiagnostic.isEmpty {
+                serviceAccessDetail += " Last navigation: " + serviceNavigationDiagnostic
+            }
             lastConfirmedServiceAccess = confirmed ? ProcessInfo.processInfo.systemUptime : nil
             if !confirmed, playbackIsBackgrounded { suspendAllMedia() }
             if bundle.object(forInfoDictionaryKey: "VigilService") as? String == "all",
                let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-                try? serviceAccessReceipt.write(confirmed: confirmed, service: fixedService, directory: directory)
+                try? serviceAccessReceipt.write(confirmed: confirmed, service: fixedService, directory: directory, detail: confirmed ? "" : serviceAccessDetail)
             }
         }
+        serviceAccessIsSettling = false
+        serviceAccessDetail = "Vigil could not confirm access under the current web policy."
         guard accessRestriction?() != true else { return false }
         let view = webView(for: fixedService)
-        guard let url = view.url, fixedService.allowsNavigation(to: url), !view.isLoading else { return false }
+        guard let url = view.url else {
+            serviceAccessDetail = "The protected page has not established a document URL."
+            switch health[fixedService] {
+            case let .degraded(detail), let .unsupported(detail), let .advisory(detail):
+                serviceAccessDetail = detail
+            default: serviceAccessIsSettling = true
+            }
+            return false
+        }
+        guard fixedService.allowsNavigation(to: url), !fixedService.isRestrictedSurface(url) else { return false }
+        guard !view.isLoading else {
+            serviceAccessDetail = "The protected document is still loading."
+            serviceAccessIsSettling = true
+            return false
+        }
         do {
             let result = try await view.callAsyncJavaScript("""
-                const controller = new AbortController();
-                const timeout = setTimeout(() => controller.abort(), 4000);
-                try {
-                    const target = new URL('/robots.txt', location.origin);
-                    const response = await fetch(target.href, {
-                        method: 'HEAD', cache: 'no-store', credentials: 'include',
-                        redirect: 'error', signal: controller.signal
-                    });
-                    // An HTTP error still proves the origin is reachable. Do
-                    // not reject sign-in/CAPTCHA pages just because their
-                    // server declines HEAD or has no robots.txt resource.
-                    return response.status >= 200 && response.status < 600 && response.url === target.href;
-                } catch (_) { return false; }
-                finally { clearTimeout(timeout); }
+                const diagnostics = [];
+                async function check(target, method, duration) {
+                    const controller = new AbortController();
+                    const timeout = setTimeout(() => controller.abort(), duration);
+                    try {
+                        const response = await fetch(target.href, {
+                            method, cache: 'no-store', credentials: 'include',
+                            redirect: 'error', signal: controller.signal
+                        });
+                        // A server declining HEAD still demonstrates reachability.
+                        // Redirects, opaque responses and system-filter failures do not.
+                        const allowed = response.status >= 200 && response.status < 600 && response.url === target.href;
+                        if (!allowed) diagnostics.push(method + ' rejected (HTTP ' + response.status + ', exact URL ' + (response.url === target.href) + ')');
+                        return allowed;
+                    } catch (error) {
+                        diagnostics.push(method + ' failed: ' + error.name + ': ' + error.message);
+                        return false;
+                    }
+                    finally { clearTimeout(timeout); }
+                }
+                const robots = new URL('/robots.txt', location.origin);
+                if (await check(robots, 'HEAD', 2000)) return {allowed: true};
+                // Some services reject HEAD or their robots resource in a signed-in
+                // session. Probe the exact permitted document through the same
+                // policy-filtered WebKit process; never use URLSession or cached DOM.
+                const document = new URL(location.href);
+                document.hash = '';
+                const allowed = await check(document, 'GET', 4000);
+                return {allowed, detail: diagnostics.join('; ')};
                 """, arguments: [:], in: nil, contentWorld: .defaultClient)
-            confirmed = result as? Bool == true
+            // A navigation or a newly active routine invalidates an in-flight result.
+            guard !Task.isCancelled, view.url == url, !view.isLoading,
+                  accessRestriction?() != true else {
+                serviceAccessIsSettling = view.isLoading || view.url != url
+                return false
+            }
+            let reply = result as? [String: Any]
+            confirmed = reply?["allowed"] as? Bool == true
+            if !confirmed, let detail = reply?["detail"] as? String, !detail.isEmpty {
+                serviceAccessDetail = detail
+            }
             return confirmed
-        } catch { return false }
+        } catch {
+            serviceAccessIsSettling = view.isLoading || view.url != url
+            serviceAccessDetail = "The protected WebKit access check could not complete: \(error.localizedDescription)"
+            return false
+        }
     }
 
     func open(_ url: URL) {
@@ -458,6 +526,26 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func open(_ link: SocialIncomingLink) {
         guard link.service == fixedService, accessRestriction?() != true else { return }
         let destination = link.destination
+        if link.service == .instagram {
+            let controller = webView(for: .instagram).configuration.userContentController
+            instagramIncomingSharedURL = destination
+            instagramPendingIncomingURL = destination
+            let replacement = DOMAdapters.documentStartScript(
+                for: .instagram, unclassifiedMediaPolicy: unclassifiedMediaPolicy,
+                audioEnabled: audioEnabled(for: .instagram), contentSafetyEnabled: false,
+                sharedContentURL: destination)
+            // Rebuild just the bootstrap, preserving every other protection.
+            // The seed binds an incoming story to its exact URL at document
+            // start, before the normal mutual-friend gate can reject it.
+            let scripts = controller.userScripts.map { script in
+                script.source == instagramDocumentStartUserScript?.source
+                    ? WKUserScript(source: replacement, injectionTime: script.injectionTime,
+                        forMainFrameOnly: script.isForMainFrameOnly) : script
+            }
+            controller.removeAllUserScripts()
+            for script in scripts { controller.addUserScript(script) }
+            instagramDocumentStartUserScript = scripts.first { $0.source == replacement }
+        }
         if link.service == .youtube, link.grantsExternalPlayback,
            let id = SocialIncomingLink.youtubeVideoID(destination) {
             Task { @MainActor in
@@ -539,7 +627,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                     injectionTime: .atDocumentStart, forMainFrameOnly: false))
             }
         }
-        controller.addUserScript(WKUserScript(
+        let documentStartUserScript = WKUserScript(
             source: DOMAdapters.documentStartScript(
                 for: service,
                 unclassifiedMediaPolicy: unclassifiedMediaPolicy,
@@ -548,7 +636,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ),
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false
-        ))
+        )
+        controller.addUserScript(documentStartUserScript)
+        if service == .instagram { instagramDocumentStartUserScript = documentStartUserScript }
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.installedFrameSafetyScript(
                 for: service,
@@ -601,6 +691,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if service == .youtube {
             configuration.applicationNameForUserAgent =
                 YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
+        } else if service == .x {
+            configuration.applicationNameForUserAgent = XWebCompatibility.safariApplicationNameSuffix
         }
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -654,9 +746,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // Snapchat's /web landing can return a mobile download shell before
             // it ever offers login. Begin with first-party authentication;
             // its continue URL returns the persistent session to friend chat.
-            let initialURL = service == .snapchat
-                ? SnapchatWebCompatibility.loginURL
-                : service.homeURL
+            let initialURL: URL
+            switch service {
+            case .snapchat: initialURL = SnapchatWebCompatibility.loginURL
+            case .tiktok: initialURL = TikTokWebCompatibility.loginURL
+            default: initialURL = service.homeURL
+            }
             webView.load(URLRequest(url: initialURL))
         }
 
@@ -791,33 +886,36 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
-    // Prepare the foreground responder while the verified access gate still
-    // covers the page. Snapchat treats late focus as awaiting reactivation;
-    // its real chat-opening click must occur after focus has reached WebKit.
+    // Native chrome/service switching can leave a visible document unfocused.
+    // Restore real WebKit focus before taps so the site can maintain presence
+    // and read acknowledgments. Never synthesize those events or clear badges.
     func prepareForegroundInteraction() async {
-        guard let view = eligibleSnapchatFocusView(),
-              let documentID = mainDocumentIDs[.snapchat] else { return }
+        guard let view = eligibleForegroundFocusView(),
+              let documentID = mainDocumentIDs[fixedService] else { return }
         let focused = try? await view.evaluateJavaScript("document.hasFocus()")
         guard focused as? Bool == false,
               !Task.isCancelled,
-              eligibleSnapchatFocusView() === view,
-              mainDocumentIDs[.snapchat] == documentID else { return }
-        view.becomeFirstResponder()
+              eligibleForegroundFocusView() === view,
+              mainDocumentIDs[fixedService] == documentID,
+              view.becomeFirstResponder() else { return }
         // Wait for WebKit to process the real focus event before enabling taps.
         // Do not fake a focus/click event or acknowledge its privacy screen.
         _ = try? await view.evaluateJavaScript("document.hasFocus(); window.__vigilPublishSnapchatRenderState?.();")
     }
 
-    private func eligibleSnapchatFocusView() -> WKWebView? {
-        guard fixedService == .snapchat,
+    private func eligibleForegroundFocusView() -> WKWebView? {
+        guard fixedService == .snapchat || fixedService == .instagram,
               playbackServiceIsVisible, !playbackIsBackgrounded,
               hasRecentConfirmedAccess, accessRestriction?() != true,
               UIApplication.shared.applicationState == .active,
-              let view = webViews[.snapchat], !view.isLoading,
+              let view = webViews[fixedService], !view.isLoading,
               view.window?.isKeyWindow == true,
-              let url = view.url, SocialService.snapchat.allowsNavigation(to: url),
-              ["snapchat.com", "www.snapchat.com", "web.snapchat.com"].contains(url.host?.lowercased() ?? ""),
-              url.path == "/web" || url.path.hasPrefix("/web/") else { return nil }
+              let url = view.url, fixedService.allowsNavigation(to: url),
+              fixedService.isCanonicalAppHost(url.host?.lowercased() ?? ""),
+              !fixedService.usesUnmodifiedAuthenticationDocument(url),
+              !fixedService.isRestrictedSurface(url) else { return nil }
+        if fixedService == .snapchat,
+           !(url.path == "/web" || url.path.hasPrefix("/web/")) { return nil }
         return view
     }
 
@@ -920,7 +1018,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     private func receivedYouTubePlaybackAuthorization(body: [String: Any], reply: [String: Any]) async {
-        guard fixedService == .youtube else { return }
+        guard fixedService == .youtube,
+              let action = body["action"] as? String,
+              ["start", "renew", "settle"].contains(action) else { return }
         if let lease = reply["lease"] as? [String: Any], let id = lease["videoId"] as? String {
             guard let url = webViews[.youtube]?.url,
                   ["/watch", "/watch/"].contains(url.path),
@@ -952,8 +1052,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             while !Task.isCancelled {
                 guard let self, self.externalPlaybackAuthorization.hasLease else { return }
                 guard let snapshot = await self.youtubePlaybackSnapshot() else {
-                    if !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation { self.suspendAllMedia() }
-                    return
+                    guard !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation else { return }
+                    self.youtubeExternalPlaybackAvailable = false
+                    self.updateYouTubePictureInPicturePermission()
+                    // Foreground playback already has the page's ledger and
+                    // safety gates. A busy WebKit process must not let this
+                    // auxiliary PiP probe suspend the entire visible player.
+                    // External playback still fails closed on a missing probe.
+                    if self.playbackIsBackgrounded { self.suspendAllMedia(); return }
+                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    continue
                 }
                 guard !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation else { return }
                 self.externalPlaybackAuthorization.sample(snapshot)
@@ -2028,6 +2136,11 @@ extension SocialWebViewStore: WKNavigationDelegate {
             return
         }
 
+        if navigationAction.targetFrame?.isMainFrame != false {
+            // Keep URLs without queries/fragments in local diagnostic receipts;
+            // authentication credentials and redirect parameters stay private.
+            serviceNavigationDiagnostic = "\(url.scheme ?? "")://\(url.host ?? "")\(url.path)"
+        }
         preferences.preferredContentMode = service == .snapchat ? .desktop : .mobile
 
         if service == .linkedin, navigationAction.targetFrame == nil,
@@ -2054,11 +2167,16 @@ extension SocialWebViewStore: WKNavigationDelegate {
                 decisionHandler(.cancel, preferences)
                 return
             }
-            if service == .instagram,
-               InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url) {
+            let isIncomingInstagramShare = service == .instagram
+                && navigationAction.navigationType == .other && instagramPendingIncomingURL == url
+            if isIncomingInstagramShare { instagramPendingIncomingURL = nil }
+            if service == .instagram, !isIncomingInstagramShare,
+               InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url, sharedStory: instagramIncomingSharedURL) {
                 decisionHandler(.cancel, preferences)
                 return
             }
+            if service == .instagram, webView.url?.path.hasPrefix("/direct/") == true,
+               url.path.hasPrefix("/stories/") { instagramIncomingSharedURL = url }
             if service == .tiktok,
                TikTokSingleItemPolicy.blocksNavigation(from: webView.url, to: url) {
                 decisionHandler(.cancel, preferences)
@@ -2148,6 +2266,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         }
         webView.scrollView.refreshControl?.endRefreshing()
         if let service = service(for: webView) {
+            serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
             recordNavigationFailure(error, for: service)
         }
     }
@@ -2158,6 +2277,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         }
         webView.scrollView.refreshControl?.endRefreshing()
         if let service = service(for: webView) {
+            serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
             recordNavigationFailure(error, for: service)
         }
     }

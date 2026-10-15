@@ -131,7 +131,10 @@ browser.runtime.onMessage.addListener((message, sender) => {
 // Direct address-bar/bookmark requests and incoming links use time only.
 // Reloads and links originating in YouTube retain their existing permission.
 const isYouTube = url => {
-  try { return /(^|\.)youtube(?:-nocookie)?\.com$/.test(new URL(url).hostname) || new URL(url).hostname === 'youtu.be'; }
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/\.$/u, '');
+    return /(^|\.)youtube(?:-nocookie)?\.com$/.test(host) || host === 'youtu.be';
+  }
   catch { return false; }
 };
 const externalGrant = async (url, source) => {

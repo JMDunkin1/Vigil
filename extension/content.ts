@@ -1819,35 +1819,3 @@ function removeCookiePrompts() {
     }
   }
 }
-
-// Capture actual external-link clicks in the isolated extension world. A URL's
-// query string or missing referrer never grants a discovery exemption.
-document.addEventListener("click", (event) => {
-  if (!event.isTrusted || isYoutubeHost()) return;
-  const target = event.target instanceof Element ? event.target.closest("a[href]") : null;
-  if (!(target instanceof HTMLAnchorElement)) return;
-  try {
-    let url = new URL(target.href);
-    // Search engines often wrap the destination in a first-party redirect.
-    if ((/(^|\.)google\.com$/.test(url.hostname) && url.pathname === "/url")
-        || (/(^|\.)duckduckgo\.com$/.test(url.hostname) && url.pathname === "/l/")) {
-      url = new URL(url.searchParams.get("url") || url.searchParams.get("q") || url.searchParams.get("uddg") || "");
-    }
-    if (url.protocol !== "https:" || url.username || url.password || (url.port && url.port !== "443")) return;
-    const path = url.pathname.split("/").filter(Boolean);
-    const id = url.hostname === "youtu.be" && path.length === 1 ? path[0]
-      : /^(www\.|m\.)?youtube\.com$/.test(url.hostname)
-        ? /^\/watch\/?$/.test(url.pathname) ? url.searchParams.get("v")
-          : path.length === 2 && ["live", "embed"].includes(path[0]) ? path[1] : null
-        : null;
-    if (!id || !/^[a-zA-Z0-9_-]{11}$/.test(id)) return;
-    const sameTab = !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.altKey
-      && (!target.target || target.target === "_self") && !target.hasAttribute("download");
-    // Persist permission before leaving the document; otherwise fast navigation
-    // can destroy this request and the destination still demands a save.
-    if (sameTab) { event.preventDefault(); event.stopImmediatePropagation(); }
-    void chrome.runtime.sendMessage({ type: "VIGIL_YOUTUBE", youtube: { action: "external", videoId: id } })
-      .then(() => { if (sameTab) location.assign(target.href); })
-      .catch(() => { if (sameTab) location.assign(target.href); });
-  } catch { /* Navigation remains subject to the playback gate. */ }
-}, true);

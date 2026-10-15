@@ -1,17 +1,20 @@
-import { redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewDestination, redditReviewRedirect, vigilReturnPage } from "../src/redditReview.js";
+import { redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewTarget, redditReviewDestination, redditReviewRedirect, vigilReturnPage } from "../src/redditReview.js";
 
 declare function fetchVigil(path: string, options: RequestInit): Promise<Response>;
 const reviewApi: typeof chrome = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || chrome;
 const reviewStorage = reviewApi.storage.session || reviewApi.storage.local;
 const reviewPrefix = "vigil-reddit-review:";
 const returnTransferPrefix = "vigil-block-return:";
-interface ReturnTransfer { history: string[]; windowId: number; incognito: boolean; expiresAt: number; claimedTabId?: number; }
+interface ReturnTransfer { history: string[]; windowId: number; incognito: boolean; expiresAt: number; claimedTabId?: number; returning?: ReviewState["returning"]; failedReturns?: ReviewState["failedReturns"]; }
 interface ReviewState {
   search?: string; selected?: string; post?: string;
   pending?: { source: string; sourceTabId: number; expiresAt: number };
   history?: string[]; windowId?: number; incognito?: boolean;
+  returning?: { url: string; startedAt: number };
+  failedReturns?: Array<{ url: string; expiresAt: number }>;
 }
-interface ReviewReply { ok: boolean; url?: string; handled?: boolean; retry?: boolean; }
+interface ReviewReturn { url: string; exhausted?: boolean; }
+interface ReviewReply { ok: boolean; url?: string; handled?: boolean; retry?: boolean; exhausted?: boolean; }
 let reviewQueue = Promise.resolve<unknown>(undefined);
 function serializeReview<T>(work: () => Promise<T>): Promise<T> {
   const next = reviewQueue.then(work, work);
@@ -49,6 +52,7 @@ async function preserveReplacementReturn(details: { tabId: number; frameId: numb
   if (expired.length) await reviewStorage.remove(expired);
   // Copy return candidates only, never Reddit grants or pending navigation tickets.
   await reviewStorage.set({ [key]: { history: state.history.filter(url => !redditReviewHost(url)).slice(-20),
+    returning: state.returning, failedReturns: state.failedReturns,
     windowId: state.windowId, incognito: state.incognito, expiresAt: Date.now() + 30_000 } satisfies ReturnTransfer });
 }
 async function restoreReplacementReturn(tabId: number, tab: chrome.tabs.Tab, state: ReviewState): Promise<void> {
@@ -57,6 +61,8 @@ async function restoreReplacementReturn(tabId: number, tab: chrome.tabs.Tab, sta
   const transfer = (await reviewStorage.get(key))[key] as ReturnTransfer | undefined;
   if (!transfer || transfer.claimedTabId !== undefined || transfer.expiresAt <= Date.now() || transfer.windowId !== tab.windowId || transfer.incognito !== Boolean(tab.incognito)) return;
   state.history = [...transfer.history];
+  state.returning = transfer.returning;
+  state.failedReturns = transfer.failedReturns;
   await writeReview(tabId, state);
   // Keep a short-lived receipt so a late holding-page event cannot recreate
   // a consumed transfer after the replacement has already claimed it.
@@ -67,37 +73,53 @@ function rememberReviewPage(state: ReviewState, url: string): void {
   if (state.pending && redditReviewRedirect(url, state.pending.source)) return;
   if (state.history?.at(-1) !== url) state.history = [...(state.history || []), url].slice(-20);
 }
-async function reviewReturnURL(state: ReviewState, currentUrl: string): Promise<string> {
-  const candidates = [...(state.history || [])].reverse().filter(url => url !== currentUrl);
+async function reviewReturnURL(state: ReviewState, currentUrl: string): Promise<ReviewReturn> {
+  state.failedReturns = (state.failedReturns || []).filter(entry => entry.expiresAt > Date.now());
+  const failed = new Set(state.failedReturns.map(entry => entry.url));
+  const candidates = [...new Set([...(state.history || [])].reverse())].filter(url => url !== currentUrl && !failed.has(url));
   // The monitor can supply a previous page even when the extension has just
   // restarted. Revalidate it alongside this tab's recorded navigation history.
   if (vigilReturnPage(currentUrl, reviewApi.runtime.getURL("/"))) {
     const back = new URL(currentUrl).searchParams.get("back");
-    if (back && !candidates.includes(back)) candidates.unshift(back);
+    if (back && !failed.has(back) && !candidates.includes(back)) candidates.unshift(back);
   }
-  if (!candidates.length && !redditReviewHost(currentUrl)) return "about:blank";
+  if (!candidates.length && !redditReviewHost(currentUrl)) return { url: "about:blank", exhausted: failed.size > 0 };
   try {
     const body = { action: "browser-return", candidates, inspect: redditReviewHost(currentUrl) ? currentUrl : undefined };
     const result = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser
       ? await reviewApi.runtime.sendNativeMessage("tech.caseline.vigil", body)
       : await (await (globalThis as typeof globalThis & { fetchVigil: typeof fetchVigil }).fetchVigil("/api/extension/browser-health", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
-    if (result?.ok && typeof result.interstitial === "string" && vigilReturnPage(result.interstitial, reviewApi.runtime.getURL("/"))) return result.interstitial;
-    if (result?.ok && typeof result.url === "string" && candidates.includes(result.url)) return result.url;
+    if (result?.ok && typeof result.interstitial === "string" && vigilReturnPage(result.interstitial, reviewApi.runtime.getURL("/"))) return { url: result.interstitial };
+    if (result?.ok && typeof result.url === "string" && candidates.includes(result.url)) return { url: result.url };
+    if (result?.ok && result.url === "about:blank") return { url: "about:blank", exhausted: true };
   } catch { /* An unavailable verifier must not choose another tab or window. */ }
-  return "about:blank";
+  return { url: "about:blank" };
 }
-async function quietReviewReturn(tabId: number, state: ReviewState, currentUrl: string): Promise<string> {
-  const url = await reviewReturnURL(state, currentUrl);
-  if (vigilReturnPage(url, reviewApi.runtime.getURL("/"))) return url;
+async function quietReviewReturn(tabId: number, state: ReviewState, currentUrl: string): Promise<ReviewReturn> {
+  const result = await reviewReturnURL(state, currentUrl);
+  const { url } = result;
+  if (vigilReturnPage(url, reviewApi.runtime.getURL("/"))) return result;
   // A failed verifier or an empty history must not erase a later retry's
   // candidates. In particular, extension timeouts aren't a successful return.
-  if (url === "about:blank" && vigilReturnPage(currentUrl, reviewApi.runtime.getURL("/"))) return url;
+  if (url === "about:blank" && vigilReturnPage(currentUrl, reviewApi.runtime.getURL("/"))) return result;
   const index = state.history?.lastIndexOf(url) ?? -1;
   state.history = index < 0 ? [] : state.history?.slice(0, index + 1);
+  if (vigilReturnPage(currentUrl, reviewApi.runtime.getURL("/"))) state.returning = { url, startedAt: Date.now() };
   state.pending = undefined;
   state.post = redditReviewPostId(url) || undefined;
   await writeReview(tabId, state);
-  return url;
+  return result;
+}
+function trackBlockedReturn(state: ReviewState): void {
+  if (!state.returning) return;
+  if (Date.now() - state.returning.startedAt <= 15_000) {
+    // URL policy cannot predict a website's redirect or a later content guard.
+    // If a return lands on another blocker, skip that destination next time.
+    const start = state.history?.lastIndexOf(state.returning.url) ?? -1;
+    const failed = start < 0 ? [state.returning.url] : (state.history || []).slice(start);
+    state.failedReturns = [...(state.failedReturns || []), ...failed.map(url => ({ url, expiresAt: Date.now() + 5 * 60_000 }))].slice(-20);
+  }
+  state.returning = undefined;
 }
 async function acceptReviewArrival(tabId: number, state: ReviewState, url: string): Promise<boolean> {
   const post = redditReviewPostId(url);
@@ -133,14 +155,16 @@ async function reviewMessage(message: { action?: string; url?: string; sourceUrl
   if (message.action === "return") {
     if (!vigilReturnPage(sender.url, reviewApi.runtime.getURL("/")) && !redditReviewHost(sender.url)) return { ok: false };
     await restoreReplacementReturn(tabId, current, state);
-    return { ok: true, url: await quietReviewReturn(tabId, state, sender.url) };
+    if (vigilReturnPage(sender.url, reviewApi.runtime.getURL("/"))) trackBlockedReturn(state);
+    await writeReview(tabId, state);
+    return { ok: true, ...await quietReviewReturn(tabId, state, sender.url) };
   }
   if (message.action === "check") return { ok: Boolean(state.post && state.post === redditReviewPostId(sourceUrl)), retry: Boolean(state.pending && state.pending.expiresAt >= Date.now()) };
   if (message.action !== "open") return { ok: false };
   const search = redditReviewSearchPage(sourceUrl);
   const raw = String(message.url || "");
   const destination = redditReviewDestination(raw);
-  const wrapped = redditReviewRedirect(raw, sourceUrl);
+  const wrapped = !redditReviewTarget(raw) && redditReviewRedirect(raw, sourceUrl);
   const post = destination && redditReviewPostId(destination);
   if (!search || (!post && !wrapped)) return { ok: false };
   if (state.search === search && state.selected && post && state.selected !== post) return { ok: false };
@@ -177,11 +201,16 @@ async function reviewNavigation(details: { tabId: number; frameId: number; url: 
   if (current.url !== details.url) return;
   const state = await readReview(details.tabId, current);
   await restoreReplacementReturn(details.tabId, current, state);
+  if (vigilReturnPage(details.url, reviewApi.runtime.getURL("/"))) trackBlockedReturn(state);
+  else if (state.returning && details.url !== state.returning.url
+    && (Date.now() - state.returning.startedAt > 15_000
+      || (["link", "typed", "auto_bookmark", "keyword", "keyword_generated"].includes(details.transitionType || "")
+        && !details.transitionQualifiers?.some(value => value === "server_redirect" || value === "client_redirect")))) state.returning = undefined;
   if (state.pending && ["typed", "auto_bookmark", "keyword", "keyword_generated"].includes(details.transitionType || "")
     && !details.transitionQualifiers?.some(value => value === "server_redirect" || value === "client_redirect")) state.pending = undefined;
   if (redditReviewHost(details.url)) {
     if (!await acceptReviewArrival(details.tabId, state, details.url)) {
-      await reviewApi.tabs.update(details.tabId, { url: await quietReviewReturn(details.tabId, state, details.url) });
+      await reviewApi.tabs.update(details.tabId, { url: (await quietReviewReturn(details.tabId, state, details.url)).url });
       return;
     }
   } else if (!vigilReturnPage(details.url, reviewApi.runtime.getURL("/")) && details.url !== "about:blank") {

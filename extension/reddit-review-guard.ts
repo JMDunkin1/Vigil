@@ -1,4 +1,4 @@
-import { redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewDestination, redditReviewRedirect, vigilReturnPage } from "../src/redditReview.js";
+import { redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewTarget, redditReviewDestination, redditReviewRedirect, vigilReturnPage } from "../src/redditReview.js";
 import { blockedPageBack } from "../src/blockedPageBack.js";
 
 const reviewApi: typeof chrome = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || chrome;
@@ -7,14 +7,16 @@ function reviewBlocked(): void {
   if (returnPending) return;
   returnPending = true;
   let settled = false;
-  const finish = (result?: { handled?: boolean; ok?: boolean; url?: string }) => {
+  const finish = (result?: { handled?: boolean; ok?: boolean; url?: string; exhausted?: boolean }) => {
     if (settled) return;
     settled = true;
     clearTimeout(fallback);
-    returnPending = false;
-    if (result?.handled) return;
-    if (result?.ok && result.url && result.url !== "about:blank") location.replace(result.url);
-    else if (onReturnPage && !document.querySelector('[data-vigil-quiet-return]') && location.pathname !== "/reddit-review-blocked.html") blockedPageBack();
+    if (result?.handled) { returnPending = false; return; }
+    if (result?.ok && result.url && result.url !== "about:blank") blockedPageBack(result.url);
+    else if (onReturnPage && !document.querySelector('[data-vigil-quiet-return]')) {
+      returnPending = false;
+      blockedPageBack("", result?.exhausted);
+    }
     else location.replace("about:blank");
   };
   const fallback = setTimeout(finish, 4000);
@@ -26,13 +28,14 @@ function reviewBlocked(): void {
 let returnPending = false;
 const onReturnPage = vigilReturnPage(location.href, reviewApi.runtime.getURL("/"));
 if (onReturnPage) {
+  addEventListener("pageshow", () => { returnPending = false; });
   addEventListener("click", event => {
     const target = event.target instanceof Element ? event.target.closest("#leaveBlockedPage") : null;
     if (!target) return;
     event.preventDefault(); event.stopImmediatePropagation(); reviewBlocked();
   }, true);
   const quietReturn = () => {
-    if (document.querySelector('[data-vigil-quiet-return]') || location.pathname === "/reddit-review-blocked.html") reviewBlocked();
+    if (document.querySelector('[data-vigil-quiet-return]')) reviewBlocked();
   };
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", quietReturn, { once: true });
   else quietReturn();
@@ -47,9 +50,19 @@ function reviewAnchor(event: Event): HTMLAnchorElement | null {
   return null;
 }
 function reviewSocialControl(element: Element): boolean {
+  if (reviewAppControl(element)) return true;
   if (!element.matches("button, [role='button']")) return false;
   const label = [element.getAttribute("aria-label"), element.getAttribute("title"), element.textContent].filter(Boolean).join(" ").trim();
   return /^(?:upvote|downvote|reply|create post|join|follow|chat|share|award|log in|sign up)(?:\b|$)/iu.test(label);
+}
+function reviewAppControl(element: Element): boolean {
+  if (!element.matches("a[href], button, [role='button']")) return false;
+  const label = [element.getAttribute("aria-label"), element.getAttribute("title"), element.textContent].filter(Boolean).join(" ").trim();
+  if (/^(?:open(?: in)?|use|get|download|install|try|continue (?:in|to))(?: the)? (?:reddit )?app(?:\b|$)/iu.test(label)) return true;
+  if (!(element instanceof HTMLAnchorElement)) return false;
+  try { const url = new URL(element.href); return ["itms-apps:", "itms:", "reddit:"].includes(url.protocol)
+    || ["apps.apple.com", "itunes.apple.com", "play.google.com", "reddit.app.link"].includes(url.hostname); }
+  catch { return false; }
 }
 
 // Only an actual result click in an external search document can ask the
@@ -69,7 +82,8 @@ function reviewSearchClick(event: MouseEvent): void {
 for (const eventName of ["click", "auxclick"]) addEventListener(eventName, event => {
   if (redditReviewHost(location.href)) return;
   const anchor = reviewAnchor(event);
-  if (anchor && redditReviewHost(anchor.href) && !redditReviewPostId(anchor.href)) {
+  const target = anchor && redditReviewTarget(anchor.href);
+  if (target && !redditReviewPostId(target)) {
     event.preventDefault(); event.stopImmediatePropagation();
   }
 }, true);
@@ -79,6 +93,7 @@ addEventListener("auxclick", reviewSearchClick, true);
 if (redditReviewHost(location.href)) {
   const initialPost = redditReviewPostId(location.href);
   let authorized = false;
+  let pendingForm: HTMLFormElement | null = null;
   let lastURL = location.href;
   const pendingStyle = document.createElement("style");
   pendingStyle.textContent = "html { visibility:hidden !important; }";
@@ -101,6 +116,11 @@ if (redditReviewHost(location.href)) {
     rootObserver.disconnect();
     installReviewReader(initialPost);
     pendingStyle.remove();
+    // Reddit's automatic document check may submit before the tab grant check
+    // resolves. Replay only a GET to this exact post after authorization.
+    const form = pendingForm;
+    pendingForm = null;
+    if (form?.isConnected && form.method.toLowerCase() === "get" && redditReviewPostId(form.action) === initialPost) form.requestSubmit();
     }, block);
   }
 
@@ -108,6 +128,8 @@ if (redditReviewHost(location.href)) {
     if (event instanceof KeyboardEvent && event.key !== "Enter" && event.key !== " ") return;
     const anchor = reviewAnchor(event);
     const target = event.composedPath().find(node => node instanceof Element) as Element | undefined;
+    if (event.type === "submit" && event.target instanceof HTMLFormElement && !authorized
+      && initialPost && event.target.method.toLowerCase() === "get" && redditReviewPostId(event.target.action) === initialPost) pendingForm = event.target;
     const forbidden = !authorized || event.composedPath().some(node => node instanceof Element && reviewSocialControl(node))
       || (anchor && redditReviewHost(anchor.href) && redditReviewPostId(anchor.href) !== initialPost)
       || target?.closest("textarea, [contenteditable='true'], input[type='search'], [role='searchbox'], shreddit-composer, [data-testid='post-composer']");
@@ -158,6 +180,7 @@ function installReviewReader(post: string): void {
       for (const button of root.querySelectorAll("button, [role='button']")) {
         if (reviewSocialControl(button)) hide(button);
       }
+      for (const anchor of root.querySelectorAll("a[href]")) if (reviewAppControl(anchor)) hide(anchor);
     }
   };
   const schedule = () => { if (!queued) { queued = true; queueMicrotask(scan); } };

@@ -1,3 +1,4 @@
+import { verifyVigilStaticRules } from "../src/extensionStaticRules.js";
 const DEFAULT_LOCAL_SERVER = "http://127.0.0.1:8787";
 const EXTENSION_ID_HEADER = "x-vigil-extension-id";
 const EXTENSION_TOKEN_HEADER = "x-vigil-extension-token";
@@ -17,6 +18,7 @@ const testButton = queryElement<HTMLButtonElement>("#testConnection");
 const copyPairingEnvButton = queryElement<HTMLButtonElement>("#copyPairingEnv");
 const serverCheck = queryElement<HTMLElement>("#serverCheck");
 const pairingCheck = queryElement<HTMLElement>("#pairingCheck");
+const filterCheck = queryElement<HTMLElement>("#filterCheck");
 const pairingEnvHint = queryElement<HTMLElement>("#pairingEnvHint");
 
 const manifest = chrome.runtime.getManifest();
@@ -25,6 +27,7 @@ const extensionOrigin = `chrome-extension://${chrome.runtime.id}`;
 extensionOriginInput.value = extensionOrigin;
 pairingEnvHint.textContent = defaultPairingEnv();
 void loadOptions();
+void checkStaticProtection();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -46,6 +49,12 @@ testButton.addEventListener("click", async () => {
   setDiagnostic(pairingCheck, "Checking...");
   setStatus("");
 
+  if (!await checkStaticProtection()) {
+    setDiagnostic(serverCheck, "Not checked.");
+    setDiagnostic(pairingCheck, "Repair filtering rules before verifying pairing.");
+    return;
+  }
+
   try {
     const response = await fetch(vigilUrl("/api/health", localServer), { headers: { Accept: "application/json" } });
     const signature = response.headers.get("x-vigil-app") || "";
@@ -62,6 +71,11 @@ testButton.addEventListener("click", async () => {
   }
 
   const pairing = await readPairing(localServer, extensionToken);
+  if (pairing?.requiredExtensionVersion && pairing.requiredExtensionVersion !== manifest.version) {
+    setDiagnostic(pairingCheck, `Vigil expects ${pairing.requiredExtensionVersion}; this companion is ${manifest.version}. Update Vigil to a matching release.`);
+    setStatus("The extension and Vigil versions do not match.");
+    return;
+  }
   if (pairing?.setup?.idEnv || pairing?.setup?.originEnv) {
     pairingEnvHint.textContent = [pairing.setup.idEnv, pairing.setup.originEnv].filter(Boolean).join("\n");
   } else {
@@ -109,6 +123,18 @@ async function loadOptions() {
   const values = await storageGet(STORAGE_DEFAULTS);
   localServerInput.value = normalizeLocalServer(values.vigilLocalServer);
   extensionTokenInput.value = String(values.vigilExtensionToken || "");
+}
+
+async function checkStaticProtection(): Promise<boolean> {
+  setDiagnostic(filterCheck, "Checking...");
+  const report = await verifyVigilStaticRules(chrome);
+  filterCheck.dataset.verified = String(report.ok);
+  filterCheck.dataset.rules = String(report.totalRules);
+  filterCheck.dataset.regexRules = String(report.regexRules);
+  setDiagnostic(filterCheck, report.ok
+    ? `All ${report.totalRules} filtering rules verified.`
+    : `${report.error || "Filtering verification failed."}${report.failedRules.length ? " " + report.failedRules.map(rule => `${rule.rulesetId}/${rule.id}: ${rule.reason}`).join("; ") : ""}`);
+  return report.ok;
 }
 
 function queryElement<T extends Element>(selector: string): T {
@@ -204,6 +230,7 @@ function storageSet(value: StorageOptions): Promise<boolean> {
 }
 
 interface PairingResponse {
+  requiredExtensionVersion?: string;
   trust?: {
     trusted?: boolean;
     trustedBy?: "origin" | "token" | "none";

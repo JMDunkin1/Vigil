@@ -2,9 +2,9 @@ import { matchSketchySite } from "../sketchySites.js";
 import { browserNavigationDocument, browserPageNeedsProtection, browserProtectionDiagnostic, knownBrowser, unsupportedBrowser } from "../browserProtection.js";
 import { activeSearchBreakUntil, SEARCH_BREAK_DURATION_MS } from "../searchBreak.js";
 import { activeAppLockPolicy } from "../appLocks.js";
-import { matchAdultBlocklistHost } from "../adultBlocklist.js";
+import { adultBlocklistSnapshotRequiredButUnavailable, matchAdultBlocklistHost } from "../adultBlocklist.js";
 import { matchContentFilterUrl } from "../contentFilters.js";
-import { FULL_BRICK_BLOCKED_APPS } from "../defaults.js";
+import { FULL_BRICK_BLOCKED_APPS, PORT } from "../defaults.js";
 import { activeLimitBlocks, activeLimitPolicy } from "../limits.js";
 import { appCanReportUrls } from "../macos.js";
 import {
@@ -14,6 +14,7 @@ import {
   isProcessSweepExemptApp,
   isStrictBypassAppForPolicy,
   matchStrictBrowserControlUrl,
+  normalizeHost,
   shouldBlockAppForPolicy,
   shouldBlockSite,
   shouldBlockUrl
@@ -37,7 +38,23 @@ export type EnforcedPolicy = ActivePolicy & {
   limitBlock?: LimitBlock;
 };
 
+// A separate hostname field can be absent, stale, or a diagnostic display
+// label in recovered effects. The actual web URL owns its destination host;
+// retain the exact URL for the browser's atomic redirect precondition.
+export function canonicalPolicySample<T extends UsageSample>(sample: T): T {
+  if (!sample.url) return sample;
+  try {
+    const parsed = new URL(sample.url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return sample;
+    const hostname = normalizeHost(parsed.hostname);
+    return hostname === sample.hostname ? sample : { ...sample, hostname };
+  } catch {
+    return sample;
+  }
+}
+
 export function policyForSample(state: VigilState, usage: UsageState, sample: UsageSample, now = new Date(), options: { observeBrowserProtection?: boolean } = {}): EnforcedPolicy | null {
+  sample = canonicalPolicySample(sample);
   const breakUntil = activeSearchBreakUntil(state, now.getTime());
   if (breakUntil && knownBrowser(sample.app || "")) {
     const endsAt = new Date(breakUntil).toISOString();
@@ -83,6 +100,13 @@ export function policyForSample(state: VigilState, usage: UsageState, sample: Us
   const sessionBrowserControl = sample.url && matchStrictBrowserControlUrl(state, sessionPolicy, sample.url);
   if (sessionBrowserControl && sessionPolicy) return { ...sessionPolicy, kind: "browser-control", browserControl: sessionBrowserControl };
   const contentPolicy = sessionPolicy || baseline;
+  if (contentPolicy && sample.url && knownBrowser(sample.app || "")
+    && adultBlocklistSnapshotRequiredButUnavailable(state) && isRemoteWebUrl(sample.url)) {
+    return {
+      ...contentPolicy, kind: "adult-blocklist",
+      browserControl: { area: "adult-blocklist-recovery", label: "Adult blocklist requires verified recovery", url: sample.url }
+    };
+  }
   const sketchySite = sample.url && contentPolicy ? matchSketchySite(state, sample.url, now) : null;
   if (sketchySite && contentPolicy) return { ...contentPolicy, kind: "browser-control", browserControl: sketchySite };
   const contentFilter = sample.url && contentPolicy ? matchContentFilterUrl(state, sample.url, contentPolicy) : null;
@@ -185,6 +209,18 @@ function targetBlockedByPolicy(state: VigilState, front: UsageSample, policy: En
   if (front.url && shouldBlockUrl(policy.profile, front.url)) return true;
   if (front.hostname && shouldBlockSite(policy.profile, front.hostname)) return true;
   return shouldBlockAppForPolicy(state, policy, front.app);
+}
+
+function isRemoteWebUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    const vigilOrigin = url.protocol === "http:" && !url.username && !url.password
+      && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname.toLowerCase())
+      && String(url.port || "80") === String(PORT);
+    return ["http:", "https:"].includes(url.protocol) && !vigilOrigin;
+  } catch {
+    return false;
+  }
 }
 
 function strictAppLockBrowserControlPolicy(state: VigilState, now: Date): EnforcedPolicy | null {

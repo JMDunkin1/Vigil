@@ -5,7 +5,7 @@ import { matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearc
 import { defaultState } from "../src/defaults.js";
 import { baselinePolicy, matchBlockedUrlPattern } from "../src/policy.js";
 import { evaluateExtensionCheck } from "../src/extensionPolicy.js";
-import { shouldBlockUrl } from "../src/policy.js";
+import { shouldBlockSite, shouldBlockUrl } from "../src/policy.js";
 
 const platforms = ["x.com", "twitter.com", "bsky.app", "pixiv.net", "patreon.com", "itch.io", "creator.itch.io", "discord.com", "discordapp.com", "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com"];
 const blocked = [
@@ -100,7 +100,8 @@ for (const [expected, urls] of [[true, blocked], [false, allowed]] as const) {
   for (const url of urls) {
     assert.equal(matchContextualExplicitSearchUrl(url), expected, url);
     assert.equal(matchBlockedUrlPattern(profile, url)?.pattern === "contextual-explicit-search", expected, url);
-    assert.equal(Boolean(runInContext(`explicitSearchBlockRedirect(${JSON.stringify(url)})`, context)), expected, url);
+    const domainDenied = /^https?:/u.test(url) && shouldBlockSite(profile, new URL(url).hostname);
+    assert.equal(Boolean(runInContext(`explicitSearchBlockRedirect(${JSON.stringify(url)})`, context)), expected || domainDenied, url);
     if (expected) assert.equal(evaluateExtensionCheck(state, {}, { url, event: "navigation" }).blocked, true, url);
   }
 }

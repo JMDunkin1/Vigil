@@ -2,12 +2,14 @@ import type { DeviceTarget, VigilState } from "./types.js";
 import { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 import { PERMANENT_SOCIAL_URL_PATTERNS, defaultFocusedSocialSettings } from "./socialFeatureFilters.js";
 import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, MULTILINGUAL_EXPLICIT_TERMS } from "./explicitMediaContext.js";
+import { DEFAULT_EXPLICIT_COMIC_SITE_TERMS, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, type ExplicitContextualRule } from "./explicitComicPolicy.js";
+export { DEFAULT_EXPLICIT_COMIC_SITE_TERMS, DEFAULT_EXPLICIT_CONTEXTUAL_RULES, type ExplicitContextualRule } from "./explicitComicPolicy.js";
 
 export { DEFAULT_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES, DEFAULT_PRIORITY_ADULT_BLOCKED_SITES } from "./priorityBlockedDomains.js";
 
 export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || 8787);
-export const REQUIRED_EXTENSION_VERSION = "0.3.14";
+export const REQUIRED_EXTENSION_VERSION = "0.3.19";
 export const BUILT_IN_CHROME_EXTENSION_ID = "pioggnehmhgehdlncoddbhcbcjmmcpge";
 export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "blocklistproject-porn";
 export const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
@@ -330,34 +332,6 @@ export const DEFAULT_EXPLICIT_SEARCH_TERMS = [
   "18-plus",
   ...ADDITIONAL_EXPLICIT_SEARCH_TERMS,
   ...MULTILINGUAL_EXPLICIT_TERMS
-];
-
-export const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
-  "honeytoon",
-  "honeytoons",
-  "hooneytoon",
-  "hooneytoons",
-  "mawha"
-];
-
-export interface ExplicitContextualRule {
-  id: string;
-  contexts: readonly string[];
-  markers: readonly string[];
-}
-
-/**
- * Contextual markers are intentionally not standalone block terms. Each marker
- * is paired with one of the rule's content contexts in either order so broad
- * words such as "uncensored" cannot block unrelated searches like song lyrics,
- * interviews, or news.
- */
-export const DEFAULT_EXPLICIT_CONTEXTUAL_RULES: readonly ExplicitContextualRule[] = [
-  {
-    id: "explicit-comics",
-    contexts: ["manhwa", "mawha", "manhua", "webtoon", "webtoons"],
-    markers: ["18", "18plus", "adult", "nsfw", "porn", "hentai", "lewd", "mature", "uncensored"]
-  }
 ];
 
 function contextualExplicitPatterns(rules: readonly ExplicitContextualRule[]): string[] {

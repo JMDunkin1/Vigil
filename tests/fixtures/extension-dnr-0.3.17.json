@@ -1,0 +1,205 @@
+{
+  "version": "0.3.17",
+  "search": [
+    {
+      "id": 1,
+      "priority": 1,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "transform": {
+            "queryTransform": {
+              "addOrReplaceParams": [
+                {
+                  "key": "safe",
+                  "value": "active"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://(www\\.|images\\.)?google\\.com(:[0-9]+)?/search([?#]|$)",
+        "isUrlFilterCaseSensitive": true,
+        "requestMethods": [
+          "get"
+        ],
+        "resourceTypes": [
+          "main_frame",
+          "sub_frame"
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "priority": 1,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "transform": {
+            "queryTransform": {
+              "addOrReplaceParams": [
+                {
+                  "key": "adlt",
+                  "value": "strict"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "condition": {
+        "urlFilter": "||bing.com/search",
+        "resourceTypes": [
+          "main_frame",
+          "sub_frame"
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "priority": 1,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "transform": {
+            "queryTransform": {
+              "addOrReplaceParams": [
+                {
+                  "key": "kp",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://([^/]+\\.)?duckduckgo\\.com/[^#]*[?&]q=",
+        "resourceTypes": [
+          "main_frame",
+          "sub_frame"
+        ]
+      }
+    },
+    {
+      "id": 4,
+      "priority": 1000,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "extensionPath": "/blocked.html"
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*(porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?(r[_.-]*34|s3x|(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw){2,})($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|keyword|term|text|p|k|s)=nud(s|3s?)?($|[&#])",
+        "resourceTypes": [
+          "main_frame",
+          "sub_frame"
+        ]
+      }
+    },
+    {
+      "id": 5,
+      "priority": 1,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "transform": {
+            "queryTransform": {
+              "addOrReplaceParams": [
+                {
+                  "key": "include_over_18",
+                  "value": "off"
+                },
+                {
+                  "key": "nsfw",
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com/(r/[^/]+/)?search(\\.json)?/?(\\?|$)",
+        "isUrlFilterCaseSensitive": false,
+        "requestMethods": [
+          "get"
+        ],
+        "resourceTypes": [
+          "main_frame",
+          "sub_frame"
+        ]
+      }
+    },
+    {
+      "id": 6,
+      "priority": 1000,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "extensionPath": "/blocked.html"
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com/(api/)?over18([/?]|$)",
+        "resourceTypes": [
+          "main_frame",
+          "sub_frame"
+        ]
+      }
+    }
+  ],
+  "reddit": [
+    {
+      "id": 1,
+      "priority": 10,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "extensionPath": "/reddit-review-blocked.html"
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/($|[?#]|r/[^/?#]+/?([?#]|$)|(search|user|u|gallery|subreddits|over18|api|message|chat|best|hot|new|top|controversial|rising|login|register)([/?.#]|$))",
+        "resourceTypes": [
+          "main_frame"
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "priority": 10,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "extensionPath": "/reddit-review-blocked.html"
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://([a-z0-9-]+\\.)*(redd\\.it|redditmedia\\.com)(:[0-9]+)?/",
+        "resourceTypes": [
+          "main_frame"
+        ]
+      }
+    },
+    {
+      "id": 3,
+      "priority": 10,
+      "action": {
+        "type": "redirect",
+        "redirect": {
+          "extensionPath": "/reddit-review-blocked.html"
+        }
+      },
+      "condition": {
+        "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/[^#]*[?&]js_challenge=1([&#]|$)",
+        "resourceTypes": [
+          "main_frame"
+        ]
+      }
+    }
+  ]
+}

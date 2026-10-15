@@ -36,7 +36,9 @@ export function redditReviewSearchPage(value: string): string | null {
   } catch { return null; }
 }
 
-export function redditReviewDestination(value: string): string | null {
+// Recognize wrapped Reddit links even when they point to a forbidden feed.
+// Otherwise an ineligible /url link looks opaque and reaches Safari's loader.
+export function redditReviewTarget(value: string): string | null {
   try {
     let url = new URL(value);
     if (/^(www\.)?google\.(com|co\.uk|com\.au|ca|de|fr|co\.in)$/u.test(url.hostname) && url.pathname === "/url") {
@@ -48,9 +50,13 @@ export function redditReviewDestination(value: string): string | null {
       if (!encoded.startsWith("a1")) return null;
       url = new URL(atob(encoded.slice(2).replace(/-/gu, "+").replace(/_/gu, "/")));
     }
-    if (!redditReviewPostId(url.href)) return null;
-    return url.href;
+    return redditReviewHost(url.href) ? url.href : null;
   } catch { return null; }
+}
+
+export function redditReviewDestination(value: string): string | null {
+  const target = redditReviewTarget(value);
+  return target && redditReviewPostId(target) ? target : null;
 }
 
 // Google sometimes keeps the destination opaque until its /goto redirect.
@@ -69,7 +75,7 @@ export function vigilReturnPage(value: string, extensionRoot: string): boolean {
   try {
     const url = new URL(value);
     const root = new URL(extensionRoot);
-    if (url.protocol === root.protocol && url.host === root.host && ["/blocked.html", "/reddit-review-blocked.html"].includes(url.pathname)) return true;
+    if (url.protocol === root.protocol && url.host === root.host && ["/blocked.html", "/reddit-review-blocked.html", "/search-break.html"].includes(url.pathname)) return true;
     return url.protocol === "http:" && ["127.0.0.1", "localhost"].includes(url.hostname) && url.pathname === "/blocked";
   } catch { return false; }
 }

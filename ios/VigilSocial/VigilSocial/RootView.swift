@@ -35,7 +35,11 @@ struct SocialContainerView: View {
                     .accessibilityHidden(container.selectedService != service)
                 }
             }
-            if container.selectedService == nil { home }
+            if container.selectedService == nil {
+                if container.isResolvingLaunch {
+                    Color.black.ignoresSafeArea()
+                } else { home }
+            }
             if !container.migrationReady {
                 VStack(spacing: 16) {
                     ProgressView()
@@ -71,7 +75,17 @@ struct SocialContainerView: View {
             }
         }
         .task(id: scenePhase == .active) {
-            guard scenePhase == .active else { return }
+            guard scenePhase == .active else {
+                container.beginLaunchHandoff()
+                return
+            }
+            // SwiftUI delivers the Home Screen URL after constructing the scene.
+            // Conceal the picker for that handoff, including a warm launch from Home.
+            if container.isResolvingLaunch {
+                try? await Task.sleep(for: .milliseconds(120))
+                guard !Task.isCancelled else { return }
+                container.finishLaunchHandoff()
+            }
             SocialNotifications.shared.rescheduleReminders(preferences: preferences)
             while !Task.isCancelled {
                 now = Date()
@@ -247,6 +261,63 @@ struct SocialHomeButton: UIViewRepresentable {
     }
 }
 
+struct SocialLaunchScreen: View {
+    let service: SocialService
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var background: Color {
+        switch service {
+        case .snapchat: return Color(red: 1, green: 252.0 / 255.0, blue: 0)
+        case .reddit: return Color(red: 1, green: 69.0 / 255.0, blue: 0)
+        case .x, .tiktok: return .black
+        default: return colorScheme == .dark ? .black : .white
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            background.ignoresSafeArea()
+            mark
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Opening \(service.displayName)")
+        .accessibilityIdentifier("social-splash-\(service.rawValue)")
+        .allowsHitTesting(false)
+    }
+
+    @ViewBuilder private var mark: some View {
+        switch service {
+        case .instagram:
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 19).stroke(lineWidth: 6)
+                Circle().stroke(lineWidth: 6).frame(width: 29, height: 29).frame(maxWidth: .infinity, maxHeight: .infinity)
+                Circle().frame(width: 8, height: 8).padding(12)
+            }
+            .frame(width: 68, height: 68)
+            .foregroundStyle(LinearGradient(colors: [Color.yellow, Color.orange, Color.pink, Color.purple],
+                                            startPoint: .bottomLeading, endPoint: .topTrailing))
+        case .youtube:
+            ZStack {
+                RoundedRectangle(cornerRadius: 14).fill(Color.red).frame(width: 88, height: 62)
+                Path { path in
+                    path.move(to: CGPoint(x: 0, y: 0))
+                    path.addLine(to: CGPoint(x: 0, y: 26))
+                    path.addLine(to: CGPoint(x: 24, y: 13))
+                    path.closeSubpath()
+                }.fill(Color.white).frame(width: 24, height: 26).offset(x: 3)
+            }
+        case .facebook:
+            Text("f").font(.system(size: 100, weight: .bold)).foregroundStyle(Color(red: 0.03, green: 0.40, blue: 1))
+        default:
+            if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
+               let icon = UIImage(contentsOfFile: path) {
+                Image(uiImage: icon).resizable().scaledToFit().frame(width: 100, height: 100)
+            }
+        }
+    }
+}
+
 // A loaded page becomes inaccessible immediately when policy or a routine denies it.
 // The WebKit probe remains isolated from page scripts and still runs after pauses end.
 private struct SocialServiceAccessView: View {
@@ -265,11 +336,10 @@ private struct SocialServiceAccessView: View {
                 .allowsHitTesting(accessConfirmed && restriction == nil)
                 .accessibilityHidden(!accessConfirmed || restriction != nil)
             if !accessConfirmed || restriction != nil {
-                VStack(spacing: 8) {
-                    if checking && restriction == nil {
-                        ProgressView()
-                        Text("Opening \(store.fixedService.displayName)…").font(.subheadline)
-                    } else {
+                if checking && restriction == nil {
+                    SocialLaunchScreen(service: store.fixedService)
+                } else {
+                    VStack(spacing: 8) {
                         Text("Blocked").font(.system(size: 30, weight: .regular))
                         Button("Back", action: onBack)
                             .font(.system(size: 12))
@@ -277,21 +347,19 @@ private struct SocialServiceAccessView: View {
                             .frame(minWidth: 44, minHeight: 44)
                             .buttonStyle(.plain)
                     }
-                }
-                .multilineTextAlignment(.center).padding(28)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .foregroundStyle(Color(white: 0.76))
-                .background(Color(red: 24.0 / 255.0, green: 26.0 / 255.0, blue: 28.0 / 255.0).ignoresSafeArea())
-                .overlay(alignment: .bottomTrailing) {
-                    if !checking || restriction != nil {
+                    .multilineTextAlignment(.center).padding(28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .foregroundStyle(Color(white: 0.76))
+                    .background(Color(red: 24.0 / 255.0, green: 26.0 / 255.0, blue: 28.0 / 255.0).ignoresSafeArea())
+                    .overlay(alignment: .bottomTrailing) {
                         Text("V1-SOC-\(store.fixedService.rawValue.uppercased())-\(restriction != nil ? (restriction?.permanent == true ? "LOCK" : "ROUTINE") : "CONNECTION")")
                             .font(.system(size: 10, design: .monospaced))
                             .foregroundStyle(Color(white: 0.46))
                             .padding(16)
-                            .accessibilityHint(restriction?.message ?? "Vigil could not confirm access under the current web policy.")
+                            .accessibilityHint(restriction?.message ?? store.serviceAccessDetail)
                     }
+                    .environment(\.colorScheme, .dark)
                 }
-                .environment(\.colorScheme, .dark)
             }
         }
         .task(id: isServiceVisible && scenePhase == .active && restriction == nil) {
@@ -308,10 +376,11 @@ private struct SocialServiceAccessView: View {
             checking = true
             await store.handleSceneActivity(true, isServiceVisible: true)
             store.suspendAllMedia(relinquishExternalPlayback: false)
+            var failedChecks = 0
             while !Task.isCancelled {
                 let allowed = await store.confirmServiceAccess()
                 guard !Task.isCancelled else { return }
-                if allowed, store.fixedService == .snapchat {
+                if allowed, store.fixedService == .snapchat || store.fixedService == .instagram {
                     // The covered child reports itself invisible until access
                     // is published; reaffirm the selected foreground service.
                     await store.handleSceneActivity(true, isServiceVisible: isServiceVisible)
@@ -319,10 +388,11 @@ private struct SocialServiceAccessView: View {
                 }
                 guard !Task.isCancelled else { return }
                 accessConfirmed = allowed
-                checking = !allowed && store.webView(for: store.fixedService).isLoading
+                failedChecks = allowed || store.serviceAccessIsSettling ? 0 : failedChecks + 1
+                checking = !allowed && (store.serviceAccessIsSettling || failedChecks < 3)
                 if allowed { store.resumeSuspendedMedia() }
                 else { store.suspendAllMedia(relinquishExternalPlayback: false) }
-                try? await Task.sleep(for: .seconds(checking ? 1 : 5))
+                try? await Task.sleep(for: .milliseconds(checking ? 150 : 5000))
             }
         }
     }
@@ -373,6 +443,7 @@ struct SocialHomeGesture: UIViewRepresentable {
 struct RootView: View {
     @ObservedObject var store: SocialWebViewStore
     var isServiceVisible = true
+    @State private var hasShownUsablePage = false
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
@@ -385,6 +456,16 @@ struct RootView: View {
     )
 
     private static let youtubeDarkSurface = Color(white: 15.0 / 255.0)
+
+    static func surfaceColor(store: SocialWebViewStore, colorScheme: ColorScheme) -> Color {
+        let service = store.fixedService
+        let isDark = (service == .instagram ? nil : store.reportedChromeIsDark(for: service))
+            ?? (colorScheme == .dark)
+        let base = service == .instagram && isDark ? instagramDarkSurface
+            : (isDark ? (service == .youtube ? youtubeDarkSurface : Color.black) : Color.white)
+        return service == .snapchat
+            ? store.snapchatChromeColor.map { Color(uiColor: $0) } ?? base : base
+    }
 
     var body: some View {
         let service = store.selectedService
@@ -405,12 +486,7 @@ struct RootView: View {
         // Native backgrounds still fill the status/home-indicator areas, and
         // the established safe area and home gesture remain unchanged.
         let webViewSafeAreaEdges: Edge.Set = []
-        let defaultSurfaceColor = service == .instagram && isDark
-            ? Self.instagramDarkSurface
-            : (isDark ? (service == .youtube ? Self.youtubeDarkSurface : Color.black) : Color.white)
-        let surfaceColor = service == .snapchat
-            ? store.snapchatChromeColor.map { Color(uiColor: $0) } ?? defaultSurfaceColor
-            : defaultSurfaceColor
+        let surfaceColor = Self.surfaceColor(store: store, colorScheme: colorScheme)
         return ZStack {
             surfaceColor
                 .ignoresSafeArea()
@@ -444,6 +520,10 @@ struct RootView: View {
                 YouTubeContentBlockerGate(isDark: isDark)
             }
         }
+            .onChange(of: store.health[service], initial: true) { _, health in
+                if health == .ready { hasShownUsablePage = true }
+                if case .advisory = health { hasShownUsablePage = true }
+            }
             .onChange(of: isServiceVisible && scenePhase == .active && store.youtubeAllowsLandscape,
                       initial: true) { _, allowed in
                 if store.fixedService == .youtube {
@@ -468,31 +548,8 @@ struct RootView: View {
         switch health {
         case .ready:
             EmptyView()
-        case .loading where service == .youtube:
-            // YouTube's document-start scripts already conceal unclassified or
-            // restricted content before its first paint. Keep the WKWebView on
-            // screen while it loads instead of covering it until the page's
-            // separate health probe eventually reports a usable DOM surface.
-            EmptyView()
-        case .loading where service == .instagram:
-            // Instagram's WKWebView starts loading during store creation and
-            // its document-end adapter remains responsible for health and
-            // feature enforcement. Do not cover that live surface while the
-            // adapter waits for Instagram to expose a recognizable shell.
-            EmptyView()
         case .loading:
-            SocialHealthOverlay(
-                title: "Loading \(service.displayName)",
-                message: "Preparing a protected \(service.displayName) session.",
-                systemImage: nil,
-                isLoading: true,
-                isDark: true,
-                serviceName: service.displayName,
-                primaryAction: nil,
-                secondaryAction: nil,
-                dismissAction: nil
-            )
-            .environment(\.colorScheme, .dark)
+            if !hasShownUsablePage { SocialLaunchScreen(service: service) }
         case let .advisory(detail):
             SocialHealthNotice(
                 message: detail,

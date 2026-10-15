@@ -1,19 +1,73 @@
 // This function is also embedded in classic extension scripts and block pages.
-// Keep it self-contained: ordinary history navigation still runs browser guards.
-function blockedPageBack() {
-    if (history.length > 1) {
-        history.back();
+// Keep it self-contained: every destination still runs ordinary browser guards.
+function blockedPageBack(destination = "", exhausted = false) {
+    const state = blockedPageBack;
+    const now = Date.now();
+    if ((state.busyUntil || 0) > now)
         return;
+    const key = "vigil-blocked-page-back";
+    if (destination && destination !== "about:blank") {
+        try {
+            sessionStorage.removeItem(key);
+        }
+        catch { /* Storage can be unavailable in private tabs. */ }
+        state.attempt = undefined;
+        state.busyUntil = now + 1500;
+        location.replace(destination);
+        return;
+    }
+    if (!exhausted && history.length > 1) {
+        let previous = state.attempt;
+        try {
+            previous = JSON.parse(sessionStorage.getItem(key) || "null") || previous;
+        }
+        catch { /* Retain the in-document fallback. */ }
+        const retry = previous && Number.isInteger(previous.steps) && previous.steps > 0
+            && Number.isInteger(previous.length) && previous.length >= history.length
+            && previous.at <= now && now - previous.at < 30_000;
+        const steps = retry && previous ? previous.steps + 1 : 1;
+        if (steps < history.length) {
+            // A denied entry can redirect back here after native Back. Remember the
+            // attempt in this tab and advance past it on a retry, including reloads.
+            state.attempt = { steps, length: history.length, at: now };
+            try {
+                sessionStorage.setItem(key, JSON.stringify(state.attempt));
+            }
+            catch { /* The same document still remembers retries. */ }
+            state.busyUntil = now + 1500;
+            const source = location.href;
+            const fallback = setTimeout(() => {
+                if (location.href !== source)
+                    return;
+                // history.length includes forward entries. If the larger traversal
+                // overshoots the beginning, a single step can still reach a real page.
+                if (steps > 1)
+                    history.back();
+                state.busyUntil = 0;
+                blockedPageBack("", true);
+            }, 1500);
+            // A timer frozen in BFCache must not navigate when this page is restored.
+            addEventListener("pagehide", () => clearTimeout(fallback), { once: true });
+            if (steps === 1)
+                history.back();
+            else
+                history.go(-steps);
+            return;
+        }
     }
     let status = document.querySelector("#vigilBackStatus");
     if (!status) {
         status = document.createElement("p");
         status.id = "vigilBackStatus";
         status.className = "message";
+        status.hidden = true;
         status.setAttribute("role", "status");
         (document.querySelector("main") || document.body).append(status);
     }
-    status.textContent = "There isn’t a previous page in this tab. Close this tab or enter another address.";
+    status.textContent = "There isn’t an available previous page in this tab. Close this tab or enter another address.";
+    const back = document.querySelector("#leaveBlockedPage");
+    back?.setAttribute("aria-describedby", status.id);
+    back?.setAttribute("title", status.textContent);
 }
 
 const BLOCK_REFERENCE_KINDS = {
@@ -75,15 +129,18 @@ function leaveInThisTab() {
             return;
         settled = true;
         clearTimeout(fallback);
-        leaving = false;
-        if (result?.handled)
+        if (result?.handled) {
+            leaving = false;
             return;
+        }
         if (result?.ok && result.url && result.url !== "about:blank")
-            location.replace(result.url);
+            blockedPageBack(result.url);
         else if (document.body.hasAttribute("data-vigil-quiet-return"))
             location.replace("about:blank");
-        else
-            blockedPageBack();
+        else {
+            leaving = false;
+            blockedPageBack("", result?.exhausted);
+        }
     };
     const fallback = setTimeout(finish, 4000);
     try {
@@ -95,6 +152,7 @@ function leaveInThisTab() {
     }
 }
 let leaving = false;
+addEventListener("pageshow", () => { leaving = false; });
 document.querySelector("#leaveBlockedPage")?.addEventListener("click", event => {
     event.preventDefault();
     event.stopImmediatePropagation();

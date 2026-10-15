@@ -1,7 +1,7 @@
 import { matchSketchySite } from "./sketchySites.js";
 import { activeSearchBreakUntil } from "./searchBreak.js";
 import { PORT, REQUIRED_EXTENSION_VERSION, SOFT_BLOCK_PROFILE_ID } from "./defaults.js";
-import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, matchAdultBlocklistHost } from "./adultBlocklist.js";
+import { ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT, adultBlocklistPreloadDomains, adultBlocklistSnapshotRequiredButUnavailable, matchAdultBlocklistHost } from "./adultBlocklist.js";
 import { activeAppLockPolicy } from "./appLocks.js";
 import { buildBlockedPageUrl } from "./blockedPageUrl.js";
 import { contentFilterEnabled, contentFilterRuleEntries, matchContentFilterUrl } from "./contentFilters.js";
@@ -17,7 +17,7 @@ import type { ActivePolicy, FocusedSocialSettings, IntentionalPause, Intentional
 export const EXTENSION_APP_NAME = "Browser Extension";
 export { compactExtensionRuleSignature } from "./extensionRuleSignature.js";
 
-const EXTENSION_SITE_RULE_LIMIT = 300;
+const EXTENSION_SITE_RULE_LIMIT = ADULT_BLOCKLIST_BROWSER_SITE_RULE_LIMIT;
 const EXTENSION_CONTENT_RULE_LIMIT = 200;
 
 type BrowserPolicy = Omit<Partial<ActivePolicy>, "session"> & {
@@ -225,6 +225,19 @@ export function evaluateExtensionCheck(state: VigilState, usage: UsageState, inp
       recorded: false,
       contentFilterEnabled: contentFilterEnabled(state),
       browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
+      focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
+      focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
+    };
+  }
+
+  if (adultBlocklistSnapshotRequiredButUnavailable(state)) {
+    return {
+      ok: true, blocked: true, paused: false, ignored: false,
+      reason: "adult-blocklist-recovery", hostname: normalizeHost(parsed.url.hostname),
+      event: sanitizeEvent(input.event), recorded: false,
+      redirectUrl: buildBlockedPageUrl({ site: "Adult blocklist requires verified recovery", kind: "adult-blocklist",
+        policyId: "adult-blocklist:computer", mode: "focus", port: PORT }),
+      contentFilterEnabled: true, browserNoiseBlockingEnabled: browserNoiseBlockingEnabled(state),
       focusedSocialCleanupEnabled: focusedSocialCleanupEnabled(state, now),
       focusedSocialCleanupSettings: focusedSocialCleanupSettingsForState(state, now)
     };
@@ -664,7 +677,8 @@ function parseHttpUrl(value: unknown): ParsedHttpUrl {
 
 function isVigilUrl(url: URL): boolean {
   const host = url.hostname.toLowerCase();
-  return ["127.0.0.1", "localhost", "::1"].includes(host) && String(url.port || "80") === String(PORT);
+  return url.protocol === "http:" && !url.username && !url.password
+    && ["127.0.0.1", "localhost", "[::1]"].includes(host) && String(url.port || "80") === String(PORT);
 }
 
 function shouldRecordOpen(event: string): boolean {

@@ -1,0 +1,140 @@
+{
+  "reviewedAt": "2026-10-13T22:14:46.261850+00:00",
+  "scope": "Adult domain gaps and policy bypass/resilience audit across native Mac enforcement, Chrome, Safari shared guard, and the free supervised Vigil Social phone policy.",
+  "domainExpansion": {
+    "added": 63,
+    "absentFromAllFourFeeds": 21,
+    "evidence": "2026-10-13-adult-domain-audit.json"
+  },
+  "fixedFindings": [
+    {
+      "id": "canonical-target",
+      "problem": "Missing/stale/display hostname fields could disagree with the actual HTTP(S) destination.",
+      "fix": "Actual parsed URL host drives immediate, routine and durable recovered policy decisions; exact-tab redirect preconditions retained."
+    },
+    {
+      "id": "snapshot-source-transition",
+      "problem": "Selecting another blocklist cleared active committed data before the replacement fetch validated.",
+      "fix": "Retain committed source/hash/path and phone artifact through pending selection, fetch failure and artifact validation. Commit replacement only after validation."
+    },
+    {
+      "id": "committed-snapshot-loss",
+      "problem": "Missing/corrupt committed snapshots silently reduced bulk protection.",
+      "fix": "Native/extension HTTP browsing enters recovery blocking until verified repair; preserve existing phone artifact. Only exact local plain-HTTP Vigil origin is exempt."
+    },
+    {
+      "id": "embedded-full-policy",
+      "problem": "Long-tail adult frame domains outside finite DNR preload lacked authoritative document checks.",
+      "fix": "Authenticated per-frame current-document checks; conceal document and pause media pending authorization; retry transient stale registration under a3s deadline; failures close only the frame. Stale/late replies never authorize replacement or terminally closed frames."
+    },
+    {
+      "id": "opaque-link-actions",
+      "problem": "Middle-click/context-menu actions could discard explicit source-card evidence before opaque destination inspection.",
+      "fix": "Apply the same explicit label/context gate to auxiliary click and context menu."
+    },
+    {
+      "id": "phone-route-normalization",
+      "problem": "Legacy native service gates could accept dot segments, nested encoded route names/separators and credentials.",
+      "fix": "Reject structurally ambiguous native paths before navigation, preserving legitimate Unicode names and opaque authentication queries."
+    },
+    {
+      "id": "mac-os-deny-truncation",
+      "problem": "Mac parental-control export applied the iOS500-entry cap and silently dropped later denies.",
+      "fix": "Remove truncation from the Mac filterDenyList; preserve single required Mac payload and all generated denies. iOS BuiltIn DenyListURLs still obey500per payload.",
+      "primarySources": [
+        "https://developer.apple.com/documentation/devicemanagement/parentalcontrolscontentfilter",
+        "https://raw.githubusercontent.com/apple/device-management/release/mdm/profiles/com.apple.familycontrols.contentfilter.yaml",
+        "https://developer.apple.com/documentation/devicemanagement/webcontentfilter"
+      ]
+    },
+    {
+      "id": "browser-preload-budget",
+      "problem": "Paired DNR ranges supported1000but caller overrides were clipped to250.",
+      "fix": "Allow explicit browser override up to1000; retain250saved network/phone preload cap and priority-before-bulk ordering."
+    }
+  ],
+  "semanticUrlScanning": {
+    "scope": "HTTP(S) hostname labels and first four meaningful path segments; percent encoding, IDN/punycode, NFKC and selected homoglyph normalization.",
+    "checks": "Strong explicit words, deliberate X labels, media/catalog contextual weak words and compounds.",
+    "excludedFromNewHelper": "Queries, fragments, credentials, ports and deep opaque identifiers. Existing explicit search/custom rules retain their previous scope.",
+    "controls": [
+      "Middlesex/Sussex/analysis",
+      "random XXX IDs",
+      "Roman numeral chapters",
+      "R34 automotive pages",
+      "adult education",
+      "cosmetics and figure drawing",
+      "uncensored interviews"
+    ],
+    "version": "0.3.19"
+  },
+  "validation": {
+    "uniqueCompiledSuites": 38,
+    "failedSuites": [],
+    "suiteNames": [
+      "adult-blocklist-migration.test.mjs",
+      "adult-blocklist-refresh-persistence.test.mjs",
+      "adult-blocklist-routes.test.mjs",
+      "adult-blocklist-source-transition.test.mjs",
+      "adult-blocklist.test.mjs",
+      "broadened-explicit-search.test.mjs",
+      "browser-activity-monitor.test.mjs",
+      "browser-preload-capacity.test.mjs",
+      "browser-protection-races.test.mjs",
+      "browser-semantic-url-context.test.mjs",
+      "chrome-safe-search-cache.test.mjs",
+      "contextual-explicit-search.test.mjs",
+      "embedded-frame-policy.test.mjs",
+      "explicit-content-policy.test.mjs",
+      "extension-blocklist-recovery.test.mjs",
+      "extension-rules.test.mjs",
+      "foolproof-integrity-monitor.test.mjs",
+      "ios-deny-capacity.test.mjs",
+      "ios-mdm.test.mjs",
+      "ios-safari-native-message.test.mjs",
+      "ios-safari-search-guard.test.mjs",
+      "ios-social-route-boundaries.test.mjs",
+      "mature-comic-platforms.test.mjs",
+      "media-catalog-filter.test.mjs",
+      "monitor-adult-blocklist.test.mjs",
+      "monitor-policy-evaluation.test.mjs",
+      "monitor-target-canonicalization.test.mjs",
+      "multilingual-explicit-filter.test.mjs",
+      "network-safe-search.test.mjs",
+      "phone-blocklist-artifact.test.mjs",
+      "policy-enforcement.test.mjs",
+      "reddit-safe-search-policy.test.mjs",
+      "safari-blocking-resilience.test.mjs",
+      "safari-deny-preservation.test.mjs",
+      "safari-health-policy.test.mjs",
+      "safari-resources.test.mjs",
+      "safe-search-context.test.mjs",
+      "semantic-explicit-url.test.mjs"
+    ],
+    "semanticChecks": {
+      "blocked": 36,
+      "benign": 31
+    },
+    "nativeSwiftRouteProbes": 48,
+    "broadenedSearchParity": {
+      "blocked": 83,
+      "legitimate": 82
+    },
+    "independentReview": "Three agents implemented disjoint work; fresh cross-review found and fixed pending-frame exposure, late-reply reopening, replacement-root restoration and nested Swift route names.",
+    "renderedBrowserAttempt": "An isolated Electron rendering probe was prevented by existing unsupported-browser enforcement (Electron is denied); it did not complete and is not counted as passing. No enforcement workaround used.",
+    "lint": "Passed:464source files checked"
+  },
+  "remainingBoundaries": [
+    "Phone deployment remains deferred until USB; source validation is not a live-device receipt.",
+    "Chrome source/archive is prepared; store publication or installed-client verification must be recorded separately.",
+    "Non-HTTP file/data/blob/srcdoc/inherited blank documents and failed native URL telemetry are outside this audited HTTP destination coverage; no universal custom system-wide iOS URL filter is claimed under Personal Team signing.",
+    "Local administrative access to both state and HMAC keys remains outside the existing integrity-seal threat model."
+  ],
+  "deployment": {
+    "committed": false,
+    "pushed": false,
+    "macUpdated": false,
+    "phoneUpdated": false,
+    "safariProfileVerified": false
+  }
+}

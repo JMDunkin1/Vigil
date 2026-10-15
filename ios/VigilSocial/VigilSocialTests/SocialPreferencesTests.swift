@@ -141,7 +141,7 @@ final class SocialPreferencesTests: XCTestCase {
         let suite = "VigilSocialTests.preferences.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let preferences = SocialPreferences(defaults: defaults)
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage())
         let calendar = calendar()
         let now = date(2026, 10, 5, 10, calendar: calendar)
         let original = SocialRoutine(name: "Work", services: [.youtube, .snapchat], weekdays: [2], startMinute: 9 * 60, endMinute: 17 * 60)
@@ -167,7 +167,7 @@ final class SocialPreferencesTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
         var uptime: TimeInterval = 1_000_000
-        let preferences = SocialPreferences(defaults: defaults, monotonicNow: { uptime })
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime })
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let end = start.addingTimeInterval(8 * 3600)
         preferences.setStartupService(.youtube)
@@ -179,7 +179,7 @@ final class SocialPreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.selectedAccountID(for: .youtube), account)
         XCTAssertTrue(preferences.beginSleep(until: end, at: start))
         XCTAssertFalse(preferences.beginSleep(until: end.addingTimeInterval(-3600), at: start))
-        let reopened = SocialPreferences(defaults: defaults, monotonicNow: { uptime })
+        let reopened = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime })
         XCTAssertEqual(reopened.startupService, .youtube)
         XCTAssertFalse(reopened.hapticsEnabled)
         XCTAssertEqual(reopened.accounts(for: .youtube).first?.name, "Work")
@@ -200,14 +200,14 @@ final class SocialPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         var uptime: TimeInterval = 1_000_000
         let start = Date(timeIntervalSince1970: 1_800_000_000)
-        let preferences = SocialPreferences(defaults: defaults, monotonicNow: { uptime })
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime })
         XCTAssertTrue(preferences.beginSleep(until: start.addingTimeInterval(3600), at: start))
         uptime += 600
         let forward = start.addingTimeInterval(30 * 24 * 3600)
         for service in SocialService.allCases { XCTAssertTrue(preferences.isBlocked(for: service, at: forward)) }
         XCTAssertFalse(preferences.beginSleep(until: forward.addingTimeInterval(60), at: forward),
                        "a changed date cannot replace the remaining pause with a shorter duration")
-        let reopened = SocialPreferences(defaults: defaults, monotonicNow: { uptime })
+        let reopened = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime })
         XCTAssertTrue(reopened.isBlocked(for: .youtube, at: forward))
         XCTAssertEqual(reopened.sleepRestriction(at: forward)?.until, forward.addingTimeInterval(3000))
         uptime += 3000
@@ -222,12 +222,12 @@ final class SocialPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         var uptime: TimeInterval = 1_000_000
         let start = Date(timeIntervalSince1970: 1_800_000_000)
-        let preferences = SocialPreferences(defaults: defaults, monotonicNow: { uptime })
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime })
         XCTAssertTrue(preferences.beginSleep(until: start.addingTimeInterval(3600), at: start))
         uptime += 600
         preferences.setHapticsEnabled(false) // Checkpoint the remaining 50 minutes.
         uptime = 10
-        let reopened = SocialPreferences(defaults: defaults, monotonicNow: { uptime })
+        let reopened = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime })
         let changedDate = start.addingTimeInterval(86400)
         XCTAssertTrue(reopened.isBlocked(for: .youtube, at: changedDate))
         uptime += 2999
@@ -236,7 +236,7 @@ final class SocialPreferencesTests: XCTestCase {
         XCTAssertFalse(reopened.isBlocked(for: .youtube, at: changedDate))
         reopened.setHapticsEnabled(true)
         XCTAssertNil(reopened.sleepUntil)
-        XCTAssertFalse(SocialPreferences(defaults: defaults, monotonicNow: { uptime }).isBlocked(for: .youtube))
+        XCTAssertFalse(SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { uptime }).isBlocked(for: .youtube))
     }
 
     @MainActor
@@ -244,13 +244,13 @@ final class SocialPreferencesTests: XCTestCase {
         let suite = "VigilSocialTests.preferences.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let preferences = SocialPreferences(defaults: defaults, monotonicNow: { 100 })
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { 100 })
         let start = Date()
         XCTAssertTrue(preferences.beginSleep(until: start.addingTimeInterval(3600), at: start))
         var record = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(defaults.data(forKey: SocialPreferences.storageKey))) as? [String: Any])
         record.removeValue(forKey: "sleepDeadline")
         defaults.set(try JSONSerialization.data(withJSONObject: record), forKey: SocialPreferences.storageKey)
-        let reopened = SocialPreferences(defaults: defaults, monotonicNow: { 100 })
+        let reopened = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage(), monotonicNow: { 100 })
         XCTAssertTrue(reopened.savedScheduleUnreadable)
         for service in SocialService.allCases { XCTAssertTrue(reopened.isBlocked(for: service, at: start.addingTimeInterval(86400))) }
     }
@@ -262,7 +262,7 @@ final class SocialPreferencesTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let original = Data("{broken schedule".utf8)
         defaults.set(original, forKey: SocialPreferences.storageKey)
-        let preferences = SocialPreferences(defaults: defaults)
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage())
         XCTAssertTrue(preferences.savedScheduleUnreadable)
         for service in SocialService.allCases { XCTAssertTrue(preferences.isBlocked(for: service)) }
         preferences.setStartupService(.youtube)
@@ -276,11 +276,11 @@ final class SocialPreferencesTests: XCTestCase {
         let suite = "VigilSocialTests.preferences.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let preferences = SocialPreferences(defaults: defaults)
+        let preferences = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage())
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         XCTAssertFalse(preferences.beginPosting(for: .instagram, at: now))
         XCTAssertTrue(preferences.beginPosting(for: .linkedin, at: now))
-        let restored = SocialPreferences(defaults: defaults)
+        let restored = SocialPreferences(defaults: defaults, commitmentStorage: CommitmentStorage())
         XCTAssertEqual(restored.postingService, .linkedin)
         XCTAssertEqual(restored.postingUntil, now.addingTimeInterval(600))
         XCTAssertTrue(restored.beginSleep(until: now.addingTimeInterval(3600), at: now))

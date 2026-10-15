@@ -105,3 +105,75 @@ test('the page response guard prunes nested mobile players and handles subsequen
   window.ytInitialPlayerResponse = { ...player, adSlots: { unknownSchema: true } };
   assert.equal('adPlacements' in (window.ytInitialPlayerResponse as object), true, 'unexpected schemas preserve the response');
 });
+
+test('mobile initial-data strings and legacy player args lose only recognized ad arrays', () => {
+  const window: Record<string, unknown> = {};
+  runInNewContext(responseGuard, { window, location: new URL('https://m.youtube.com/watch?v=abcdefghijk'), URL });
+  const player = { videoDetails: { videoId: 'abcdefghijk' }, playabilityStatus: { status: 'LOGIN_REQUIRED' },
+    streamingData: { adaptiveFormats: [{ url: 'signed-original-stream' }] }, adPlacements: [{}], adSlots: [{}] };
+  window.ytInitialData = JSON.stringify({ playerResponse: JSON.stringify(player), captions: { tracks: ['original-caption'] } });
+  const clean = JSON.parse(window.ytInitialData as string);
+  assert.deepEqual(JSON.parse(clean.playerResponse), { videoDetails: player.videoDetails,
+    playabilityStatus: player.playabilityStatus, streamingData: player.streamingData });
+  assert.deepEqual(clean.captions.tracks, ['original-caption']);
+  const load = () => 'original-player-method';
+  window.ytplayer = { load, optional: undefined, config: { args: { player_response: JSON.stringify(player), auth: 'retain' } } };
+  const args = (window.ytplayer as { config: { args: { player_response: string; auth: string } } }).config.args;
+  assert.equal('adSlots' in JSON.parse(args.player_response), false);
+  assert.equal(args.auth, 'retain');
+  assert.equal((window.ytplayer as { load: typeof load }).load, load);
+  assert.equal('optional' in (window.ytplayer as object), true);
+});
+
+test('ad filtering composes with the existing native feed adapter and inline JSON parsing', () => {
+  let data: unknown, feedWrites = 0;
+  const window: Record<string, unknown> = {};
+  Object.defineProperty(window, 'ytInitialData', { configurable: true,
+    get: () => data, set(value) { data = value; feedWrites++; } });
+  const context = { window, location: new URL('https://m.youtube.com/watch?v=abcdefghijk'), URL };
+  runInNewContext(responseGuard, context);
+  const player = { videoDetails: { videoId: 'abcdefghijk' }, playabilityStatus: { status: 'OK' }, playerAds: [{}] };
+  window.ytInitialData = { playerResponse: player };
+  assert.ok(feedWrites >= 1);
+  assert.equal('playerAds' in (data as { playerResponse: object }).playerResponse, false);
+  const inline = runInNewContext(responseGuard + `\nJSON.parse(${JSON.stringify(JSON.stringify(player))})`, context);
+  assert.equal('playerAds' in inline, false, 'inline startup data can bypass fetch and initial globals');
+  const unknown = { ...player, adSlots: { unexpected: true } };
+  const untouched = runInNewContext(responseGuard + `\nJSON.parse(${JSON.stringify(JSON.stringify(unknown))})`, context);
+  assert.deepEqual(JSON.parse(JSON.stringify(untouched)), unknown, 'unknown schema must retain the entire response');
+});
+
+test('network player filtering preserves media, captions and login checks across fetch and XHR', async () => {
+  const payload = { playerResponse: { videoDetails: { videoId: 'abcdefghijk' },
+    streamingData: { formats: [{ url: 'original-signed-stream' }] },
+    playabilityStatus: { status: 'LOGIN_REQUIRED' }, captions: { tracks: ['original-captions'] }, adSlots: [{}] } };
+  const raw = JSON.stringify(payload);
+  class XHR {
+    readyState = 4; status = 200; responseType = ''; responseURL = '';
+    open(_method: string, url: string) { this.responseURL = url; }
+    get response() { return this.responseType === 'json' ? payload : raw; }
+    get responseText() { return raw; }
+    getResponseHeader() { return 'application/json'; }
+  }
+  const nativeFetch = async () => new Response(raw, { headers: { 'Content-Type': 'application/json', ETag: 'stale-body-hash', 'Content-Length': String(raw.length) } });
+  const window = { fetch: nativeFetch, XMLHttpRequest: XHR };
+  runInNewContext(responseGuard, { window, location: new URL('https://m.youtube.com/watch?v=abcdefghijk'), URL, Response, Headers, Request });
+  const fetched = await (window.fetch as (url: string) => Promise<Response>)('https://m.youtube.com/youtubei/v1/player');
+  const clean = await fetched.json();
+  assert.equal('adSlots' in clean.playerResponse, false);
+  assert.deepEqual(clean.playerResponse.streamingData, payload.playerResponse.streamingData);
+  assert.deepEqual(clean.playerResponse.playabilityStatus, payload.playerResponse.playabilityStatus);
+  assert.deepEqual(clean.playerResponse.captions, payload.playerResponse.captions);
+  assert.equal(fetched.headers.has('ETag'), false);
+  assert.equal(fetched.headers.has('Content-Length'), false);
+  const unrelated = await (window.fetch as (url: string) => Promise<Response>)('https://m.youtube.com/youtubei/v1/browse');
+  assert.equal((await unrelated.json()).playerResponse.adSlots.length, 1, 'unrelated endpoints retain their original payload');
+  for (const type of ['', 'text', 'json']) {
+    const xhr = new window.XMLHttpRequest(); xhr.responseType = type;
+    xhr.open('POST', 'https://m.youtube.com/youtubei/v1/player');
+    const cleanXHR = typeof xhr.response === 'string' ? JSON.parse(xhr.response) : xhr.response;
+    assert.equal('adSlots' in cleanXHR.playerResponse, false);
+    assert.deepEqual(JSON.parse(JSON.stringify(cleanXHR)), clean);
+  }
+  assert.equal(payload.playerResponse.adSlots.length, 1, 'native response objects remain unmodified');
+});

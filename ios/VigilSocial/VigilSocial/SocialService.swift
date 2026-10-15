@@ -56,8 +56,25 @@ struct SocialIncomingLink {
 enum YouTubeWebCompatibility {
     // TinyTube documents this Safari-looking suffix as an unsupported way to
     // make Google's embedded sign-in surface proceed in WKWebView. It is the
-    // single explicit browser-identity exception in VigilSocial.
+    // explicit YouTube browser-identity compatibility exception in VigilSocial.
     static let unsupportedSafariApplicationNameSuffix = "Version/17.0 Safari/605.1.15"
+}
+
+enum XWebCompatibility {
+    // X sends an otherwise-supported mobile WebKit client without this token
+    // to x-safari-https://redirect.x.com. Keep HTTPS chat inside the fixed-service
+    // web view; the native route policy and system/content filters still apply.
+    static let safariApplicationNameSuffix = "Safari/604.1"
+}
+
+enum TikTokWebCompatibility {
+    // An anonymous inbox request redirects to the restricted For You feed.
+    // Begin with TikTok's own login form and return to the permitted inbox.
+    static var loginURL: URL {
+        var components = URLComponents(string: "https://www.tiktok.com/login")!
+        components.queryItems = [URLQueryItem(name: "redirect_url", value: SocialService.tiktok.homeURL.absoluteString)]
+        return components.url!
+    }
 }
 
 enum SnapchatWebCompatibility {
@@ -118,19 +135,31 @@ enum LinkedInAppleAuthentication {
 }
 
 enum InstagramSingleReelPolicy {
-    static func blocksNavigation(from source: URL?, to destination: URL) -> Bool {
-        guard let source, let current = mediaRoute(source), ["reel", "p"].contains(current.kind),
-              let next = mediaRoute(destination) else { return false }
+    static func blocksNavigation(from source: URL?, to destination: URL, sharedStory: URL? = nil) -> Bool {
+        guard let source, let current = mediaRoute(source),
+              ["reel", "p"].contains(current.kind)
+                || (current.kind == "story" && sharedStory.flatMap(mediaRoute)?.id == current.id) else { return false }
+        if ["/reels", "/reels/"].contains(destination.path.lowercased()),
+           ["instagram.com", "www.instagram.com"].contains(destination.host?.lowercased() ?? "") { return true }
+        if current.kind == "story", destination.path.lowercased().hasPrefix("/stories"),
+           ["instagram.com", "www.instagram.com"].contains(destination.host?.lowercased() ?? ""),
+           mediaRoute(destination)?.id != current.id { return true }
+        guard let next = mediaRoute(destination) else { return false }
         return next.kind != current.kind || current.id != next.id
     }
 
     private static func mediaRoute(_ url: URL) -> (kind: String, id: String)? {
         guard ["instagram.com", "www.instagram.com"].contains(url.host?.lowercased() ?? "") else { return nil }
         let parts = url.path.split(separator: "/").map(String.init)
+        if parts.count == 3, parts[0].lowercased() == "stories", !parts[2].isEmpty,
+           parts[2].allSatisfy({ $0.isNumber }) {
+            return ("story", "\(parts[1].lowercased())/\(parts[2])")
+        }
         let offset = parts.count == 3 ? 1 : 0
         guard parts.count == offset + 2,
               ["reel", "reels", "p"].contains(parts[offset].lowercased()) else { return nil }
-        return (parts[offset].lowercased(), parts[offset + 1])
+        let kind = parts[offset].lowercased()
+        return (kind == "reels" ? "reel" : kind, parts[offset + 1])
     }
 }
 
@@ -287,7 +316,9 @@ enum SocialService: String, CaseIterable, Identifiable {
 
     func allowsNavigation(to url: URL) -> Bool {
         guard url.scheme?.lowercased() == "https",
-              url.port == nil || url.port == 443 else { return false }
+              url.port == nil || url.port == 443,
+              url.user == nil, url.password == nil,
+              Self.hasUnambiguousNavigationPath(url) else { return false }
         let host = url.host?.lowercased() ?? ""
         switch self {
         case .instagram:
@@ -458,6 +489,26 @@ enum SocialService: String, CaseIterable, Identifiable {
         host == domain || host.hasSuffix(".\(domain)")
     }
 
+    private static func hasUnambiguousNavigationPath(_ url: URL) -> Bool {
+        guard var path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.percentEncodedPath else { return false }
+        // Foundation preserves dot segments while WebKit resolves them. Do
+        // not let an alternate spelling pass a gate for a restricted route.
+        // Unicode names remain valid; structural separators and nested path
+        // escapes must not change the document that the native gate approved.
+        for attempt in 0..<4 {
+            let lowercased = path.lowercased()
+            if lowercased.contains("%2f") || lowercased.contains("%5c")
+                || path.contains("\\") || path.contains("//")
+                || path.split(separator: "/").contains(where: { $0 == "." || $0 == ".." }) { return false }
+            guard let decoded = path.removingPercentEncoding, decoded != path else { return true }
+            if attempt > 0 { return false }
+            path = decoded
+        }
+        // Leave excessive nested encodings closed rather than guessing how
+        // many times the destination's router decodes them.
+        return !path.contains("%")
+    }
+
     static func isSnapchatAuthenticationFrameURL(_ url: URL) -> Bool {
         isRecaptchaFrameURL(url)
     }
@@ -539,7 +590,7 @@ struct FocusedSocialRoutePolicy: Codable {
         "hosts": ["x.com", "www.x.com", "twitter.com", "www.twitter.com", "mobile.twitter.com"],
         "homeURL": "https://x.com/messages",
         "installationFlag": "__vigilXInstalled",
-        "authentication": ["^/(login|logout|signup|account/(login_challenge|access)|i/flow/(login|signup|password_reset)|i/oauth2/authorize|oauth/authenticate)(/|$)"],
+        "authentication": ["^/(login|logout|signup|account/(login_challenge|access)|i/flow/(login|signup|password_reset)|i/oauth2/authorize|oauth/authenticate)(/|$)", "^/i/jf/onboarding/web/?$"],
         "allowed": ["^/(messages|notifications|settings)(/|$)", "^/i/(chat|bookmarks|lists|communities)(/|$)", "^/compose/(post|tweet)/?$", "^/search/?$", "^/[A-Za-z0-9_]{1,15}(?:/(status/[0-9]+(?:/(photo|video)/[0-9]+)?|with_replies|media|followers|following))?/?$"],
         "restricted": ["^/$", "^/(home|explore|trending|jobs|premium|grok|i/(grok|videos|immersive|timeline|trends|connect_people|spaces)|hashtag|topics)(/|$)"],
         "concealed": ["[data-testid='sidebarColumn']", "[data-testid='placementTracking']", "[data-testid='promotedIndicator']", "[data-testid*='recommend' i]", "[aria-label='Who to follow' i]", "[aria-label='Timeline: Trending now' i]", "[aria-label='Timeline: For you' i]"],

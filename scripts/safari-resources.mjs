@@ -4,6 +4,7 @@ import { join } from 'node:path';
 const resources = [
   'blocked-navigation.js', 'reddit-review-background.js', 'reddit-review-guard.js',
   'reddit-review-blocked.html', 'blocked.html', 'blocked.css', 'search-guard.js',
+  'reddit-navigation-rules.json',
   'manifest.json', 'reddit-child-lock.js', 'media-child-lock.js', 'youtube-parity.js',
   'youtube-limits.js', 'youtube-bridge.js', 'youtube-background.js', 'youtube-player-response.js',
   'status.html', 'status.js', 'icons/icon-16.png', 'icons/icon-32.png',

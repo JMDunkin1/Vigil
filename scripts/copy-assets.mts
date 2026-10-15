@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url";
 import { Script } from "node:vm";
 import { PROTECTION_PAGE_CSS } from "../src/protectionAppearance.js";
 import { CONTEXTUAL_SEARCH_PLATFORMS } from "../src/contextualExplicitSearch.js";
+import { browserPermanentBlockedDomains, browserPermanentDomainRules } from "../src/browserStaticProtection.js";
+import { writeGeneratedIosSafariGuard } from "./generate-ios-safari-guard.mjs";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
 const ignoredSourceExtensions = new Set([".ts", ".mts"]);
+const extensionPageHelper = (await readFile(join(runtimeRoot, "src/browserExtensionPages.js"), "utf8")).replace(/^export /gmu, "");
 const socialIcons = [
   { name: "instagram.png", source: ["Icons", "instagram.png"] },
   {
@@ -25,6 +28,7 @@ await copyProjectFile("scripts/mac-build-version.mjs");
 await copyProjectFile("scripts/mac-signing-identity.mjs");
 await copyProjectFile("scripts/release-entitlements.mjs");
 await copyProjectFile("scripts/ios-phone-suite.mjs");
+await copyProjectFile("scripts/ios-phone-renewal.mjs");
 // Generate the same stylesheet for both browser installations before packaging.
 await writeFile(join(projectRoot, "extension/blocked.css"), PROTECTION_PAGE_CSS.trimStart());
 await writeFile(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/blocked.css"), PROTECTION_PAGE_CSS.trimStart());
@@ -52,6 +56,7 @@ await writeFile(legacyBrowserPath, (await readFile(legacyBrowserPath, "utf8")).r
 await copyAssetDir("public");
 await copyAssetDir("extension");
 await makeExtensionScriptsClassic();
+await writeFile(join(runtimeRoot, "extension/browser-protection-rules.json"), `${JSON.stringify(browserPermanentDomainRules(), null, 2)}\n`);
 await cp(join(runtimeRoot, "extension/blocked-navigation.js"), join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/blocked-navigation.js"));
 const searchBreakBackground = await readFile(join(runtimeRoot, "extension/search-break-background.js"), "utf8");
 const searchBreakSafariPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-background.js");
@@ -81,8 +86,9 @@ await writeFile(safariBackgroundPath, (await readFile(safariBackgroundPath, "utf
   `// BEGIN GENERATED YOUTUBE EMBED POLICY\n${embedPolicy}// END GENERATED YOUTUBE EMBED POLICY`
 ));
 await copySocialIcons();
-await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-limits.js"), join(runtimeRoot, "extension/youtube-limits.js"));
-await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/youtube-bridge.js"), join(runtimeRoot, "extension/youtube-bridge.js"));
+for (const name of ["youtube-limits.js", "youtube-bridge.js", "youtube-parity.js", "youtube-player-response.js"]) {
+  await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name), join(runtimeRoot, "extension", name));
+}
 
 async function copyProjectFile(path: string): Promise<void> {
   const from = join(projectRoot, path);
@@ -129,6 +135,14 @@ async function makeExtensionScriptsClassic(): Promise<void> {
       source = source.replace(/^import .*blockedPageBack\.js["'];?\s*$/mu, back);
       if (!name.startsWith("reddit-review-")) source = source.trimEnd() + "\nexport {};\n";
     }
+    if (source.includes('from "../src/browserExtensionPages.js"')) {
+      source = source.replace(/^import .*browserExtensionPages\.js["'];?\s*$/mu, extensionPageHelper);
+    }
+    if (source.includes('from "../src/extensionStaticRules.js"')) {
+      const verifier = (await readFile(join(runtimeRoot, "src/extensionStaticRules.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*extensionStaticRules\.js["'];?\s*$/mu, verifier);
+      source += "\nexport {};\n";
+    }
     if (name === "content.js") {
       const appearance = (await readFile(join(runtimeRoot, "src/protectionAppearance.js"), "utf8")).replace(/^export /gmu, "");
       source = source.replace(/^import .*protectionAppearance\.js["'];?\s*$/mu, appearance);
@@ -150,6 +164,13 @@ async function makeExtensionScriptsClassic(): Promise<void> {
       source += "\nexport {};\n";
     }
     if (name === "google-safe-search.js") {
+      const semanticUrlMatcher = (await readFile(join(runtimeRoot, "src/explicitUrlContext.js"), "utf8")).replace(/^export /gmu, "");
+      source = source.replace(/^import .*explicitUrlContext\.js["'];?\s*$/mu,
+        () => semanticUrlMatcher);
+      source = source.replace(/^import .*browserStaticProtection\.js["'];?\s*$/mu,
+        `function browserPermanentBlockedDomains() { return ${JSON.stringify(browserPermanentBlockedDomains())}; }`);
+      source = source.replace(/^import .*explicitComicPolicy\.js["'];?\s*$/mu,
+        (await readFile(join(runtimeRoot, "src/explicitComicPolicy.js"), "utf8")).replace(/^export /gmu, ""));
       // Inline the same pure matcher used by the server into the classic
       // document-start script; no runtime import or server round-trip needed.
       const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
@@ -181,8 +202,18 @@ async function makeExtensionScriptsClassic(): Promise<void> {
     + await readFile(join(runtimeRoot, "extension/search-break-background.js"), "utf8")
     + await readFile(backgroundPath, "utf8"));
   const searchGuardPath = join(runtimeRoot, "extension/google-safe-search.js");
+  const searchGuard = await readFile(searchGuardPath, "utf8");
+  if (!searchGuard.includes(extensionPageHelper)) throw new Error("The shared browser page helper is missing from the search guard.");
   await writeFile(searchGuardPath, await readFile(join(runtimeRoot, "extension/search-break.js"), "utf8")
-    + await readFile(searchGuardPath, "utf8"));
+    + searchGuard.replace(extensionPageHelper, ""));
+}
+
+// Safari ships the same generated review guards as the browser extension.
+// Refresh these before Xcode bundles them so the phone integrity audit can
+// compare the native resources to this build's exact generated scripts.
+for (const name of ["reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html"]) {
+  await cp(join(runtimeRoot, "extension", name),
+    join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
 }
 
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"), join(runtimeRoot, "extension/reddit-child-lock.js"));
@@ -197,3 +228,6 @@ await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace
   `// BEGIN GENERATED EXPLICIT MEDIA CONTEXT\n/* eslint-disable no-unused-vars -- Shared matchers include helpers unused by this entry point. */\n${mediaContext}/* eslint-enable no-unused-vars */\n// END GENERATED EXPLICIT MEDIA CONTEXT`
 ));
 await cp(mediaGuardPath, join(runtimeRoot, "extension/media-child-lock.js"));
+// A normal build must refresh Safari's generated guards too, so the two
+// installations cannot drift merely because a separate generator was omitted.
+await writeGeneratedIosSafariGuard();

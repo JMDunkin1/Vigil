@@ -53,7 +53,8 @@ enum DOMAdapters {
         for service: SocialService,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy,
         audioEnabled: Bool,
-        contentSafetyEnabled: Bool = true
+        contentSafetyEnabled: Bool = true,
+        sharedContentURL: URL? = nil
     ) -> String {
         let safetyBootstrap = contentSafetyEnabled
             ? contentFilterBootstrap(for: unclassifiedMediaPolicy)
@@ -63,12 +64,12 @@ enum DOMAdapters {
                 )
             : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
-            (service == .snapchat ? snapchatDesktopIdentityBootstrap : "")
+            (service == .snapchat ? snapchatDesktopIdentityBootstrap + snapchatCameraBootstrap : "")
             + (service == .linkedin ? linkedin : "")
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
             + documentIdentityBootstrap
-            + (service == .instagram ? instagramSingleReelGuard : "")
+            + (service == .instagram ? instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -129,6 +130,48 @@ enum DOMAdapters {
         }
       `;
       document.documentElement.appendChild(style);
+    })();
+    """#
+
+    private static let snapchatCameraBootstrap = #"""
+    (() => {
+      if (window !== window.top || window.__vigilSnapchatCameraInstalled
+          || !['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+          || !/^\/web(?:\/|$)/.test(location.pathname)) return;
+      const devices = navigator.mediaDevices;
+      if (typeof devices?.getUserMedia !== 'function') return;
+      window.__vigilSnapchatCameraInstalled = true;
+      const getUserMedia = devices.getUserMedia.bind(devices);
+      // The desktop client requests 406x720 or an exact 9:16 stream. On a
+      // phone that can crop the sensor before either preview or capture sees
+      // it. Prefer a full sensor mode; keep the chosen camera, mic, frame rate,
+      // permissions, and Snapchat's original stream/capture lifecycle.
+      const uncropped = video => {
+        const result = { ...video };
+        for (const key of ['width', 'height', 'aspectRatio', 'resizeMode', 'zoom']) delete result[key];
+        if (Array.isArray(result.advanced)) result.advanced = result.advanced.map(uncropped);
+        return result;
+      };
+      devices.getUserMedia = async function(constraints) {
+        if (!constraints?.video || !matchMedia('(max-width: 600px)').matches
+            || !/^\/web(?:\/|$)/.test(location.pathname)) return getUserMedia(constraints);
+        const video = uncropped(constraints.video === true ? {} : constraints.video);
+        video.width = { ideal: 1920 };
+        video.height = { ideal: 1920 };
+        if (!video.deviceId && !video.facingMode) video.facingMode = { ideal: 'user' };
+        if (devices.getSupportedConstraints?.().resizeMode) video.resizeMode = { ideal: 'none' };
+        const stream = await getUserMedia({ ...constraints, video });
+        for (const track of stream.getVideoTracks()) {
+          try {
+            const zoom = track.getCapabilities?.().zoom;
+            if (Number.isFinite(zoom?.min) && typeof track.applyConstraints === 'function') {
+              const current = track.getConstraints?.() || video;
+              await track.applyConstraints({ ...current, advanced: [...(current.advanced || []), { zoom: zoom.min }] });
+            }
+          } catch (_) { /* Optional zoom support must not discard a usable stream. */ }
+        }
+        return stream;
+      };
     })();
     """#
 
@@ -1401,7 +1444,8 @@ enum DOMAdapters {
     static func controlsScript(for service: SocialService, informationalAccounts: [String] = []) -> String {
         let accounts = informationalAccounts.compactMap(InstagramInformationalAccounts.normalizedUsername)
         let encoded = (try? JSONEncoder().encode(accounts)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        return (service == .instagram ? instagramSingleReelGuard : "") + lockdownProbe(service) + serviceScript(service)
+        return (service == .instagram ? instagramSingleReelGuard : "")
+            + (service == .snapchat ? snapchatCameraBootstrap : "") + lockdownProbe(service) + serviceScript(service)
             .replacingOccurrences(of: "/* VIGIL_INFORMATIONAL_ACCOUNTS */ []", with: encoded)
     }
 
@@ -1423,7 +1467,8 @@ enum DOMAdapters {
             allowedHosts = "['instagram.com', 'www.instagram.com']"
             fallbackPath = "/"
             routePolicy = #"""
-            if (path === '/reels' || path.startsWith('/reels/')) {
+            if ((path === '/reels' || path.startsWith('/reels/'))
+                && !/^\/reels\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)) {
               return { feature: 'reels', mode: 'redirect', permanent: true };
             }
             if (path === '/explore/people/suggested'
@@ -1824,6 +1869,13 @@ enum DOMAdapters {
     // Shared media is one item, not an entry point into Instagram's snap feed.
     // Install before Instagram so its gesture/router listeners cannot consume
     // a swipe first. The document-end path also installs this in test/recovery.
+    private static func instagramSharedContentSeed(_ url: URL?) -> String {
+        guard let url else { return "" }
+        let encoded = (try? JSONEncoder().encode(url.absoluteString))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        return "window.__vigilInstagramIncomingSharedURL = \(encoded);\n"
+    }
+
     static let instagramSingleReelGuard = #"""
     (() => {
       if (window.__vigilInstagramSingleReelInstalled) return;
@@ -1832,14 +1884,29 @@ enum DOMAdapters {
         try {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return null;
+          const story = url.pathname.match(/^\/stories\/([a-z0-9._]+)\/([0-9]+)\/?$/i);
+          if (story) return { kind: 'story', id: `${story[1].toLowerCase()}/${story[2]}` };
           const match = url.pathname.match(/^\/(?:[a-z0-9._]+\/)?(reel|reels|p)\/([A-Za-z0-9_-]+)\/?$/i);
-          return match ? { kind: match[1].toLowerCase(), id: match[2] } : null;
+          return match ? { kind: match[1].toLowerCase() === 'p' ? 'p' : 'reel', id: match[2] } : null;
         } catch (_) { return null; }
       };
       let pinnedID = '';
       let pinnedKind = '';
+      let pinnedURL = '';
+      const replacePinnedRoute = history.replaceState.bind(history);
       let pinnedVideo = null;
       let pinnedSource = '';
+      let pinnedCard = null;
+      let pinnedImageSource = '';
+      let mediaSources = new WeakMap();
+      const sharedStoryKey = 'vigil.instagram.shared-story.v1';
+      let sharedStory = null;
+      try { sharedStory = JSON.parse(sessionStorage.getItem(sharedStoryKey) || 'null'); } catch (_) {}
+      const incoming = window.__vigilInstagramIncomingSharedURL
+        ? mediaRoute(window.__vigilInstagramIncomingSharedURL) : null;
+      if (incoming?.kind === 'story' && mediaRoute(location.href)?.id === incoming.id) {
+        sharedStory = { id: incoming.id, at: Date.now() };
+      }
       let sharedIntent = null;
       let modalContext = null;
       let gesture = null;
@@ -1860,30 +1927,48 @@ enum DOMAdapters {
           overscroll-behavior-y: none !important;
           scroll-snap-type: none !important;
         }
-        html[data-vigil-single-reel] video { touch-action: pinch-zoom !important; }
+        html[data-vigil-single-reel] [data-vigil-single-reel-card="allowed"]:not(:has([data-vigil-instagram-comments-sheet="true"])),
+        html[data-vigil-single-reel] :is(video, img):not([data-vigil-instagram-comments-sheet="true"] *) {
+          touch-action: pinch-zoom !important;
+        }
+        html[data-vigil-single-reel-kind="p"] [data-vigil-single-reel-card="allowed"]:not(:has([data-vigil-instagram-comments-sheet="true"])),
+        html[data-vigil-single-reel-kind="p"] :is(video, img):not([data-vigil-instagram-comments-sheet="true"] *) {
+          touch-action: pan-x pinch-zoom !important;
+        }
       `;
       document.documentElement.appendChild(style);
       const reset = () => {
         pinnedID = '';
         pinnedKind = '';
+        pinnedURL = '';
         pinnedVideo = null;
         pinnedSource = '';
+        pinnedCard = null;
+        pinnedImageSource = '';
+        mediaSources = new WeakMap();
         modalContext = null;
         sharedIntent = null;
         gesture = null;
+        pointerGesture = null;
         lockedScroll.forEach((_, node) => node.removeAttribute('data-vigil-single-reel-scroll'));
         lockedScroll.clear();
         document.querySelectorAll('[data-vigil-single-reel-media]').forEach(node => node.removeAttribute('data-vigil-single-reel-media'));
         document.querySelectorAll('[data-vigil-single-reel-card]').forEach(node => node.removeAttribute('data-vigil-single-reel-card'));
         delete document.documentElement.dataset.vigilSingleReel;
+        delete document.documentElement.dataset.vigilSingleReelKind;
       };
+      const activeModal = node => node?.isConnected && !node.hidden
+        && node.getAttribute('aria-hidden') !== 'true' && getComputedStyle(node).display !== 'none';
       const syncRoute = () => {
         const route = mediaRoute(location.href);
+        const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
+          || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
+            && Date.now() >= sharedStory.at && Date.now() - sharedStory.at < 30 * 60 * 1000));
         // Shared videos can open as /p/{id}, or in a modal while Direct keeps
         // its URL. Both must have the same single-item containment as /reel.
         if (!route && location.pathname.startsWith('/direct/') && sharedIntent
             && sharedIntent.source === location.pathname && Date.now() - sharedIntent.at < 10000) {
-          modalContext = document.querySelector('[role="dialog"]:has(video), [aria-modal="true"]:has(video)');
+          modalContext = foregroundModal();
           if (modalContext) {
             pinnedID = sharedIntent.route.id;
             pinnedKind = sharedIntent.route.kind;
@@ -1893,40 +1978,87 @@ enum DOMAdapters {
         if (!route && !pinnedID && location.pathname.startsWith('/direct/')) {
           // Direct also opens video previews from buttons with no permalink.
           // The foreground video modal is still a single shared item.
-          const modal = document.querySelector(
-            '[role="dialog"]:not([aria-hidden="true"]):has(video), [aria-modal="true"]:not([aria-hidden="true"]):has(video)'
-          );
-          const video = modal && [...modal.querySelectorAll('video')].find((media) => {
+          const modal = foregroundModal();
+          const video = modal && [...modal.querySelectorAll('video, img')].find((media) => {
             const rect = media.getBoundingClientRect();
             return rect.width >= 220 && rect.height >= 280 && rect.bottom > 0 && rect.top < innerHeight;
           });
           if (video) {
             const link = [...modal.querySelectorAll('a[href]')].map(node => mediaRoute(node.href))
-              .find(candidate => candidate && ['reel', 'p'].includes(candidate.kind));
+              .find(candidate => candidate);
             modalContext = modal;
-            pinnedVideo = video;
+            pinnedVideo = video instanceof HTMLVideoElement ? video : null;
             pinnedID = link?.id || 'direct-modal';
-            pinnedKind = link?.kind || 'reel';
+            pinnedKind = link?.kind || (video instanceof HTMLVideoElement ? 'reel' : 'p');
           }
         }
-        if (!route && modalContext?.isConnected && location.pathname.startsWith('/direct/')) {
+        if (!route && activeModal(modalContext) && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
+          document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
           return true;
         }
-        if (!route || (!pinnedID && route.kind !== 'reel'
-            && !(route.kind === 'p' && document.querySelector('video')))) {
+        if (route && pinnedID && (route.id !== pinnedID || route.kind !== pinnedKind) && pinnedURL) {
+          // History traversal can activate entries created before this viewer
+          // opened. Keep the same item even when no pushState call occurs.
+          try { replacePinnedRoute(history.state, '', pinnedURL); } catch (_) {}
+          return true;
+        }
+        if (!route || (route.kind === 'story' && !sharedStoryRoute)) {
           if (pinnedID) reset();
           return false;
         }
         if (!pinnedID) { pinnedID = route.id; pinnedKind = route.kind; }
+        if (!pinnedURL) pinnedURL = location.href;
         document.documentElement.dataset.vigilSingleReel = pinnedID;
+        document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
         return true;
       };
+      const foregroundModal = () => {
+        const modal = [...document.querySelectorAll(
+          '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
+        )].find(activeModal);
+        if (modal && !inSheet(modal)) return modal;
+        // Recent Direct viewers use an anonymous fixed portal, without dialog
+        // semantics. The message thread itself must remain scrollable.
+        for (const media of document.querySelectorAll('video, img')) {
+          const rect = media.getBoundingClientRect();
+          if (rect.width < 220 || rect.height < 280 || rect.bottom <= 0 || rect.top >= innerHeight) continue;
+          for (let node = media.parentElement; node && node !== document.body; node = node.parentElement) {
+            if (getComputedStyle(node).position === 'fixed' && !inSheet(node)) return node;
+          }
+        }
+        return null;
+      };
+      const rememberShare = value => {
+        const route = mediaRoute(value);
+        if (!route || !location.pathname.startsWith('/direct/')) return;
+        sharedIntent = { route, source: location.pathname, at: Date.now() };
+        if (route.kind === 'story') {
+          sharedStory = { id: route.id, at: Date.now() };
+          try { sessionStorage.setItem(sharedStoryKey, JSON.stringify(sharedStory)); } catch (_) {}
+        }
+      };
+      window.__vigilInstagramSharedItem = Object.freeze({
+        isSharedStory(value = location.href) {
+          const route = mediaRoute(value);
+          return route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
+            || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
+              && Date.now() >= sharedStory.at && Date.now() - sharedStory.at < 30 * 60 * 1000));
+        },
+        isPinnedStory() { return syncRoute() && pinnedKind === 'story'; },
+        blocksDestination(value) { return blocksDestination(value); }
+      });
       const blocksDestination = (value) => {
         if (!syncRoute() || value == null || value === '') return false;
         const route = mediaRoute(value);
         let reelsDestination = false;
-        try { reelsDestination = /^\/reels(?:\/|$)/i.test(new URL(value, location.href).pathname); } catch (_) {}
+        try { reelsDestination = /^\/reels\/?$/i.test(new URL(value, location.href).pathname); } catch (_) {}
+        if (pinnedKind === 'story') {
+          try {
+            const url = new URL(value, location.href);
+            if (/^\/stories(?:\/|$)/i.test(url.pathname) && (!route || route.id !== pinnedID)) return true;
+          } catch (_) {}
+        }
         return reelsDestination || Boolean(route && (route.id !== pinnedID || route.kind !== pinnedKind));
       };
       const cancel = event => {
@@ -1939,7 +2071,82 @@ enum DOMAdapters {
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (node.scrollTop !== position) node.scrollTop = position;
       });
-      const mediaSource = video => video.getAttribute('src') || video.currentSrc || video.querySelector('source')?.src || '';
+      const reelAdvanceControl = target => {
+        const control = target?.closest?.('button, [role="button"], a[href]') || target;
+        const labels = [control, ...control?.querySelectorAll?.('[aria-label]') || []];
+        const advances = labels.some(node => /^(next|previous)( reel| post| story| photo| video)?$/i.test(
+          node?.getAttribute?.('aria-label') || ''
+        ));
+        if (!advances) return null;
+        // A photo dump is one post. Its own carousel arrows stay usable;
+        // controls outside that card still lead into another item.
+        const carouselArrow = labels.some(node => /^(next|previous)( photo)?$/i.test(node?.getAttribute?.('aria-label') || ''));
+        return pinnedKind === 'p' && pinnedCard?.contains(control) && carouselArrow ? null : control;
+      };
+      const containPress = event => {
+        if (!syncRoute() || inSheet(event.target)) return false;
+        if (reelAdvanceControl(event.target)) { cancel(event); return true; }
+        const control = event.target?.closest?.('button, a[href], [role="button"]');
+        if (control && !control.querySelector('video, img') && !mediaRoute(control.href)) return false;
+        if (isPostCarousel() && pinnedCard?.contains(event.target)) return false;
+        // A hold can arm Instagram's recommendation viewer before any move
+        // event occurs. Keep press/release listeners away from the media while
+        // retaining the browser's ordinary click for playback and pinch zoom.
+        event.stopImmediatePropagation();
+        return true;
+      };
+      const mediaSource = media => media.getAttribute('srcset') || media.getAttribute('src')
+        || media.querySelector('source')?.getAttribute('srcset') || media.querySelector('source')?.src || media.currentSrc || '';
+      const contentMedia = media => {
+        if (media.closest('nav, [aria-hidden="true"], [data-vigil-instagram-comments-sheet="true"]')) return false;
+        if (media instanceof HTMLVideoElement) return true;
+        if (/profile picture/i.test(media.getAttribute('alt') || '')) return false;
+        const article = media.closest('article, [role="article"]');
+        if (article && [...article.querySelectorAll('a[href]')].some(link => {
+          const route = mediaRoute(link.href);
+          return route?.id === pinnedID && route.kind === pinnedKind;
+        })) return true;
+        const box = media.getBoundingClientRect();
+        return box.width >= 180 && box.height >= 140;
+      };
+      const horizontalCarousel = node => {
+        if (pinnedKind !== 'p') return false;
+        const css = getComputedStyle(node);
+        return (css.display.includes('flex') && css.flexDirection.startsWith('row'))
+          || /auto|scroll/.test(css.overflowX) || node.getAttribute('aria-roledescription') === 'carousel';
+      };
+      const mediaGroups = node => [...node.children].filter(child =>
+        (child.matches('video, img') && contentMedia(child))
+          || [...child.querySelectorAll('video, img')].some(contentMedia));
+      const cardFor = media => {
+        const article = media.closest('article, [role="article"]');
+        if (article) return article;
+        let identityCard = null;
+        for (let node = media.parentElement; node && !node.matches('body, main, [role="main"]'); node = node.parentElement) {
+          if (mediaGroups(node).length > 1 && !horizontalCarousel(node)) break;
+          const routes = [...node.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
+          if (routes.some(route => route.id !== pinnedID || route.kind !== pinnedKind)) break;
+          if (routes.some(route => route.id === pinnedID && route.kind === pinnedKind)) identityCard = node;
+          if (node.matches('[role="dialog"], [aria-modal="true"]')) break;
+        }
+        if (identityCard) return identityCard;
+        let card = media;
+        for (let node = media.parentElement; node && !node.matches('body, main, [role="main"], [role="dialog"], [aria-modal="true"]'); node = node.parentElement) {
+          card = node;
+          const peers = [...node.parentElement.children].filter(sibling =>
+            [...sibling.querySelectorAll('video, img')].some(contentMedia));
+          if (peers.length > 1 && !horizontalCarousel(node.parentElement)) break;
+        }
+        return card;
+      };
+      const cardMatches = card => {
+        const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
+        return !routes.length || routes.some(route => route.id === pinnedID && route.kind === pinnedKind);
+      };
+      const isPostCarousel = () => pinnedKind === 'p' && pinnedCard
+        && ([...pinnedCard.querySelectorAll('video, img')].filter(contentMedia).length > 1
+          || [...pinnedCard.querySelectorAll('*')].some(node => node.clientWidth > 0
+            && node.scrollWidth > node.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(node).overflowX)));
       const reconcile = () => {
         if (!syncRoute()) return;
         const videos = [...(modalContext || document).querySelectorAll('video')];
@@ -1956,21 +2163,34 @@ enum DOMAdapters {
             if (video.closest('nav, [aria-hidden="true"], [data-vigil-instagram-feed-region]')) return false;
             const box = video.getBoundingClientRect();
             if (box.width <= 0 || box.height <= 0 || box.bottom <= 0 || box.top >= innerHeight) return false;
-            const links = [...(video.closest('article')?.querySelectorAll('a[href]') || [])]
-              .map(link => mediaRoute(link.href)).filter(Boolean);
-            return !links.length || links.some(route => route.id === pinnedID);
+            return cardMatches(cardFor(video));
           });
           visible.sort((a, b) => Math.abs(a.getBoundingClientRect().top + a.getBoundingClientRect().height / 2 - innerHeight / 2)
             - Math.abs(b.getBoundingClientRect().top + b.getBoundingClientRect().height / 2 - innerHeight / 2));
           pinnedVideo = visible[0] || null;
+        }
+        if (!pinnedCard?.isConnected) {
+          const candidates = [...(modalContext || document).querySelectorAll('video, img')]
+            .filter(contentMedia).filter(media => {
+              const box = media.getBoundingClientRect();
+              const card = cardFor(media);
+              const exact = [...card.querySelectorAll('a[href]')].some(link => {
+                const route = mediaRoute(link.href);
+                return route?.id === pinnedID && route.kind === pinnedKind;
+              });
+              return (exact || (box.bottom > 0 && box.top < innerHeight)) && cardMatches(card);
+            });
+          const media = pinnedVideo?.isConnected ? pinnedVideo : candidates[0];
+          pinnedCard = media ? cardFor(media) : null;
         }
         for (const video of videos) {
           const source = mediaSource(video);
           if (video === pinnedVideo && !pinnedSource && source) pinnedSource = source;
           // React can recycle the same video node without changing history.
           // A different source must never inherit permission from that node.
-          const allowed = video === pinnedVideo && (!pinnedSource || source === pinnedSource)
-            && (modalContext?.isConnected || mediaRoute(location.href)?.id === pinnedID);
+          const allowed = (isPostCarousel() ? pinnedCard?.contains(video) && cardMatches(pinnedCard)
+            : video === pinnedVideo && (!pinnedSource || source === pinnedSource))
+            && (activeModal(modalContext) || mediaRoute(location.href)?.id === pinnedID);
           video.dataset.vigilSingleReelMedia = allowed ? 'allowed' : 'blocked';
           if (!allowed && !video.paused) video.pause();
           let card = video.closest('article, [role="article"]');
@@ -1989,6 +2209,8 @@ enum DOMAdapters {
               if (siblingsWithMedia.length > 1) break;
             }
           }
+          // For carousels the whole post owns all its media, not one slide.
+          if (pinnedKind === 'p') card = cardFor(video);
           if (card) card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
           if (allowed && card?.parentElement) {
             for (const sibling of card.parentElement.children) {
@@ -2000,8 +2222,28 @@ enum DOMAdapters {
             }
           }
         }
-        if (pinnedVideo?.isConnected) {
-          for (let node = pinnedVideo.parentElement; node; node = node.parentElement) {
+        for (const media of (modalContext || document).querySelectorAll('video, img')) {
+          if (!contentMedia(media)) continue;
+          const card = cardFor(media);
+          const source = mediaSource(media);
+          if (!mediaSources.has(media)) mediaSources.set(media, source);
+          if (card === pinnedCard && media instanceof HTMLImageElement && pinnedKind !== 'p' && !pinnedImageSource) {
+            pinnedImageSource = source;
+          }
+          const allowed = card === pinnedCard && cardMatches(card)
+            && (isPostCarousel() || (media instanceof HTMLImageElement && pinnedKind !== 'p'
+              ? source === pinnedImageSource : mediaSources.get(media) === source))
+            && (!(media instanceof HTMLVideoElement) || media.dataset.vigilSingleReelMedia === 'allowed');
+          card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
+          if (allowed) {
+            // Recycled Home classifications belong to the old feed card.
+            // Release only the exact pinned item, never the retained stream.
+            for (const name of ['data-vigil-instagram-home-relationship', 'data-vigil-instagram-home-author',
+              'data-vigil-instagram-story-panel']) card.removeAttribute(name);
+          }
+        }
+        if (pinnedCard?.isConnected) {
+          for (let node = pinnedCard; node; node = node.parentElement) {
             if (inSheet(node)) continue;
             if (!lockedScroll.has(node)) {
               lockedScroll.set(node, node.scrollTop);
@@ -2013,13 +2255,15 @@ enum DOMAdapters {
       };
       window.addEventListener('touchstart', event => {
         if (!syncRoute() || inSheet(event.target) || event.touches.length !== 1) { gesture = null; return; }
-        gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, blocked: false };
+        gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, blocked: false,
+          contained: containPress(event) };
       }, { capture: true, passive: true });
       window.addEventListener('touchmove', event => {
         if (!syncRoute() || !gesture || event.touches.length !== 1) return;
         const dx = event.touches[0].clientX - gesture.x;
         const dy = event.touches[0].clientY - gesture.y;
-        if (gesture.blocked || (Math.abs(dy) > 6 && Math.abs(dy) > Math.abs(dx))) {
+        if (gesture.blocked || (Math.max(Math.abs(dx), Math.abs(dy)) > 6
+            && (pinnedKind !== 'p' || Math.abs(dy) > Math.abs(dx)))) {
           gesture.blocked = true;
           cancel(event);
           restoreScroll();
@@ -2027,48 +2271,56 @@ enum DOMAdapters {
       }, { capture: true, passive: false });
       for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
         if (gesture?.blocked) cancel(event);
+        else if (gesture?.contained) event.stopImmediatePropagation();
         gesture = null;
       }, { capture: true, passive: false });
       window.addEventListener('pointerdown', event => {
-        pointerGesture = syncRoute() && !inSheet(event.target) ? { x: event.clientX, y: event.clientY, blocked: false } : null;
+        pointerGesture = syncRoute() && !inSheet(event.target) ? {
+          x: event.clientX, y: event.clientY, blocked: false, contained: containPress(event)
+        } : null;
       }, true);
       window.addEventListener('pointermove', event => {
         if (!syncRoute() || !pointerGesture) return;
-        if (pointerGesture.blocked || (Math.abs(event.clientY - pointerGesture.y) > 6
-            && Math.abs(event.clientY - pointerGesture.y) > Math.abs(event.clientX - pointerGesture.x))) {
+        const dx = Math.abs(event.clientX - pointerGesture.x);
+        const dy = Math.abs(event.clientY - pointerGesture.y);
+        if (pointerGesture.blocked || (Math.max(dx, dy) > 6 && (pinnedKind !== 'p' || dy > dx))) {
           pointerGesture.blocked = true;
           cancel(event);
         }
       }, true);
       for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
         if (pointerGesture?.blocked) cancel(event);
+        else if (pointerGesture?.contained) event.stopImmediatePropagation();
         pointerGesture = null;
       }, true);
+      for (const type of ['mousedown', 'mouseup', 'contextmenu']) window.addEventListener(type, event => {
+        if (containPress(event) && type === 'contextmenu') cancel(event);
+      }, true);
       window.addEventListener('wheel', event => {
-        if (syncRoute() && !inSheet(event.target) && event.deltaY) cancel(event);
+        if (syncRoute() && !inSheet(event.target) && (event.deltaY || (pinnedKind !== 'p' && event.deltaX))) cancel(event);
       }, { capture: true, passive: false });
       window.addEventListener('keydown', event => {
         if (syncRoute() && !inSheet(event.target)
-            && ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)) cancel(event);
+            && (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)
+              || (pinnedKind !== 'p' && ['ArrowLeft', 'ArrowRight'].includes(event.key)))) cancel(event);
       }, true);
       window.addEventListener('click', event => {
         const link = event.target?.closest?.('a[href]');
-        const shared = mediaRoute(link?.href);
-        if (!pinnedID && shared && ['reel', 'p'].includes(shared.kind)
-            && location.pathname.startsWith('/direct/')) {
-          sharedIntent = { route: shared, source: location.pathname, at: Date.now() };
-        }
-        const next = event.target?.closest?.('[aria-label="Next" i], [aria-label="Next reel" i], [aria-label="Previous reel" i]');
+        if (!pinnedID && link) rememberShare(link.href);
+        const next = reelAdvanceControl(event.target);
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
+        else if (syncRoute() && pinnedKind === 'story' && !inSheet(event.target)
+            && !event.target?.closest?.('a[href], button, [role="button"]')) cancel(event);
       }, true);
       window.addEventListener('scroll', event => {
         if (!syncRoute() || inSheet(event.target)) return;
         restoreScroll();
       }, true);
-      for (const type of ['play', 'playing', 'loadedmetadata', 'emptied']) document.addEventListener(type, reconcile, true);
+      for (const type of ['play', 'playing', 'loadedmetadata', 'emptied', 'load']) document.addEventListener(type, reconcile, true);
       for (const name of ['pushState', 'replaceState']) {
         const original = history[name];
         history[name] = function(...args) {
+          if (!pinnedID && args[2]) rememberShare(args[2]);
           if (blocksDestination(args[2])) return;
           const result = original.apply(this, args);
           reconcile();
@@ -2081,7 +2333,7 @@ enum DOMAdapters {
       window.addEventListener('popstate', reconcile, true);
       window.addEventListener('pageshow', reconcile, true);
       new MutationObserver(reconcile).observe(document.documentElement, {
-        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'href', 'style', 'class', 'aria-hidden']
+        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden']
       });
       reconcile();
     })();
@@ -2098,6 +2350,7 @@ enum DOMAdapters {
       for (const name of ['pushState', 'replaceState']) {
         const original = history[name];
         history[name] = function(...args) {
+          if (window.__vigilInstagramSharedItem?.blocksDestination(args[2])) return;
           if (typeof window.__vigilInstagramPrepareRoute === 'function') {
             window.__vigilInstagramPrepareRoute(args[2], true);
           } else {
@@ -4740,8 +4993,9 @@ enum DOMAdapters {
     """#
 
     // Snapchat's desktop breakpoint hides the chat names and search below 850px.
-    // Adapt only the verified chat shell (client 9a9dc856); unknown layouts retain
-    // Snapchat's original UI. Never copy messages, replace React nodes, alter its
+    // Adapt only verified chat/media shells (clients 9a9dc856 and a4b70008);
+    // unknown layouts retain Snapchat's original UI. Never copy messages,
+    // replace React nodes, alter its
     // privacy screens, or couple this presentation layer to policy enforcement.
     private static let snapchatMobileLayout = #"""
     (() => {
@@ -4960,6 +5214,64 @@ enum DOMAdapters {
             font-size: 16px !important; min-height: 44px;
           }
           [data-vigil-snap-layout] .hpge3 { max-width: 100%; max-height: 100%; }
+          /* The lightbox uses a second desktop grid track, often half the
+             phone's height. Give the original player the whole main panel. */
+          [data-vigil-snap-media="viewer"] ._XMCw {
+            grid-template-areas: "main" !important;
+            grid-template-columns: minmax(0, 1fr) !important;
+            grid-template-rows: minmax(0, 1fr) !important;
+            gap: 0 !important; height: 100% !important;
+          }
+          [data-vigil-snap-media="viewer"] ._XMCw > .ChLAv { visibility: hidden; }
+          [data-vigil-snap-media="viewer"] ._XMCw > .S4e9r:has(.ecBYF) {
+            grid-area: main !important; position: relative !important;
+            inset: auto !important; width: 100% !important; height: 100% !important;
+            max-width: none !important; min-height: 0; box-sizing: border-box;
+            border: 0 !important; padding: 0 !important; margin: 0 !important;
+            transform: none !important; animation: none !important;
+            background: #000;
+          }
+          [data-vigil-snap-media="viewer"] .ecBYF {
+            position: relative; inset: 0; margin: 0; gap: 0; background: #000;
+          }
+          [data-vigil-snap-media="viewer"] .RdKti { position: relative; flex: 1; min-height: 0; }
+          [data-vigil-snap-media="viewer"] .vDdE2 {
+            width: 100% !important; height: 100% !important;
+            margin: 0 !important; padding: 0 !important; aspect-ratio: auto !important;
+          }
+          [data-vigil-snap-media="viewer"] .b2f4R { width: 100% !important; height: 100% !important; }
+          [data-vigil-snap-media="viewer"] .b2f4R :is(img, video) { object-fit: contain !important; }
+          [data-vigil-snap-media="viewer"] .QQxLo {
+            position: absolute; top: 8px; width: 44px; height: 44px; margin: 0; z-index: 1;
+          }
+          [data-vigil-snap-media="viewer"] .Z8KwB { inset-inline-start: 8px; }
+          [data-vigil-snap-media="viewer"] .fOsry { inset-inline-end: 8px; }
+          [data-vigil-snap-media="viewer"] .hRnph { width: 44px; height: 44px; }
+          [data-vigil-snap-media] > :is(.bkCIM, .vigil-snap-tabs) { display: none !important; }
+          /* Reply cameras are portalled outside the chat shell. Preserve the
+             complete captured frame rather than covering a narrow 9:16 box. */
+          html[data-vigil-snap-mobile] .AEZEl:has(.BN1L1) {
+            position: fixed; inset: var(--vigil-snap-top, 0px) 0 auto !important;
+            width: 100% !important; max-width: none !important;
+            height: var(--vigil-snap-height, 100dvh) !important; max-height: none !important;
+            margin: 0 !important; padding: 0 !important; aspect-ratio: auto !important;
+            background: #000;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .acEGc:has(.BN1L1),
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .acEGc:has(.BN1L1) > .aTkGG {
+            width: 100% !important; height: 100% !important; min-width: 0; min-height: 0;
+            aspect-ratio: auto !important;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .BN1L1 .Nuu9e {
+            aspect-ratio: auto !important; background: #000;
+          }
+          :is([data-vigil-snap-layout], html[data-vigil-snap-mobile] .AEZEl) .BN1L1 .lnAeT {
+            object-fit: contain !important; background: #000;
+          }
+          [data-vigil-snap-layout="camera"] :is(.G3Z4U, .L3KxA, .IiObz):has(.BN1L1) {
+            width: 100% !important; height: 100% !important; max-width: none; max-height: none;
+            padding: 0 !important; inset: auto; border-radius: 0; aspect-ratio: auto;
+          }
         }
         @media (min-width: 601px) { .vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat { display: none; } }
       `;
@@ -5009,12 +5321,16 @@ enum DOMAdapters {
         if (!shell?.matches('.Fpg8t, .svUon') || !main) {
           document.documentElement.removeAttribute('data-vigil-snap-mobile');
           currentShell?.removeAttribute('data-vigil-snap-layout');
+          currentShell?.removeAttribute('data-vigil-snap-media');
           currentShell?.querySelectorAll('.vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat').forEach(node => node.remove());
           currentShell = null;
           publishRenderState();
           return;
         }
-        if (currentShell && currentShell !== shell) currentShell.removeAttribute('data-vigil-snap-layout');
+        if (currentShell && currentShell !== shell) {
+          currentShell.removeAttribute('data-vigil-snap-layout');
+          currentShell.removeAttribute('data-vigil-snap-media');
+        }
         currentShell = shell;
         document.documentElement.toggleAttribute('data-vigil-snap-mobile', matchMedia('(max-width: 600px)').matches);
         let viewport = document.querySelector('meta[name="viewport"]');
@@ -5030,6 +5346,10 @@ enum DOMAdapters {
         const detail = main.querySelector('.aXEpU, .S4e9r, .Rnl06, .hpge3')
           || !/^\/web\/?$/.test(location.pathname);
         set(shell, 'data-vigil-snap-layout', dialog ? 'dialog' : detail ? 'detail' : preferredPanel);
+        const viewer = main.querySelector('._XMCw > .S4e9r .ecBYF .RdKti .vDdE2');
+        const camera = document.querySelector('.AEZEl .BN1L1');
+        if (viewer || camera) set(shell, 'data-vigil-snap-media', camera ? 'camera' : 'viewer');
+        else shell.removeAttribute('data-vigil-snap-media');
         if (detail) preferredPanel = 'feed';
         // Hiding the formerly focused feed can leave embedded WebKit without
         // a native responder. Ask the host to restore real focus for this chat;
@@ -5119,7 +5439,7 @@ enum DOMAdapters {
         const height = Math.round(normalScale && visual ? visual.height : window.innerHeight);
         const top = Math.round(normalScale && visual ? visual.offsetTop : 0);
         const portal = document.getElementById('portal-container');
-        for (const surface of [shell, portal].filter(Boolean)) {
+        for (const surface of [document.documentElement, shell, portal].filter(Boolean)) {
           for (const [name, value] of [['--vigil-snap-height', `${height}px`], ['--vigil-snap-top', `${top}px`]]) {
             if (surface.style.getPropertyValue(name) !== value) surface.style.setProperty(name, value);
           }
@@ -5178,7 +5498,7 @@ enum DOMAdapters {
       // Deliberately never mount a conversation to fake an unread half-swipe.
       const hasGestureOverlay = () => currentShell?.querySelector(
         '.S4e9r, .hpge3, .Rnl06, .PvwWu, .MOJCa, .gFryU, [role="dialog"], [role="menu"]'
-      ) || document.querySelector('#portal-container > .MOJCa');
+      ) || document.querySelector('#portal-container > .MOJCa, .AEZEl .BN1L1');
       let edgeSwipe = null;
       document.addEventListener('touchstart', event => {
         edgeSwipe = null;
@@ -5478,9 +5798,12 @@ enum DOMAdapters {
         html:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) a[href*="/results?search_query=shorts"],
         html:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) ytm-related-item-section-renderer,
         html:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) ytm-watch-next-secondary-results-renderer,
-        html[data-vigil-youtube-watch="true"]:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) ytm-single-column-watch-next-results-renderer,
         html[data-vigil-youtube-watch="true"]:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) ytm-item-section-renderer:has(ytm-video-with-context-renderer),
-        html[data-vigil-youtube-watch="true"]:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) ytm-video-with-context-renderer,
+        html[data-vigil-youtube-watch="true"]:is([data-vigil-feature-suggested="blocked"], [data-vigil-feature-suggested="pending"]) :is(
+          ytm-video-with-context-renderer, ytm-video-renderer, ytm-compact-video-renderer,
+          ytm-rich-item-renderer, yt-lockup-view-model, ytm-lockup-view-model,
+          ytm-shelf-renderer, ytm-horizontal-card-list-renderer, ytm-related-chip-cloud-renderer
+        ),
         html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-promoted-sparkles-web-renderer,
         html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-companion-ad-renderer,
         html:is([data-vigil-feature-ads="blocked"], [data-vigil-feature-ads="pending"]) ytm-display-ad-renderer,
@@ -6034,7 +6357,10 @@ enum DOMAdapters {
             scheduleReelSurfaceNormalization();
           }
           if (record.type === 'attributes') {
-            scheduleReconcile(record.target);
+            // Safety replies can reveal a player after the blank-page grace
+            // period. Recheck health without rescanning its controls for every
+            // owned verdict change.
+            if (!record.attributeName?.startsWith('data-vigil-')) scheduleReconcile(record.target);
             if (record.target.matches?.(healthVisibilitySelector)
                 || record.target.closest?.(healthVisibilitySelector)
                 || record.target.querySelector?.(healthVisibilitySelector)) healthRelevant = true;
@@ -6073,7 +6399,9 @@ enum DOMAdapters {
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ['href', 'aria-label', 'aria-hidden', 'open', 'hidden', 'class', 'style']
+        attributeFilter: ['href', 'aria-label', 'aria-hidden', 'open', 'hidden', 'class', 'style',
+          'data-vigil-media-verdict', 'data-vigil-page-verdict',
+          'data-vigil-content-subtree-pending', 'data-vigil-visual-effect-pending']
       });
       document.addEventListener('__vigilPolicyFeaturesChanged', () => {
         scheduleReconcile(null, true);
@@ -6093,6 +6421,13 @@ enum DOMAdapters {
         });
       });
       document.addEventListener('fullscreenchange', reportSurface);
+      for (const name of ['loadedmetadata', 'loadeddata', 'canplay', 'playing', 'error', 'emptied']) {
+        document.addEventListener(name, (event) => {
+          if (!(event.target instanceof HTMLVideoElement)) return;
+          attachPlayback();
+          scheduleHealth(0, true);
+        }, true);
+      }
       scheduleHealth(750);
       setTimeout(() => scheduleHealth(0, true), 7000);
     })();
@@ -6340,7 +6675,8 @@ enum DOMAdapters {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return '';
           const path = url.pathname.toLowerCase();
-          if (path === '/reels' || path.startsWith('/reels/')) return 'reels';
+          if ((path === '/reels' || path.startsWith('/reels/'))
+              && !/^\/reels\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname)) return 'reels';
           if (path === '/explore/people/suggested'
               || path.startsWith('/explore/people/suggested/')) return 'suggested';
           if (/^\/(shop|shopping|live)(\/|$)/.test(path)) return 'shopping';
@@ -6360,7 +6696,7 @@ enum DOMAdapters {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
           const path = url.pathname.toLowerCase();
-          return path === '/reel' || path.startsWith('/reel/');
+          return /^\/(?:[a-z0-9._]+\/)?reels?\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname);
         } catch (_) { return false; }
       };
       const isReelsDestinationRoute = (value = location.href) => {
@@ -6368,7 +6704,8 @@ enum DOMAdapters {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
           const path = url.pathname.toLowerCase();
-          return path === '/reels' || path.startsWith('/reels/');
+          return (path === '/reels' || path.startsWith('/reels/'))
+            && !/^\/reels\/[A-Za-z0-9_-]+\/?$/i.test(url.pathname);
         } catch (_) { return false; }
       };
       const isDiscoverySearchRoute = (value = location.href) => {
@@ -6593,7 +6930,7 @@ enum DOMAdapters {
           return;
         }
         if (isSingularReelRoute()) {
-          const path = location.pathname;
+          const path = location.pathname.replace(/^\/(?:[a-z0-9._]+\/)?reels?\//i, '/reel/');
           if (!sharedReelPath) sharedReelPath = path;
           document.documentElement.dataset.vigilInstagramSharedReel = 'true';
           if (path !== sharedReelPath) {
@@ -6644,6 +6981,7 @@ enum DOMAdapters {
       };
       let routeTransitionGeneration = 0;
       const prepareRouteTransition = (value = location.href, committing = false) => {
+        if (window.__vigilInstagramSharedItem?.blocksDestination(value)) return;
         try {
           const url = value === undefined || value === null || value === ''
             ? new URL(location.href)
@@ -6907,7 +7245,7 @@ enum DOMAdapters {
         if (!link) return;
         if (isReelsDestinationRoute(link.href)
             || (sharedReelPath && isSingularReelRoute(link.href)
-              && new URL(link.href, location.href).pathname !== sharedReelPath)) {
+              && new URL(link.href, location.href).pathname.replace(/^\/(?:[a-z0-9._]+\/)?reels?\//i, '/reel/') !== sharedReelPath)) {
           event.preventDefault();
           event.stopImmediatePropagation();
           publishUnavailable('reels');
@@ -7893,6 +8231,9 @@ enum DOMAdapters {
           .forEach((element) => element.remove());
       };
       const hasKnownStoryAccess = (url) => {
+        // A Direct/incoming share grants only this exact story, with its
+        // single-item guard active. It never changes the friendship cache.
+        if (window.__vigilInstagramSharedItem?.isSharedStory(url.href)) return true;
         const parts = url.pathname.toLowerCase().split('/').filter(Boolean);
         if (parts[0] !== 'stories') return false;
         const username = validInstagramUsername(parts[1]);
@@ -8028,6 +8369,7 @@ enum DOMAdapters {
         navigateVerifiedStory(next, pending);
       };
       const armStoryContinuation = () => {
+        if (window.__vigilInstagramSharedItem?.isPinnedStory()) return;
         if (instagramRoute() !== 'story' || !hasKnownStoryAccess(new URL(location.href))) return;
         const saved = readStoryOrder();
         const active = validInstagramUsername(location.pathname.split('/').filter(Boolean)[1]);

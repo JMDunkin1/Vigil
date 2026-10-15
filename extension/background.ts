@@ -26,7 +26,9 @@ const LOCAL_SERVER_ALLOW_RULE_ID = ALLOWLIST_RULE_START - 1;
 const SITE_EMBEDDED_BLOCK_RULE_START = 13000;
 const CONTENT_EMBEDDED_BLOCK_RULE_START = 14000;
 const ALLOWLIST_EMBEDDED_BLOCK_RULE_START = 15000;
-const SITE_BLOCK_RULE_LIMIT = 300;
+// Each site rule has a corresponding embedded-resource rule. Keep both ID
+// ranges below their next reserved range (11000 and 14000, respectively).
+const SITE_BLOCK_RULE_LIMIT = 1_000;
 const CONTENT_BLOCK_RULE_LIMIT = 200;
 const ALLOWLIST_RULE_LIMIT = 20;
 const VIGIL_REQUEST_TIMEOUT_MS = 2500;
@@ -296,6 +298,28 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   void checkUrl(details.tabId, details.url, "navigation", 0, "", { documentId });
 });
 
+async function authorizeExternalYouTubeClick(url: string | undefined, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
+  if (sender.frameId !== 0 || sender.tab?.id === undefined) return { ok: false };
+  const source = new URL(sender.url || "about:blank");
+  if (!/^https?:$/u.test(source.protocol)
+    || /(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/u.test(source.hostname.replace(/\.$/u, ""))) return { ok: false };
+  const target = new URL(url || "");
+  if (target.protocol !== "https:" || target.username || target.password || (target.port && target.port !== "443")) return { ok: false };
+  const parts = target.pathname.split("/").filter(Boolean);
+  const id = target.hostname === "youtu.be" && parts.length === 1 ? parts[0]
+    : /^(www\.|m\.)?youtube\.com$/u.test(target.hostname)
+      ? /^\/watch\/?$/u.test(target.pathname) ? target.searchParams.get("v")
+        : parts.length === 2 && ["live", "embed"].includes(parts[0]) ? parts[1] : null
+      : null;
+  if (!id || !/^[\w-]{11}$/u.test(id)) return { ok: false };
+  const response = await fetchVigil("/api/extension/youtube", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action: "external", videoId: id })
+  });
+  if (!response.ok) return { ok: false };
+  return await response.json() as Record<string, unknown>;
+}
+
 async function authorizeDirectYouTubeNavigation(details: chrome.webNavigation.WebNavigationTransitionCallbackDetails): Promise<void> {
   const key = `youtube-navigation:${details.tabId}`;
   const previous = (await chrome.storage.session.get(key))[key] as string | undefined;
@@ -320,7 +344,7 @@ async function authorizeDirectYouTubeNavigation(details: chrome.webNavigation.We
       || (await getTab(tab.openerTabId))?.url;
     if (!source) return;
   }
-  const sourceHost = source ? new URL(source).hostname : "";
+  const sourceHost = source ? new URL(source).hostname.replace(/\.$/u, "") : "";
   // Address-bar entry and bookmarks are intentional direct requests. A link
   // originating in YouTube (including a new tab) keeps the discovery policy.
   if (!deliberate && /(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/.test(sourceHost)) return;
@@ -362,6 +386,11 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
 });
 
 chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendResponse: (response?: unknown) => void) => {
+  if (message?.type === "VIGIL_EMBEDDED_FRAME_CHECK") {
+    void checkEmbeddedFrameUrl(message.url, sender).then(sendResponse)
+      .catch(() => sendResponse({ ok: false, offline: true }));
+    return true;
+  }
   if (message?.type === "VIGIL_BROWSER_FILTER_HEALTH") {
     if (sender.frameId !== 0 || !sender.tab?.active || sender.tab.windowId === undefined || !sender.url || message.revision !== "2026-09-17.1") return false;
     const report = (async () => {
@@ -376,12 +405,19 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
     void report.then(sendResponse).catch(() => sendResponse({ ok: false }));
     return true;
   }
+  if (message?.type === "VIGIL_YOUTUBE_EXTERNAL_LINK") {
+    void authorizeExternalYouTubeClick(message.url, sender).then(sendResponse)
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
   if (message?.type === "VIGIL_YOUTUBE") {
     const youtubeRequest = (async () => {
       const source = new URL(sender.url || "about:blank");
       const youtube = /^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(source.hostname);
       const body: Record<string, unknown> = { ...message.youtube, client: `chrome:${sender.tab?.id}:${sender.documentId || ""}` };
-      if (body.action === "external" ? youtube : !youtube) throw new Error("Invalid YouTube request origin.");
+      // Only the dedicated, top-frame external-link handler can grant direct
+      // entry. The page-world playback bridge cannot manufacture that grant.
+      if (body.action === "external" || !youtube) throw new Error("Invalid YouTube request origin.");
       if (body.action === "start" && await youtubeEmbeds.eligible(sender, body.videoId)) {
         const grant = await fetchVigil("/api/extension/youtube", {
           method: "POST", headers: { "Content-Type": "application/json" },
@@ -420,6 +456,29 @@ chrome.runtime.onMessage.addListener((message: ExtensionMessage, sender, sendRes
   }
   return false;
 });
+
+async function checkEmbeddedFrameUrl(url: string | undefined, sender: chrome.runtime.MessageSender): Promise<ExtensionCheckResult> {
+  const tabId = sender.tab?.id;
+  const frameId = sender.frameId;
+  if (tabId === undefined || frameId === undefined || frameId <= 0
+    || !url || !/^https?:\/\//u.test(url)) return { ok: false, skipped: true };
+  const current = async (): Promise<boolean> => {
+    const frame = await chrome.webNavigation.getFrame({ tabId, frameId });
+    return frame !== null && frame.url === url
+      && (!sender.documentId || frame.documentId === sender.documentId);
+  };
+  if (!await current()) return { ok: false, stale: true };
+  // Embedded pages use the full native policy, not only the finite DNR preload.
+  // Do not count a background frame as a top-level open or foreground usage.
+  const response = await fetchVigil("/api/extension/check", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ url, event: "embedded", seconds: 0, extensionVersion: manifest.version })
+  });
+  if (!response.ok) return { ok: false, offline: true };
+  const result = await response.json() as ExtensionCheckResult;
+  if (!await current()) return { ok: false, stale: true };
+  return { ok: result.ok === true, blocked: result.blocked === true || result.paused === true };
+}
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   void chrome.storage.session.remove(`youtube-navigation:${tabId}`).catch(() => {});

@@ -102,7 +102,7 @@ final class VigilSocialTests: XCTestCase {
         let suite = "VigilViewportRegression.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         container.select(.youtube)
         let store = container.store(for: .youtube), page = store.webView(for: .youtube)
         let cachedPages = cachedServices.map { service in
@@ -252,7 +252,7 @@ final class VigilSocialTests: XCTestCase {
 
     @MainActor
     func testSharedLinkReusesSignedInServiceEngine() throws {
-        let container = SocialContainerStore(combined: true, loadInitialPages: false)
+        let container = SocialContainerStore(combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         let instagram = container.store(for: .instagram)
         let page = instagram.webView(for: .instagram)
         let youtube = container.store(for: .youtube)
@@ -324,7 +324,7 @@ final class VigilSocialTests: XCTestCase {
         let suite = "VigilSocial.expanded-container.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         XCTAssertNil(container.selectedService)
         XCTAssertTrue(container.stores.isEmpty, "The picker must not load eight websites in the background")
         for service in SocialService.allCases {
@@ -358,7 +358,7 @@ final class VigilSocialTests: XCTestCase {
 
     @MainActor
     func testCombinedLauncherRejectsRestrictedAndUnrelatedURLs() throws {
-        let container = SocialContainerStore(combined: true, loadInitialPages: false)
+        let container = SocialContainerStore(combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         for address in ["https://example.com/", "https://www.linkedin.com/video/", "https://www.youtube.com/shorts/abcdefghijk"] {
             container.open(try XCTUnwrap(URL(string: address)))
             XCTAssertNil(container.selectedService, address)
@@ -406,6 +406,122 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(redirected)
     }
 
+    func testTikTokLaunchUsesFirstPartyAuthenticationAndKeepsForYouBlocked() {
+        XCTAssertTrue(SocialService.tiktok.usesUnmodifiedAuthenticationDocument(TikTokWebCompatibility.loginURL))
+        XCTAssertFalse(SocialService.tiktok.isRestrictedSurface(TikTokWebCompatibility.loginURL))
+        let redirect = URLComponents(url: TikTokWebCompatibility.loginURL, resolvingAgainstBaseURL: false)?.queryItems?
+            .first { $0.name == "redirect_url" }?.value
+        XCTAssertEqual(redirect, SocialService.tiktok.homeURL.absoluteString)
+        XCTAssertTrue(SocialService.tiktok.isRestrictedSurface(URL(string: "https://www.tiktok.com/foryou")!))
+        XCTAssertTrue(SocialService.tiktok.isRestrictedSurface(URL(string: "https://www.tiktok.com/")!))
+    }
+
+    @MainActor
+    func testXBrowserCompatibilityKeepsSafariHandoffsUnavailable() {
+        let store = SocialWebViewStore(fixedService: .x, loadInitialPages: false)
+        XCTAssertEqual(store.webView(for: .x).configuration.applicationNameForUserAgent,
+                       XWebCompatibility.safariApplicationNameSuffix)
+        XCTAssertFalse(SocialService.x.allowsNavigation(to: URL(string: "x-safari-https://redirect.x.com/messages")!))
+        XCTAssertFalse(SocialService.x.allowsNavigation(to: URL(string: "https://example.com/")!))
+        XCTAssertTrue(SocialService.x.isRestrictedSurface(URL(string: "https://x.com/home")!))
+    }
+
+    func testXMessagingRedirectSupportsExactNewSignInPathAndKeepsFeedsBlocked() throws {
+        let login = try XCTUnwrap(URL(string: "https://x.com/i/jf/onboarding/web?redirect_after_login=%2Fi%2Fchat&mode=login"))
+        XCTAssertTrue(SocialService.x.usesUnmodifiedAuthenticationDocument(login))
+        XCTAssertFalse(SocialService.x.isRestrictedSurface(login))
+        XCTAssertTrue(SocialService.x.focusedRoutePolicy?.isAuthentication(login) == true)
+        XCTAssertFalse(SocialService.x.isRestrictedSurface(URL(string: "https://x.com/i/chat")!))
+        for address in ["https://x.com/", "https://x.com/home", "https://x.com/explore",
+                        "https://x.com/i/jf/onboarding/other", "https://x.com/i/jf/onboarding/web/feed",
+                        "https://x.com/i/videos", "https://x.com/i/immersive"] {
+            XCTAssertTrue(SocialService.x.isRestrictedSurface(URL(string: address)!), address)
+        }
+        for address in ["http://x.com/i/jf/onboarding/web", "https://x.com.evil.example/i/jf/onboarding/web"] {
+            XCTAssertFalse(SocialService.x.usesUnmodifiedAuthenticationDocument(URL(string: address)!), address)
+        }
+    }
+
+    @MainActor
+    func testLaunchHandoffConcealsPickerUntilURLSelectionOrDirectLaunchSettles() throws {
+        let suite = "VigilLaunchHandoff.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
+        XCTAssertTrue(container.isResolvingLaunch)
+        XCTAssertNil(container.selectedService)
+        container.open(URL(string: "vigilsocial://youtube")!)
+        XCTAssertEqual(container.selectedService, .youtube)
+        XCTAssertFalse(container.isResolvingLaunch)
+        container.showHome()
+        container.beginLaunchHandoff()
+        XCTAssertTrue(container.isResolvingLaunch)
+        container.open(URL(string: "vigilsocial://x")!)
+        XCTAssertEqual(container.selectedService, .x)
+        XCTAssertFalse(container.isResolvingLaunch)
+        container.showHome()
+        container.beginLaunchHandoff()
+        container.finishLaunchHandoff()
+        XCTAssertNil(container.selectedService)
+        XCTAssertFalse(container.isResolvingLaunch)
+    }
+
+    @MainActor
+    func testAccessProbeFallsBackToExactDocumentWithoutAcceptingRedirects() async throws {
+        for service in [SocialService.youtube, .x] {
+            let store = SocialWebViewStore(fixedService: service, loadInitialPages: false)
+            let view = store.webView(for: service)
+            let loaded = expectation(description: "Access fallback fixture \(service)")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            view.navigationDelegate = delegate
+            view.loadHTMLString("<html><body>Sign in</body></html>", baseURL: service.homeURL)
+            await fulfillment(of: [loaded], timeout: 5)
+            _ = try await view.callAsyncJavaScript("""
+                globalThis.probeMethods = [];
+                globalThis.fetch = async (url, options) => {
+                    probeMethods.push(options.method);
+                    if (options.method === 'HEAD') throw new Error('HEAD unavailable');
+                    return {status: 200, url};
+                };
+                return true;
+                """, arguments: [:], in: nil, contentWorld: .defaultClient)
+            let allowed = await store.confirmServiceAccess()
+            XCTAssertTrue(allowed, "A failed robots check must not strand a permitted document")
+            let methods = try await view.callAsyncJavaScript("return probeMethods;", arguments: [:], in: nil, contentWorld: .defaultClient)
+            XCTAssertEqual(methods as? [String], ["HEAD", "GET"])
+            _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:200,url:'https://blocked.example/'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+            let redirected = await store.confirmServiceAccess()
+            XCTAssertFalse(redirected)
+            store.accessRestriction = { true }
+            _ = try await view.callAsyncJavaScript("globalThis.fetch = async url => ({status:200,url}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+            let restricted = await store.confirmServiceAccess()
+            XCTAssertFalse(restricted, "The fallback must not override routines or permanent restrictions")
+            withExtendedLifetime(delegate) {}
+        }
+    }
+
+    @MainActor
+    func testNavigationInvalidatesInFlightPolicyProbe() async throws {
+        let store = SocialWebViewStore(fixedService: .x, loadInitialPages: false)
+        let view = store.webView(for: .x)
+        let loaded = expectation(description: "Navigation race fixture")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        view.navigationDelegate = delegate
+        view.loadHTMLString("<html><body>Sign in</body></html>", baseURL: SocialService.x.homeURL)
+        await fulfillment(of: [loaded], timeout: 5)
+        _ = try await view.callAsyncJavaScript("""
+            globalThis.fetch = async url => {
+                history.replaceState(null, '', '/settings');
+                return {status:200,url};
+            };
+            return true;
+            """, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let allowed = await store.confirmServiceAccess()
+        XCTAssertFalse(allowed, "A result for the previous URL must not unlock a new page")
+        XCTAssertTrue(store.serviceAccessIsSettling)
+        withExtendedLifetime(delegate) {}
+    }
+
     @MainActor
     private static var retainedCompanionValidationFixtures: [(UIWindow, WKWebView)] = []
 
@@ -414,10 +530,10 @@ final class VigilSocialTests: XCTestCase {
 
     func testInstagramSharedReelNativeNavigation() throws {
         let source = try XCTUnwrap(URL(string: "https://www.instagram.com/reel/AbC123/"))
-        for path in ["/reel/other/", "/reel/abc123/", "/creator/reel/other/", "/reels/AbC123/", "/p/AbC123/"] {
+        for path in ["/reel/other/", "/reel/abc123/", "/creator/reel/other/", "/reels/Other/", "/reels/", "/p/AbC123/"] {
             XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: source, to: URL(string: "https://www.instagram.com\(path)")!), path)
         }
-        for path in ["/reel/AbC123/?utm_source=share", "/creator/reel/AbC123/", "/direct/t/123/", "/creator/", "/"] {
+        for path in ["/reel/AbC123/?utm_source=share", "/creator/reel/AbC123/", "/reels/AbC123/", "/direct/t/123/", "/creator/", "/"] {
             XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: source, to: URL(string: "https://www.instagram.com\(path)")!), path)
         }
         XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: URL(string: "https://www.instagram.com/direct/t/123/"), to: source))
@@ -425,6 +541,134 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: URL(string: "https://www.instagram.com/reel/Other456/")!))
         XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: URL(string: "https://www.instagram.com/p/Other456/")!))
         XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: sharedPost))
+        let story = URL(string: "https://www.instagram.com/stories/stranger/123/")!
+        XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: story, to: URL(string: "https://www.instagram.com/stories/stranger/456/")!, sharedStory: story))
+        XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: story, to: URL(string: "https://www.instagram.com/stories/stranger/456/")!))
+    }
+
+    @MainActor
+    func testInstagramSentPhotosAndStoriesStayWithinSharedItem() async throws {
+        for kind in ["post", "story", "direct-story"] {
+            let storyURL = URL(string: "https://www.instagram.com/stories/stranger/123/")!
+            let controller = WKUserContentController()
+            controller.addUserScript(WKUserScript(source: DOMAdapters.documentStartScript(
+                for: .instagram, unclassifiedMediaPolicy: .revealUnclassified,
+                audioEnabled: true, contentSafetyEnabled: false,
+                sharedContentURL: kind == "story" ? storyURL : nil),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .instagram),
+                injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = controller
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+            let loaded = expectation(description: "Sent \(kind) fixture")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            webView.navigationDelegate = delegate
+            let post = kind == "post"
+            let initialURL = post ? URL(string: "https://www.instagram.com/p/Dump123/")!
+                : kind == "story" ? storyURL : URL(string: "https://www.instagram.com/direct/t/123/")!
+            let body = post ? #"""
+                <main id="stack"><article id="item" data-vigil-instagram-home-relationship="other">
+                  <a href="/p/Dump123/">Sent post</a><div id="carousel">
+                    <img id="media" src="https://www.instagram.com/one.jpg"><video src="https://www.instagram.com/clip.mp4"></video><img src="https://www.instagram.com/two.jpg">
+                  </div><button id="next" aria-label="Next photo" onclick="window.advances++">Next photo</button>
+                </article><article><a href="/p/Other/">Other</a><img id="other" src="https://www.instagram.com/other.jpg"></article></main>
+                """# : #"""
+                <div id="item" role="dialog"><a href="/stranger/"><img alt="stranger's profile picture" style="width:30px;height:30px" src="https://www.instagram.com/avatar.jpg"></a>
+                <img id="media" src="https://www.instagram.com/story.jpg">
+                <button id="next" aria-label="Next story" onclick="window.advances++">Next</button></div>
+                """#
+            let encodedBody = String(data: try JSONEncoder().encode(body), encoding: .utf8)!
+            webView.loadHTMLString("""
+                <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+                body{margin:0}article{width:390px;height:700px}img,video{display:block;width:390px;height:600px}
+                #stack{height:700px;overflow-y:scroll}#carousel{display:flex;width:390px;overflow-x:auto}#carousel :is(img,video){flex:none}
+                </style><script>
+                window.advances=0;
+                window.fetch=async()=>({ok:true,json:async()=>({user:{username:'viewer',friendship_status:{following:false,followed_by:false}}})});
+                </script></head><body>\(kind == "direct-story" ? "<a id='share' href='/stories/stranger/123/'>Sent story</a>" : body)
+                <script>if(document.getElementById('share'))document.getElementById('share').onclick=event=>{
+                    event.preventDefault();history.pushState({},'','/stories/stranger/123/');
+                    document.body.insertAdjacentHTML('beforeend',\(encodedBody));document.getElementById('share').remove();};</script>
+                </body></html>
+                """, baseURL: initialURL)
+            await fulfillment(of: [loaded], timeout: 5)
+            if kind == "direct-story" { _ = try await webView.evaluateJavaScript("document.getElementById('share').click()") }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let state = try await webView.evaluateJavaScript(#"""
+                (()=>{
+                  const media=document.getElementById('media');
+                  const swipe=(x,y)=>{media.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'touch',clientX:100,clientY:300}));
+                    const move=new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerType:'touch',clientX:x,clientY:y});
+                    media.dispatchEvent(move);media.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerType:'touch'}));return move.defaultPrevented;};
+                  document.getElementById('next').click();
+                  const isPost=location.pathname.startsWith('/p/');
+                  const path=location.pathname;
+                  history.pushState({},'',isPost?'/p/Other/':'/stories/stranger/456/');
+                  const result={visible:getComputedStyle(media).visibility==='visible'&&getComputedStyle(document.getElementById('item')).display!=='none',
+                    vertical:swipe(100,100),horizontal:swipe(300,300),advances:window.advances,
+                    contained:location.pathname===path,storyGate:document.documentElement.dataset.vigilInstagramStoryGate||'',
+                    otherHidden:!isPost||getComputedStyle(document.getElementById('other')).visibility==='hidden'};
+                  if(!isPost){media.src='https://www.instagram.com/another-story.jpg';media.dispatchEvent(new Event('load'));
+                    result.replacementHidden=getComputedStyle(media).visibility==='hidden';}
+                  else result.replacementHidden=true;
+                  return result;
+                })()
+                """#) as? [String: Any]
+            for key in ["visible", "vertical", "contained", "otherHidden", "replacementHidden"] {
+                XCTAssertEqual(state?[key] as? Bool, true, "\(kind): \(key)")
+            }
+            XCTAssertEqual(state?["horizontal"] as? Bool, !post, kind)
+            XCTAssertEqual(state?["advances"] as? Int, post ? 1 : 0, kind)
+            XCTAssertEqual(state?["storyGate"] as? String, "", kind)
+            webView.navigationDelegate = nil
+        }
+    }
+
+    @MainActor
+    func testInstagramSharedViewerAliasesAndAnonymousPortals() async throws {
+        for path in ["/reels/Sent123/", "/direct/t/123/"] {
+            let controller = WKUserContentController()
+            controller.addUserScript(WKUserScript(source: DOMAdapters.documentStartScript(
+                for: .instagram, unclassifiedMediaPolicy: .revealUnclassified,
+                audioEnabled: true, contentSafetyEnabled: false), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .instagram),
+                injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = controller
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+            let loaded = expectation(description: "Anonymous viewer \(path)")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            webView.navigationDelegate = delegate
+            webView.loadHTMLString(#"""
+                <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+                body{margin:0}#portal{position:fixed;inset:0;overflow-y:auto}.card{height:700px}
+                video,#other{display:block;width:390px;height:600px}
+                </style></head><body><main id="portal">
+                <div class="card"><a href="/reel/Sent123/">Sent</a><video id="media" src="https://www.instagram.com/sent.mp4"></video></div>
+                <div class="card"><img id="other" src="https://www.instagram.com/recommendation.jpg"></div>
+                <button id="next"><svg aria-label="Next reel"></svg></button></main></body></html>
+                """#, baseURL: URL(string: "https://www.instagram.com\(path)")!)
+            await fulfillment(of: [loaded], timeout: 5)
+            try await Task.sleep(nanoseconds: 100_000_000)
+            let state = try await webView.evaluateJavaScript(#"""
+                (()=>{
+                  const media=document.getElementById('media');
+                  const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});media.dispatchEvent(wheel);
+                  const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.querySelector('#next svg').dispatchEvent(next);
+                  const direct=location.pathname.startsWith('/direct/');
+                  if(!direct)history.replaceState({},'','/reel/Sent123/?share=1');
+                  const path=location.pathname;history.pushState({},'','/reels/Other/');history.pushState({},'','/reels/');
+                  return {visible:getComputedStyle(media).visibility==='visible',other:getComputedStyle(document.getElementById('other')).visibility==='hidden',
+                    wheel:wheel.defaultPrevented,next:next.defaultPrevented,contained:location.pathname===path,
+                    gate:document.documentElement.dataset.vigilRoutePolicyBlocked||'',path};
+                })()
+                """#) as? [String: Any]
+            for key in ["visible", "other", "wheel", "next", "contained"] { XCTAssertEqual(state?[key] as? Bool, true, "\(path): \(key)") }
+            XCTAssertEqual(state?["gate"] as? String, "", path)
+            XCTAssertEqual(state?["path"] as? String, path.hasPrefix("/direct") ? path : "/reel/Sent123/")
+            webView.navigationDelegate = nil
+        }
     }
 
     @MainActor
@@ -1060,6 +1304,97 @@ final class VigilSocialTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testSnapchatSnapViewerAndReplyCameraUsePhoneFrame() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: #"""
+            Object.defineProperty(navigator, 'mediaDevices', { value: {
+              getSupportedConstraints: () => ({ resizeMode: true }),
+              getUserMedia: async constraints => {
+                window.fixtureCameraRequest = constraints;
+                return { getVideoTracks: () => [] };
+              }
+            }});
+            """#, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatCameraInstalled && document.querySelector('[data-vigil-snap-layout=feed]') !== null", in: webView)
+        for width in [320, 390, 430] {
+            webView.frame.size = CGSize(width: width, height: 780)
+            try await waitForJavaScriptCondition("innerWidth === \(width)", in: webView)
+            for split in ["rows", "columns"] {
+                _ = try await webView.evaluateJavaScript("fixtureOpenSnap('\(split)')")
+                try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=viewer]') !== null", in: webView)
+                let viewer = try await webView.callAsyncJavaScript("""
+                    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                    const player = document.querySelector('.b2f4R').getBoundingClientRect();
+                    const reply = document.getElementById('fixture-reply-snap');
+                    const r = reply.getBoundingClientRect();
+                    const target = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
+                    return [player.width >= innerWidth-1, player.height >= 700,
+                      getComputedStyle(document.querySelector('.ChLAv')).visibility === 'hidden',
+                      reply.contains(target), document.documentElement.scrollWidth <= innerWidth];
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+                XCTAssertEqual(viewer, Array(repeating: true, count: 5), "\(width)px, \(split)")
+            }
+        }
+        let privacy = try await webView.evaluateJavaScript("""
+            (() => {
+              document.querySelector('.ecBYF').classList.add('ATeie');
+              const shield = document.querySelector('.ecBYF > .ejVI4');
+              shield.style.display = 'grid';
+              const image = document.getElementById('fixture-snap-image');
+              const r = image.getBoundingClientRect();
+              const result = [getComputedStyle(image).filter.includes('blur'),
+                document.elementFromPoint(r.left+r.width/2,r.top+r.height/2) === shield];
+              shield.style.display = 'none';
+              document.querySelector('.ecBYF').classList.remove('ATeie');
+              document.querySelector('.ecBYF > .eNF_J').style.display = 'grid';
+              result.push(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2).classList.contains('eNF_J'));
+              document.querySelector('.ecBYF > .eNF_J').style.display = 'none';
+              return result;
+            })()
+            """) as? [Bool]
+        XCTAssertEqual(privacy, [true, true, true])
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-reply-snap').click()")
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=camera]') !== null", in: webView)
+        for height in [780, 420] {
+            webView.frame.size.height = CGFloat(height)
+            try await waitForJavaScriptCondition("innerHeight === \(height)", in: webView)
+            let camera = try await webView.callAsyncJavaScript("""
+                await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                await navigator.mediaDevices.getUserMedia({ audio:false, video: {
+                  width:{ideal:406}, height:{ideal:720}, aspectRatio:{exact:9/16}, deviceId:{exact:'selected-camera'}
+                }});
+                const box = document.querySelector('.AEZEl').getBoundingClientRect();
+                const video = document.getElementById('local-video');
+                const close = document.getElementById('fixture-close-camera');
+                const r = close.getBoundingClientRect();
+                return [Math.abs(box.width-innerWidth)<1 && Math.abs(box.height-innerHeight)<1,
+                  getComputedStyle(video).objectFit === 'contain',
+                  !fixtureCameraRequest.video.aspectRatio && fixtureCameraRequest.audio === false,
+                  fixtureCameraRequest.video.deviceId.exact === 'selected-camera',
+                  close.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))];
+                """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+            XCTAssertEqual(camera, Array(repeating: true, count: 5), "\(height)px")
+        }
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-close-camera').click()")
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=viewer]') !== null", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-close-snap').click()")
+        try await waitForJavaScriptCondition("!document.querySelector('[data-vigil-snap-media]') && getComputedStyle(document.querySelector('.ChLAv')).visibility === 'visible'", in: webView)
+    }
+
     private static let snapchatMobileShellFixture = #"""
     <!doctype html><html theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
@@ -1075,10 +1410,14 @@ final class VigilSocialTests: XCTestCase {
     /* Current client b00815e2 message actions: the menu wrapper and quoted preview
        have no background; only the small desktop action groups paint a surface. */
     .NvRM8{position:relative}.MOJCa{position:absolute;inset:0;z-index:1;width:100%;height:100%;background:transparent}.MOJCa .IxaB_{position:absolute;display:flex;flex-direction:column;gap:8px}.MOJCa :is(.DPxkw,.c6OV2){background:var(--sigMain);border-radius:10px;box-shadow:0 0 8px #0002}.DPxkw ul{display:flex;gap:2px;margin:3px;padding:0;list-style:none}.DPxkw button{padding:0;width:28px;height:32px}.lF7xe{display:flex;align-items:center;gap:10px;padding:12px;color:var(--sigTextSecondary);cursor:pointer}.Hts9j{border-bottom:.5px solid var(--sigDivider)}.oqVsN{margin:14px;padding:12px;border:1px solid var(--sigDivider);border-radius:10px;position:relative}.ZvWBE{position:absolute;top:-6px;right:-6px;min-width:22px;min-height:22px;padding:0;background:var(--sigMain)}.gFryU{height:36px;display:flex;background:var(--sigMain);border-radius:30px;padding:0 8px;gap:3px}.gPAXk{height:36px}.NcaQH{height:36px;border:0;background:none;padding:2px;display:flex;align-items:center}
+    /* Media shell observed in client a4b70008: the secondary grid track and
+       desktop lightbox gutters are deliberately retained to reproduce the bug. */
+    .S4e9r{position:relative;z-index:98;border-top:12px solid var(--sigMain);background:var(--sigMain)}.Mn1n9{grid-area:secondary}.ecBYF{box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;position:absolute;inset:0;gap:12px;align-items:stretch}.RdKti{display:flex;justify-content:center;min-height:0;height:100%;width:auto}.vDdE2{position:relative;display:flex;justify-content:center;align-items:center;margin:0 40px;padding:20px 0 40px;max-height:100%;min-width:0;overflow:hidden}.b2f4R{width:100%;height:100%;min-width:0}.b2f4R img{width:100%;height:100%;object-fit:contain}.QQxLo{height:100%;display:flex;width:36px;align-items:center;flex-shrink:0}.Z8KwB{margin-inline-start:2vh}.fOsry{margin-inline-end:2vh}.hRnph{background:#3338;color:#fff;border-radius:50%;width:36px;height:36px}.ATeie img,.ATeie video{filter:blur(10px)}.ecBYF>.ejVI4,.ecBYF>.eNF_J{position:absolute;inset:0;z-index:10;background:#888;display:grid;place-items:center}.fixture-snap-toolbar{display:flex;justify-content:space-between;color:#fff;background:#222;flex-shrink:0;height:48px}.fixture-snap-toolbar button{min-width:60px}
+    .fixture-camera-backdrop{position:fixed;inset:0;z-index:210;display:flex;align-items:center;justify-content:center;background:#0008}.AEZEl{height:90%;display:flex;align-items:center;justify-content:center;padding:0;aspect-ratio:9/16}.acEGc{height:100%;max-width:100%;display:flex;align-items:center;justify-content:center;aspect-ratio:9/16}.aTkGG{width:100%;aspect-ratio:9/16}.VZx_k{display:flex;align-items:center;justify-content:center;width:100%;height:100%}.BN1L1{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000;border-radius:15px}.Nuu9e{display:flex;position:relative;width:100%;height:100%;aspect-ratio:9/16}.CYQZP{position:relative;width:100%;height:100%}.lnAeT{width:100%;height:100%;object-fit:cover}.MQv99{position:absolute;top:0;width:100%;z-index:1;display:flex;justify-content:space-between}.MQv99 button,.ph8Kn button{min-width:48px;min-height:48px;color:white;background:#2229}.ph8Kn{position:absolute;bottom:0;width:100%;height:90px;display:flex;justify-content:center;align-items:center;gap:12px}
     </style></head><body>
     <div class="Fpg8t" id="shell"><aside class="BL7do">
     <header class="XlW_1"><div class="AbUJt"><button aria-label="Profile" onclick="window.profileOpened=true" style="background:#fffc00;width:40px;height:40px;color:#16191c">☺</button></div><div class="JM4Qm">Snapchat</div><div class="toJ1p"><div class="KcY9t"><button title="View friend requests" onclick="toggleFriends()">♧</button></div><div class="LsbRg"><button title="New Chat" onclick="openNewChat()">✎</button></div></div></header>
-    <div class="yC1EG"><input role="searchbox" placeholder="Search" aria-label="Search"></div>
+    <div class="yC1EG"><input role="searchbox" data-testid="app.feed.Search" placeholder="Search" aria-label="Search"></div>
     <nav aria-label="Chat feed"><div role="list" id="friends"></div></nav>
     <button aria-label="Spotlight" id="restricted">Spotlight</button><a href="/discover/test" id="discover">Discover</a>
     </aside><main class="Vbjsg"><div class="_XMCw"><div class="ChLAv" id="conversation"><div class="landing">Snapchat for Web</div></div></div></main></div><div id="portal-container"></div>
@@ -1106,11 +1445,103 @@ final class VigilSocialTests: XCTestCase {
       document.querySelector('.sT7ta').prepend(preview);
       document.querySelector('[contenteditable]').focus();
     }
+    function fixtureMediaImage(width,height){return 'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><rect width="100%" height="100%" fill="#84b4d4"/><rect x="0" y="0" width="12%" height="100%" fill="#f4b942"/><rect x="88%" y="0" width="12%" height="100%" fill="#df635d"/><circle cx="50%" cy="42%" r="18%" fill="#d5e6ef"/><text x="50%" y="75%" text-anchor="middle" font-family="sans-serif" font-size="${width/22}">COMPLETE FRAME</text></svg>`)}
+    function fixtureOpenSnap(split='rows',width=900,height=1600){
+      if(!document.querySelector('.aXEpU'))openChat('Alex');
+      fixtureCloseSnap();
+      const grid=document.querySelector('._XMCw');
+      grid.style.cssText=split==='rows'?'grid-template-areas:"secondary" "main";grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px':'grid-template-areas:"main secondary";grid-template-columns:minmax(0,500px) minmax(60%,1fr);grid-template-rows:minmax(0,1fr);gap:8px';
+      document.querySelector('.ChLAv').style.gridArea='main';
+      grid.insertAdjacentHTML('beforeend',`<div class="S4e9r Mn1n9"><div class="ecBYF"><div class="fixture-snap-toolbar"><button id="fixture-close-snap" onclick="fixtureCloseSnap()">Back</button><span>Alex</span><button id="fixture-reply-snap" onclick="fixtureOpenReplyCamera()">Reply</button></div><div class="RdKti" aria-label="media content"><div class="QQxLo Z8KwB"><button class="hRnph" aria-label="previous" onclick="window.fixturePrevious=true">❮</button></div><div class="vDdE2 hJysT" style="aspect-ratio:${width}/${height}"><div class="b2f4R"><img id="fixture-snap-image" alt="Fictional snap" src="${fixtureMediaImage(width,height)}"></div></div><div class="QQxLo fOsry"><button class="hRnph" aria-label="next" onclick="window.fixtureNext=true">❯</button></div></div><div class="ejVI4" style="display:none">Click to view media</div><div class="eNF_J" style="display:none">Screenshot privacy screen</div></div></div>`);
+    }
+    function fixtureCloseSnap(){document.querySelector('._XMCw > .S4e9r')?.remove();document.querySelector('._XMCw').style.cssText='';document.querySelector('.ChLAv').style.gridArea='1/1'}
+    function fixtureOpenReplyCamera(){
+      fixtureCloseCamera();
+      const backdrop=document.createElement('div');backdrop.className='fixture-camera-backdrop';
+      backdrop.innerHTML=`<div class="AEZEl xmrlf"><div class="acEGc" style="aspect-ratio:9/16"><div class="aTkGG" style="aspect-ratio:9/16"><div class="VZx_k"><div class="BN1L1"><div class="Nuu9e"><div class="MQv99"><button id="fixture-close-camera" onclick="fixtureCloseCamera()">Back</button><button id="fixture-switch-camera" onclick="window.fixtureCameraSwitched=true">Flip</button></div><div class="CYQZP"><video id="local-video" class="lnAeT" muted autoplay playsinline poster="${fixtureMediaImage(1200,900)}"></video></div><div class="ph8Kn"><button id="fixture-capture" onclick="fixtureCaptureReply()">Capture</button><button id="fixture-send-camera" onclick="window.fixtureCameraSent=true">Send</button></div></div></div></div></div></div></div>`;
+      document.getElementById('portal-container').appendChild(backdrop);
+    }
+    function fixtureCloseCamera(){document.querySelector('.fixture-camera-backdrop')?.remove()}
+    function fixtureCaptureReply(){const video=document.getElementById('local-video'),canvas=document.createElement('canvas');canvas.width=video.videoWidth;canvas.height=video.videoHeight;canvas.getContext('2d').drawImage(video,0,0);window.fixtureCapturedDimensions=[canvas.width,canvas.height];window.fixtureCapturedPixels=[...canvas.getContext('2d').getImageData(0,0,1,1).data,...canvas.getContext('2d').getImageData(canvas.width-1,0,1,1).data]}
     // Synthetic DOM gesture dispatch checks the adapter state machine only; it does
     // not claim to simulate WKWebView's physical scrolling or OS back gesture.
     function fixtureSwipe(selector,points,options={}){const target=document.querySelector(selector);const fire=(type,point,count)=>{const touches=Array.from({length:count},(_,i)=>({identifier:i,target,clientX:point[0]+i,clientY:point[1],pageX:point[0]+i,pageY:point[1]}));const event=new Event(type,{bubbles:true,cancelable:true});Object.defineProperties(event,{touches:{value:type==='touchend'?[]:touches},changedTouches:{value:touches}});target.dispatchEvent(event)};fire('touchstart',points[0],options.startCount||1);for(const point of points.slice(1))fire('touchmove',point,options.moveCount||1);fire(options.cancel?'touchcancel':'touchend',points.at(-1),1)}
     </script></body></html>
     """#
+
+    @MainActor
+    func testInstagramReadSurfacesRecoverRealFocusWithoutResettingSession() async throws {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false,
+                                      websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .instagram)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let controller = UIViewController()
+        window.rootViewController = controller
+        webView.frame = window.bounds
+        controller.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        // Fictional local state, with no Instagram account or read-ack requests.
+        // Recover native document focus; leave all unread decisions to the site.
+        webView.loadHTMLString("""
+            <html><body><main>
+              <h1>Messages</h1><div id="unread">2 new messages</div>
+              <textarea id="draft">Unsent reply</textarea>
+            </main><script>
+              window.fixtureFocusEvents = 0;
+              window.addEventListener('focus', () => fixtureFocusEvents++);
+              window.fixtureReady = true;
+            </script></body></html>
+            """, baseURL: URL(string: "https://www.instagram.com/direct/inbox/")!)
+        try await waitForJavaScriptCondition("window.fixtureReady === true && document.readyState === 'complete'", in: webView)
+        _ = try await webView.callAsyncJavaScript(
+            "globalThis.fetch = async url => ({status:200,url}); return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+
+        let otherResponder = UITextField(frame: CGRect(x: 0, y: 0, width: 100, height: 40))
+        controller.view.addSubview(otherResponder)
+        for path in ["/direct/inbox/", "/direct/t/123/", "/accounts/activity/"] {
+            _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '\(path)')")
+            XCTAssertTrue(otherResponder.becomeFirstResponder())
+            try await waitForJavaScriptCondition("!document.hasFocus()", in: webView)
+            let allowed = await store.confirmServiceAccess()
+            XCTAssertTrue(allowed)
+            // Hidden, backgrounded and restricted companions cannot take focus.
+            await store.handleSceneActivity(true, isServiceVisible: false)
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder)
+            await store.handleSceneActivity(false, isServiceVisible: true)
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder)
+            store.accessRestriction = { true }
+            await store.handleSceneActivity(true, isServiceVisible: true)
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder)
+            store.accessRestriction = nil
+            store.requestFreshServiceAccessReceipt()
+            await store.prepareForegroundInteraction()
+            XCTAssertTrue(otherResponder.isFirstResponder, "An unverified session must not take focus")
+
+            let reconfirmed = await store.confirmServiceAccess()
+            XCTAssertTrue(reconfirmed)
+            store.suspendAllMedia(relinquishExternalPlayback: false)
+            await store.prepareForegroundInteraction()
+            let focused = try await webView.evaluateJavaScript("document.hasFocus()") as? Bool
+            XCTAssertEqual(focused, true, "Instagram's visible \(path) needs real WebKit focus before interaction")
+            let unchanged = try await webView.evaluateJavaScript("""
+                document.getElementById('unread').textContent === '2 new messages'
+                  && document.getElementById('draft').value === 'Unsent reply'
+                """) as? Bool
+            XCTAssertEqual(unchanged, true, "Focus recovery must preserve unread state and unsent replies")
+            let events = try await webView.evaluateJavaScript("fixtureFocusEvents") as? Int
+            await store.prepareForegroundInteraction()
+            let repeatedEvents = try await webView.evaluateJavaScript("fixtureFocusEvents") as? Int
+            XCTAssertEqual(repeatedEvents, events, "Periodic access checks must not keep refocusing the page")
+        }
+        withExtendedLifetime(store) {}
+    }
 
     @MainActor
     func testSnapchatGroupChatRecoversRealFocusWithoutRemovingPrivacyScreen() async throws {
@@ -1456,14 +1887,14 @@ final class VigilSocialTests: XCTestCase {
 
     @MainActor
     func testSnapchatSessionStoreSurvivesWebViewRecreationAndStaysIsolated() async throws {
-        let first = SocialContainerStore(combined: true, loadInitialPages: false)
+        let first = SocialContainerStore(combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         let firstView = first.store(for: .snapchat).webView(for: .snapchat)
         let cookie = try XCTUnwrap(HTTPCookie(properties: [
             .domain: "accounts.snapchat.com", .path: "/", .name: "vigil-regression-session",
             .value: "fixture-only", .secure: "TRUE", .expires: Date().addingTimeInterval(3600)
         ]))
         await firstView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
-        let second = SocialContainerStore(combined: true, loadInitialPages: false)
+        let second = SocialContainerStore(combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         let snapStore = second.store(for: .snapchat).webView(for: .snapchat).configuration.websiteDataStore
         let cookies = await snapStore.httpCookieStore.allCookies()
         XCTAssertTrue(cookies.contains { $0.name == cookie.name && $0.value == cookie.value })
@@ -3154,6 +3585,94 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testYouTubeLateMediaVerdictClearsBlankWatchOverlay() async throws {
+        let suite = #function
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SocialWebViewStore(defaults: defaults, fixedService: .youtube, loadInitialPages: false,
+                                       unclassifiedMediaPolicy: .conceal)
+        let webView = store.webView(for: .youtube)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer { webView.navigationDelegate = nil; webView.stopLoading(); window.isHidden = true }
+        webView.loadHTMLString("""
+            <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <style>video:not([data-vigil-media-verdict="safe"]) { visibility:hidden!important }</style></head>
+            <body><video id="fixture-video" style="width:360px;height:220px"></video></body></html>
+            """, baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=fixture")))
+        for _ in 0..<180 {
+            if case .degraded = store.health[.youtube] { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        guard case .degraded = store.health[.youtube] else {
+            return XCTFail("A player still concealed by its pending verdict must not count as a usable watch surface")
+        }
+        // Reveal after the adapter's one-time seven-second health check too;
+        // that timer must not accidentally make this regression pass.
+        try await Task.sleep(for: .milliseconds(1_300))
+        // A native verdict changes owned attributes, without changing YouTube's
+        // class/style or inserting a new node into its existing player.
+        _ = try await webView.evaluateJavaScript(
+            "document.getElementById('fixture-video').dataset.vigilMediaVerdict = 'safe'"
+        )
+        for _ in 0..<60 where store.health[.youtube] != .ready {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(store.health[.youtube], .ready,
+                       "The blocking recovery overlay must clear when the checked player becomes visible")
+    }
+
+    @MainActor
+    func testYouTubeSuggestedRestrictionPreservesWatchDetailsAndControls() async throws {
+        let suite = #function
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SocialWebViewStore(defaults: defaults, fixedService: .youtube, loadInitialPages: false)
+        let webView = store.webView(for: .youtube)
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer { webView.navigationDelegate = nil; webView.stopLoading(); window.isHidden = true }
+        webView.loadHTMLString("""
+            <html><body><ytm-watch style="display:block;width:390px;height:700px">
+              <ytm-single-column-watch-next-results-renderer style="display:block">
+                <h1 id="fixture-title">Fixture saved video</h1>
+                <button id="fixture-save">Save to Watch Later</button>
+                <ytm-video-with-context-renderer id="fixture-suggested" style="display:block;height:120px">
+                  Suggested video
+                </ytm-video-with-context-renderer>
+                <yt-lockup-view-model id="fixture-lockup" style="display:block;height:120px">Suggested video</yt-lockup-view-model>
+                <ytm-compact-video-renderer id="fixture-compact" style="display:block;height:120px">Suggested video</ytm-compact-video-renderer>
+              </ytm-single-column-watch-next-results-renderer>
+            </ytm-watch></body></html>
+            """, baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=fixture")))
+        try await waitForJavaScriptCondition("window.__vigilYouTubeInstalled === true", in: webView)
+        for state in ["pending", "blocked"] {
+            let result = try await webView.evaluateJavaScript("""
+                document.documentElement.dataset.vigilYoutubeWatch = 'true';
+                document.documentElement.dataset.vigilFeatureSuggested = '\(state)';
+                document.documentElement.dataset.vigilPageVerdict = 'safe';
+                ({ title: document.getElementById('fixture-title').getClientRects().length > 0,
+                   save: document.getElementById('fixture-save').getClientRects().length > 0,
+                   suggested: document.getElementById('fixture-suggested').getClientRects().length > 0,
+                   lockup: document.getElementById('fixture-lockup').getClientRects().length > 0,
+                   compact: document.getElementById('fixture-compact').getClientRects().length > 0 });
+                """) as? [String: Bool]
+            XCTAssertEqual(result?["title"], true)
+            XCTAssertEqual(result?["save"], true)
+            XCTAssertEqual(result?["suggested"], false, "Suggested videos must stay hidden in both policy states")
+            XCTAssertEqual(result?["lockup"], false)
+            XCTAssertEqual(result?["compact"], false)
+        }
+    }
+
+    @MainActor
     func testYouTubeSlowStartupDoesNotFlashADegradedOverlayBeforeContentArrives() async throws {
         let suite = #function
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -3190,6 +3709,7 @@ final class VigilSocialTests: XCTestCase {
             baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/"))
         )
 
+        try await waitForJavaScriptCondition("document.getElementById('hidden-ancestor') != null && window.__vigilYouTubeInstalled === true", in: webView)
         try await Task.sleep(nanoseconds: 1_200_000_000)
         XCTAssertEqual(
             store.health[.youtube],
@@ -7701,6 +8221,13 @@ final class VigilSocialTests: XCTestCase {
               document.querySelector('#modal video').dispatchEvent(wheel);return wheel.defaultPrevented; })()
             """#) as? Bool
         XCTAssertEqual(anonymous, true, "A button-only Direct preview must have the same single-item guard")
+        _ = try await webView.evaluateJavaScript("document.getElementById('modal').hidden=true")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let hiddenModalReset = try await webView.evaluateJavaScript(#"""
+            (()=>{const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+            document.body.dispatchEvent(wheel);return !wheel.defaultPrevented&&!document.documentElement.hasAttribute('data-vigil-single-reel');})()
+            """#) as? Bool
+        XCTAssertEqual(hiddenModalReset, true, "A retained hidden modal must release message scrolling")
         webView.navigationDelegate = nil
     }
 

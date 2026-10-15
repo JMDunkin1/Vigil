@@ -777,7 +777,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   assert.match(page, /data-vigil-block-page="1"/);
   assert.match(page, /<title>Blocked · Vigil<\/title>/);
   assert.doesNotMatch(page, /document\.referrer/);
-  assert.doesNotMatch(page, /history\.go/);
+  assert.match(page, /history\.go\(-steps\)/, "Back retries must use the bounded blocked-entry traversal");
   assert.match(page, /color-scheme: dark/);
   assert.match(page, /class="block-reference"/);
   assert.doesNotMatch(page, /--paper: #eee8dc/);
@@ -832,7 +832,7 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   });
   assert.match(blockedBackPage, /href="about:blank"/);
   assert.match(blockedBackPage, /const escapeTarget = "about:blank"/);
-  assert.match(blockedBackPage, /location\.replace\(escapeTarget\)/);
+  assert.match(blockedBackPage, /blockedPageBack\(escapeTarget\)/, "unverified return URLs must use the shared guarded Back handler");
   assert.doesNotMatch(blockedBackPage, /www\.youtube\.com\/shorts\/again/);
 
   for (const localAlias of [

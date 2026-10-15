@@ -23,15 +23,14 @@ function leaveInThisTab(): void {
   if (leaving) return;
   leaving = true;
   let settled = false;
-  const finish = (result?: { handled?: boolean; ok?: boolean; url?: string }) => {
+  const finish = (result?: { handled?: boolean; ok?: boolean; url?: string; exhausted?: boolean }) => {
     if (settled) return;
     settled = true;
     clearTimeout(fallback);
-    leaving = false;
-    if (result?.handled) return;
-    if (result?.ok && result.url && result.url !== "about:blank") location.replace(result.url);
+    if (result?.handled) { leaving = false; return; }
+    if (result?.ok && result.url && result.url !== "about:blank") blockedPageBack(result.url);
     else if (document.body.hasAttribute("data-vigil-quiet-return")) location.replace("about:blank");
-    else blockedPageBack();
+    else { leaving = false; blockedPageBack("", result?.exhausted); }
   };
   const fallback = setTimeout(finish, 4000);
   try {
@@ -40,6 +39,7 @@ function leaveInThisTab(): void {
   } catch { finish(); }
 }
 let leaving = false;
+addEventListener("pageshow", () => { leaving = false; });
 document.querySelector("#leaveBlockedPage")?.addEventListener("click", event => {
   event.preventDefault(); event.stopImmediatePropagation(); leaveInThisTab();
 }, true);

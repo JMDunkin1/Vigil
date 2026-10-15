@@ -148,8 +148,7 @@ export function blockedPage(input: PageInput): string {
     if (leaveBlockedPage) {
       leaveBlockedPage.addEventListener("click", (event) => {
         event.preventDefault();
-        if (escapeTarget !== "about:blank") location.replace(escapeTarget);
-        else blockedPageBack();
+        blockedPageBack(escapeTarget);
       });
     }
   </script>

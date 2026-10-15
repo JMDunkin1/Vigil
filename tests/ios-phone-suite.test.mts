@@ -67,7 +67,7 @@ assert.equal(parseArguments(["update", "--allow-edition-downgrade"]).options.all
 assert.equal(parseArguments(["develop"]).command, "develop");
 assert.match(
   phoneSuiteSource,
-  /selectedCommand === "develop"[\s\S]*?updatePhone\(\{ \.\.\.selectedOptions, app: "instagram", edition, noPolicy: false \}\)/u,
+  /selectedCommand === "develop"[\s\S]*?withPhoneUpdateLock\(ROOT, \(\) => updatePhone\(\{ \.\.\.selectedOptions, app: "instagram", edition, noPolicy: false \}\)\)/u,
   "YouTube development updates must keep the native app and its exact supervised auth allowlist in one transaction"
 );
 assert.match(

@@ -18,6 +18,25 @@ function nativeFixture(initialCache: unknown = null, selected: unknown[] = []) {
   return { api, cache };
 }
 
+test('incoming watch documents are preserved when YouTube has not updated the feed URL yet', () => {
+  for (const kind of ['singleColumnWatchNextResultsRenderer', 'twoColumnWatchNextResults', 'twoColumnWatchNextResultsRenderer']) {
+    const { api, cache } = nativeFixture();
+    api.nativeFeedData({ richGridRenderer: { contents: ids.slice(0, 20).map(renderer) } });
+    const before = cache.get('vigil-native-feed:home');
+    const watch = {
+      contents: { [kind]: { results: { itemSectionRenderer: { contents: [
+        { videoPrimaryInfoRenderer: { title: 'Saved watch video' } },
+        { videoSecondaryInfoRenderer: { buttons: ['Play', 'Save'] } },
+        renderer(ids[24], 24)
+      ] } } } }
+    };
+    const expected = JSON.stringify(watch);
+    assert.equal(api.nativeFeedData(watch), watch);
+    assert.equal(JSON.stringify(watch), expected, 'watch details and player controls must not become cached feed cards');
+    assert.equal(cache.get('vigil-native-feed:home'), before, 'watch payloads cannot change the daily feed cache');
+  }
+});
+
 test('a full protected feed cannot be replaced by a fresh UI cache that shares only two IDs', () => {
   const selected = ids.slice(0, 20).map((videoId, i) => ({ videoId, title: `Full video title ${i}` }));
   const freshIDs = [ids[0], ids[1], ...Array.from({ length: 18 }, (_, i) => `fresh${String(i).padStart(6, '0')}`)];

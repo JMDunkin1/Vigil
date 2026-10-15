@@ -29,11 +29,13 @@ assert.match(backgroundSource, /chrome\.alarms/);
 assert.match(backgroundSource, /normalizedRuleUntil/);
 assert.match(backgroundSource, /PERSISTENT_RULE_UNTIL/);
 assert.match(backgroundSource, /vigilPulseFlags/);
-const backgroundSiteRuleLimit = 300;
+const backgroundSiteRuleLimit = 1_000;
 const backgroundContentRuleLimit = 200;
-assert.match(backgroundSource, /const SITE_BLOCK_RULE_LIMIT = 300;/u);
+assert.match(backgroundSource, /const SITE_BLOCK_RULE_LIMIT = 1_000;/u);
 assert.match(backgroundSource, /const CONTENT_BLOCK_RULE_LIMIT = 200;/u);
-assert.equal(staticRules.length, 6);
+const explicitSearchRules = staticRules.filter(rule => rule.id === 4 || Number(rule.id) >= 7);
+assert.ok(explicitSearchRules.length > 1, "explicit searches must use separate expressions within Chromium's per-regex memory limit");
+assert.ok(staticRules.length < 1000, "static regex partitions must stay within Chromium's regex-rule quota");
 assert.match(staticRulesText, /"safe"\s*,\s*"value": "active"/u);
 assert.match(staticRulesText, /"adlt"\s*,\s*"value": "strict"/u);
 assert.match(staticRulesText, /"kp"\s*,\s*"value": "1"/u);
@@ -44,7 +46,7 @@ assert.deepEqual(
   [1, 1, 1],
   "SafeSearch transforms must stay below all active top-level enforcement rules"
 );
-assert.equal(staticRules[3]?.priority, 1_000, "the explicit-search block must outrank SafeSearch transforms");
+for (const rule of explicitSearchRules) assert.equal(rule.priority, 1_000, "explicit-search blocks must outrank SafeSearch transforms");
 const googleSafeSearchCondition = recordValue(staticRules[0]?.condition, "Google SafeSearch DNR condition");
 assert.equal(googleSafeSearchCondition.urlFilter, undefined, "Google SafeSearch must use an endpoint-exact regex filter");
 assert.equal(googleSafeSearchCondition.isUrlFilterCaseSensitive, true);
@@ -55,8 +57,9 @@ assert.equal(googleSafeSearchRegex.test("https://www.google.com/search?q=referen
 assert.equal(googleSafeSearchRegex.test("https://images.google.com/search?q=reference"), true);
 assert.equal(googleSafeSearchRegex.test("https://docs.google.com/search?q=reference"), false);
 assert.equal(googleSafeSearchRegex.test("https://www.google.com/search/results?q=reference"), false);
-const explicitSearchCondition = staticRules[3]?.condition as { regexFilter?: unknown; requestDomains?: unknown } | undefined;
-const explicitSearchRegex = new RegExp(String(explicitSearchCondition?.regexFilter || ""), "i");
+const explicitSearchConditions = explicitSearchRules.map(rule => rule.condition as { regexFilter?: unknown; requestDomains?: unknown });
+const explicitSearchRegexes = explicitSearchConditions.map(condition => new RegExp(String(condition.regexFilter || ""), "i"));
+const explicitSearchRegex = { test: (url: string) => explicitSearchRegexes.some(regex => regex.test(url)) };
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=ordinary+reference"), false);
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=explicit+porn+query"), true);
 assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), true);
@@ -64,10 +67,12 @@ assert.equal(explicitSearchRegex.test("https://archive.org/search?query=explicit
 assert.equal(explicitSearchRegex.test("https://example.com/find?keywords=rule34"), true);
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=prno"), true);
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=p0rn"), true);
-assert.equal(explicitSearchCondition?.requestDomains, undefined, "explicit-query DNR protection must apply to site-local search engines too");
-const explicitSearchAction = recordValue(staticRules[3]?.action, "explicit-search DNR action");
-const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
-assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
+for (const condition of explicitSearchConditions) assert.equal(condition.requestDomains, undefined, "explicit-query DNR protection must apply to site-local search engines too");
+for (const rule of explicitSearchRules) {
+  const explicitSearchAction = recordValue(rule.action, "explicit-search DNR action");
+  const explicitSearchRedirect = recordValue(explicitSearchAction.redirect, "explicit-search DNR redirect");
+  assert.equal(explicitSearchRedirect.extensionPath, "/blocked.html");
+}
 assert.match(blockedPageSource, /data-vigil-block-page="1"/u);
 assert.match(blockedPageStyles, /--primary: #365b41/u);
 assert.match(blockedPageSource, /<h1>Blocked<\/h1>/u);

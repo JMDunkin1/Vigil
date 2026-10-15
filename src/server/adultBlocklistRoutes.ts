@@ -43,7 +43,7 @@ export async function handleAdultBlocklistApiRoute(
       const previousSource = adultBlocklistSource(state);
       const keys = updateSettings(state.settings, body, state.profiles.map((profile) => profile.id));
       const sourceChanged = invalidateAdultBlocklistIfSourceChanged(state, previousSource);
-      if (sourceChanged) keys.push("adultBlocklistSnapshot");
+      if (sourceChanged) keys.push("adultBlocklistSourcePending");
       const allowlistChanged = Object.hasOwn(body, "allowlist");
       if (allowlistChanged) {
         state.adultBlocklist.allowlist = normalizeAdultDomainList(body.allowlist);
@@ -55,7 +55,9 @@ export async function handleAdultBlocklistApiRoute(
         schedulePolicyEnforcement?.("adult-blocklist-settings");
       }
       await saveState(state);
-      if (sourceChanged || allowlistChanged) {
+      // A pending source selection does not change the committed snapshot or
+      // phone artifact. Only an exception edit needs to reconcile that artifact.
+      if (allowlistChanged) {
         const snapshotHash = state.adultBlocklist.hash || "";
         const snapshotPath = state.adultBlocklist.snapshotPath || "";
         const allowlistHash = adultBlocklistAllowlistHash(state);

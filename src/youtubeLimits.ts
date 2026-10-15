@@ -149,11 +149,18 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
       if (input.ended === true && day.grace.videoId === lease.videoId) day.grace.status = "ended";
       return result();
     }
+    case "check":
     case "start": {
       if (!id || !client) return result(false, "Invalid playback request.");
-      if (day.grace.status === "active" && day.grace.videoId !== id) day.grace.status = "ended";
+      if (day.grace.status === "active" && day.grace.videoId !== id) {
+        // Opening a page may check eligibility, but cannot end the current
+        // video's grace period or reserve any playback time.
+        if (input.action === "check") return result(false, YOUTUBE_TIME);
+        day.grace.status = "ended";
+      }
       if (day.grace.status === "ended") return result(false, YOUTUBE_TIME);
       if ((!slot || slot.removed) && !day.external.includes(id)) return result(false, "Save this video to Watch Later before playing.");
+      if (input.action === "check") return result();
       if (day.lease) return result(false, "Pause playback in the other tab or device first.");
       const remaining = day.usedMs < YOUTUBE_BASE_MS ? YOUTUBE_BASE_MS - day.usedMs : YOUTUBE_GRACE_MS - day.grace.usedMs;
       if (remaining <= 0) return result(false, YOUTUBE_TIME);

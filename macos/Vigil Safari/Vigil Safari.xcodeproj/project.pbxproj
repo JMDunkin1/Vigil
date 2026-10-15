@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		ABCE0000000000000000000B = {isa = PBXBuildFile; fileRef = ABCE0000000000000000000C; };
 		ABCE00000000000000000009 /* youtube-player-response.js in Resources */ = {isa = PBXBuildFile; fileRef = ABCE0000000000000000000A /* youtube-player-response.js */; };
 		ABD000000000000000000002 = {isa = PBXBuildFile; fileRef = ABD100000000000000000002; };
 		ABD000000000000000000001 = {isa = PBXBuildFile; fileRef = ABD100000000000000000001; };
@@ -65,6 +66,7 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		ABCE0000000000000000000C = {isa = PBXFileReference; lastKnownFileType = text.json; path = "Vigil Safari Extension/Resources/reddit-navigation-rules.json"; sourceTree = SOURCE_ROOT; };
 		ABCE0000000000000000000A /* youtube-player-response.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/youtube-player-response.js"; sourceTree = SOURCE_ROOT; };
 		ABD100000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "Vigil Safari Extension/Resources/search-break-page.js"; sourceTree = SOURCE_ROOT; };
 		ABD100000000000000000001 = {isa = PBXFileReference; lastKnownFileType = text.html; path = "Vigil Safari Extension/Resources/search-break.html"; sourceTree = SOURCE_ROOT; };
@@ -283,7 +285,7 @@
 		4E7932313056217D00E63426 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (ABCE00000000000000000009 /* youtube-player-response.js in Resources */, ABD000000000000000000002, ABD000000000000000000001, ABCE00000000000000000001, ABCE00000000000000000007, ABCE00000000000000000005, ABCE00000000000000000003, ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001,
+			files = (ABCE00000000000000000009 /* youtube-player-response.js in Resources */, ABD000000000000000000002, ABD000000000000000000001, ABCE00000000000000000001, ABCE00000000000000000007, ABCE00000000000000000005, ABCE0000000000000000000B, ABCE00000000000000000003, ABCD00000000000000000005, ABCD00000000000000000009, ABCD00000000000000000007, ABCD00000000000000000003, ABCD00000000000000000001,
 				4E79324D3056217D00E63426 /* youtube-limits.js in Resources */,
 				4E79324C3056217D00E63426 /* youtube-parity.js in Resources */,
 				4E79324E3056217D00E63426 /* manifest.json in Resources */,
@@ -468,7 +470,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_APP_SANDBOX = YES;
                 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -503,7 +505,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_APP_SANDBOX = YES;
                 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -541,7 +543,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_APP_SANDBOX = YES;
                 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -582,7 +584,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				ENABLE_APP_SANDBOX = YES;
                 ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_HARDENED_RUNTIME = YES;

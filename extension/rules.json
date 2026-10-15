@@ -24,7 +24,8 @@
         "get"
       ],
       "resourceTypes": [
-        "main_frame"
+        "main_frame",
+        "sub_frame"
       ]
     }
   },
@@ -49,7 +50,8 @@
     "condition": {
       "urlFilter": "||bing.com/search",
       "resourceTypes": [
-        "main_frame"
+        "main_frame",
+        "sub_frame"
       ]
     }
   },
@@ -74,7 +76,8 @@
     "condition": {
       "regexFilter": "^https?://([^/]+\\.)?duckduckgo\\.com/[^#]*[?&]q=",
       "resourceTypes": [
-        "main_frame"
+        "main_frame",
+        "sub_frame"
       ]
     }
   },
@@ -88,9 +91,3886 @@
       }
     },
     "condition": {
-      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*(porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?(r[_.-]*34|s3x|(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw){2,})($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|keyword|term|text|p|k|s)=nud(s|3s?)?($|[&#])",
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*porn",
       "resourceTypes": [
-        "main_frame"
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 7,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*porno",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 8,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*prno",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 9,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*p0rn",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 10,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*nsfw",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 11,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*hentai",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 12,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*rule34",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 13,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*gonewild",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 14,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*onlyfans",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 15,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*fansly",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 16,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*chaturbate",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 17,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*stripchat",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 18,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*cam4",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 19,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*redtube",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 20,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*youporn",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 21,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*spankbang",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 22,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*xvideos",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 23,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*xnxx",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 24,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*xhamster",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 25,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*18(%2b|\\+|plus|-plus)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 26,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 27,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](searchterm|search_term|keyword)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 28,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 29,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 30,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?r[_.-]*34($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 31,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?r[_.-]*34($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 32,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?r[_.-]*34($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 33,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?s3x($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 34,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?s3x($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 35,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?s3x($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 36,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 37,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 38,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 39,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 40,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 41,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 42,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 43,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 44,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 45,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 46,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 47,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 48,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 49,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 50,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 51,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 52,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 53,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 54,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 55,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 56,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 57,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 58,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 59,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 60,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 61,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 62,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 63,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 64,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 65,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 66,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 67,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 68,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 69,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 70,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 71,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 72,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 73,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)s[e3]x(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 74,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 75,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 76,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 77,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd|word|tags|tag)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 78,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 79,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd|word|tags|tag)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 80,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 81,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd|word|tags|tag)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 82,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 83,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd|word|tags|tag)=nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 84,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 85,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 86,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 87,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 88,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 89,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 90,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 91,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](searchterm|search_term|keyword)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 92,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 93,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](word|tags|tag)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 94,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 95,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](searchterm|search_term|keyword)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 96,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 97,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](word|tags|tag)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 98,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 99,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 100,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 101,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 102,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 103,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 104,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 105,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](searchterm|search_term|keyword)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 106,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 107,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](word|tags|tag)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 108,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 109,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](searchterm|search_term|keyword)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 110,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 111,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](word|tags|tag)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 112,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 113,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](searchterm|search_term|keyword)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 114,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 115,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](word|tags|tag)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 116,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 117,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 118,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)nud([e3]s?|s)?(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 119,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 120,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 121,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 122,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 123,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 124,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 125,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 126,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 127,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 128,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 129,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 130,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 131,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 132,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 133,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 134,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 135,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 136,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 137,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 138,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 139,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 140,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 141,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 142,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 143,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 144,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 145,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&]tag=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 146,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 147,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 148,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 149,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 150,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 151,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 152,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 153,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 154,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 155,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 156,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 157,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)p[o0]rn(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 158,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 159,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](s|wd|word|tags|tag)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 160,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 161,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 162,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 163,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 164,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 165,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 166,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 167,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 168,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 169,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 170,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 171,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 172,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 173,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 174,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 175,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 176,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 177,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 178,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 179,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 180,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags)=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 181,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&]tag=[^&#]*[^a-z0-9%]r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 182,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 183,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 184,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 185,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 186,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 187,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 188,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 189,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 190,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 191,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 192,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 193,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 194,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 195,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)r34(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 196,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 197,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 198,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 199,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 200,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 201,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 202,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 203,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](term|text|p|k|s|wd|word|tags|tag)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 204,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 205,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](text|p|k|s|wd|word|tags|tag)=nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 206,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 207,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 208,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 209,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 210,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 211,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 212,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 213,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 214,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 215,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 216,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 217,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 218,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 219,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*[^a-z0-9%]nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 220,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 221,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+$",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 222,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 223,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 224,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+[^a-z0-9]",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 225,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 226,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 227,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+videos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 228,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 229,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](search_term|keyword|keywords|term|text|p)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 230,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](k|s|wd|word|tags|tag)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+photos?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 231,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 232,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](keyword|keywords|term|text|p|k|s|wd|word)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 233,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](tags|tag)=[^&#]*%(2[0bd]|5f)nsfw(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw)+pics?\\b",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
+      ]
+    }
+  },
+  {
+    "id": 234,
+    "priority": 1000,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|keyword|term|text|p|k|s)=nud(s|3s?)?($|[&#])",
+      "resourceTypes": [
+        "main_frame",
+        "sub_frame"
       ]
     }
   },

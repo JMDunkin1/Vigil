@@ -1,11 +1,6 @@
 /* eslint-disable no-unused-vars -- Shared desktop matcher includes helpers unused by this entry point. */
-// Generated from the desktop search guard; run the generator after npm run build.
+// Generated from the shared browser search guard during npm run build.
 (() => {
-function vigilBlockedSearchURL() {
-  try {
-    return (globalThis.browser || globalThis.chrome).runtime.getURL("blocked.html");
-  } catch { return "about:blank"; }
-}
 function limitedSearchWarning(value) {
     return typeof value === "string" && value.length <= 240
         && /^(?:some\s+)?results\s+are\s+limited\s+by\s+(?:safe\s*search|search)\s*[.!]?$/iu.test(value.replace(/\s+/gu, " ").trim());
@@ -22,10 +17,23 @@ function limitedSearchPage(value) {
     }
 }
 
+// Inline this helper into both browser guards. Losing the extension context
+// must still leave restricted content, even when its block page is unavailable.
+function browserProtectionPageURL(page) {
+    try {
+        const api = globalThis.browser || globalThis.chrome;
+        const target = api.runtime.getURL(page);
+        return typeof target === "string" && target ? target : "about:blank";
+    }
+    catch {
+        return "about:blank";
+    }
+}
+
 const checkSearchBreakBeforeNavigation = (() => {
     if (globalThis.top !== globalThis.self || typeof document === "undefined" || typeof document.addEventListener !== "function")
         return () => undefined;
-    const api = globalThis.browser || chrome;
+    const api = globalThis.browser || globalThis.chrome;
     let warningURL = "";
     let warningID = "";
     let reported = false;
@@ -56,7 +64,7 @@ const checkSearchBreakBeforeNavigation = (() => {
                 if (result?.ok && notice && warningURL === url)
                     reported = true;
                 if (result?.ok && result.blocked && location.href === url) {
-                    location.replace(api.runtime.getURL("search-break.html"));
+                    location.replace(browserProtectionPageURL("search-break.html"));
                     return true;
                 }
             }
@@ -570,6 +578,220 @@ function isExplicitLinkCollection(destinations, safeSearchEvidence) {
     return files.length >= 2 && (safeSearchEvidence || files.some(isAdultMediaDestination));
 }
 
+function browserPermanentBlockedDomains() { return ["1clickvpn.com","1clickvpn.net","4everproxy.com","8muses.com","adultfriendfinder.com","allporncomic.com","allunblocked.com","alohabrowser.com","anontokviewer.com","anonymizer.com","anonymizer.net","anonymizer.org","anonymouse.co","anonymouse.com","anonymouse.info","anonymouse.net","anonymouse.org","archive.org","artmajeur.com","artpal.com","artstation.com","bato.to","beeg.com","betternet.co","blewpass.com","blockaway.com","blockaway.net","blockaway.site","bookwalker.jp","brazzers.com","browsec.com","browser.lol","browserling.com","cam4.com","chaturbate.com","comicland.org","comicporn.xxx","comicsarmy.com","comix.to","comizy.io","coolmic.me","croxy.com","croxy.network","croxy.org","croxyproxy.co","croxyproxy.com","croxyproxy.net","croxyproxy.online","croxyproxy.org","cyberghostvpn.com","daycomics.com","deviantart.com","dlsite.com","dontfilter.us","doujins.com","dxweb003.xyz","e-hentai.org","e621.net","ebookrenta.com","emanga.com","expressvpn.com","expressvpn.info","expressvpn.net","expressvpn.works","expressvpn.xyz","f95zone.to","fakku.net","fanfox.net","fansly.com","fastusaproxy.com","filterbypass.com","filterbypass.me","filterbypass.xyz","fpo.xxx","freebrowser.org","freeopenvpn.org","freeproxy.world","freeproxypro.com","freevideoproxy.com","furaffinity.net","globalcomix.com","go2offer-1.com","gointerstellar.app","gotoonion.site","hanidoll.com","hanime.tv","hdporncomics.com","hentai20.io","hentai2read.com","hentai4manga.com","hentaiclap.com","hentaicomicsfree.com","hentaienvy.com","hentaiera.com","hentaifox.com","hide-me.org","hide.me","hidefromyou.com","hideip.co","hidester.com","hidethisip.net","hiperdex.com","hitomi.la","hola-vpn.com","hola.org","holabrowser.com","hole-house.com","honeytoon.com","hot.com","hotgifs.ai","hotspotshield.com","hoxx.com","huniepop.com","hyperbeam.com","imginn.app","imginn.com","imhentai.xxx","inkbunny.net","inkr.com","inv.nadeko.net","inv.zoomerville.com","invidious.f5.si","invidious.nerdvpn.de","invidious.tiekoetter.com","ipvanish.com","irodoricomics.com","irontechdoll.com","ivacy.com","jerkmate.com","jxdoll.com","jydoll.cn","kinklets.com","kitpipe.com","komiflo.com","kproxy.com","kumadoll.com","kurahentai.com","kuramanga.com","lalatoon.com","lantern.io","lewdmanhwa.com","lezhin.com","lezhinus.com","lezhinx.com","lightbrd.com","limitlessproxy.com","made-in-china.com","mamorumanhwa.com","manga18.art","manga18.me","manga18fx.com","mangaball.com","mangabuddy.com","mangabuddy1.co.uk","mangaforfree.com","mangaforfree.net","mangafox.me","mangagg.com","mangahere.cc","mangahere.com","mangakakalot.gg","mangameow.com","mangaplaza.com","mangavyvy.com","manhwa18.cc","manhwa18.com","manhwa18.net","manhwa18archive.com","manhwahentai.me","manhwaland.tv","manhwara.com","manhwaraw.com","manhwaread.com","manhwaread.org","manhwato.com","manta.net","megaproxy.com","megaproxy.org","mehide.org","mrblue.com","mullvad.net","multporn.net","newgrounds.com","nhentai.io","nhentai.net","nhentai.to","nhentai.website","nhentai.xxx","nitt.tr","nitter.catsarch.com","nitter.kareem.one","nitter.miningtcup.me","nitter.net","nitter.poast.org","nitter.privacyredirect.com","nitter.space","nitter.tiekoetter.com","nordvpn.com","nordvpn.net","nt.vern.cc","nthlink.com","nud3.me","nuku.trabun.org","nyrascans.com","onion.cab","onion.city","onion.link","onion.run","onion.sh","onion.to","onion.ws","onionbrowser.com","onlinevpn.app","onlyfans.com","opera.com","orbot.app","peektok.net","picuki.dev","picuki.net","picuki.site","picuki.tv","piped.private.coffee","piped.video","piratebayproxy.co","pixiv.net","planetvpn.com","pornhub.com","pornhwaz.com","pornpics.com","pornworks.me","privadovpn.com","privateinternetaccess.com","protonvpn.ch","protonvpn.com","proxfree.com","proxify.cc","proxify.info","proxify.me","proxy.al","proxy.org","proxy24.net","proxy4free.com","proxy6.net","proxybreeze.com","proxyium.com","proxyium.com.in","proxyium.in","proxyium.io","proxyium.org","proxyiumfree.com","proxymule.com","proxyorb.com","proxysite.co","proxysite.co.uk","proxysite.com","proxysite.io","proxysite.online","proxysite.org","proxysite.pro","proxysite.us","proxysite.xyz","psiphon.ca","purevpn.com","qorno.com","r.go2offer-1.com","r.jina.ai","realdoll.com","red.artemislena.eu","redgifs.com","redlib.catsarch.com","redlib.cow.rip","redlib.nadeko.net","redlib.privacyredirect.com","redlib.privadency.com","redlib.r4fo.com","redtube.com","reflect4.me","ridibooks.com","riseoferos.com","rule34.xxx","safereddit.com","scramjet.mercurywork.shop","secretflame.ai","send.win","setupvpn.com","sitenable.org","siteproxy.ai","sniffies.com","sofurry.com","spankbang.com","sslsecureproxy.com","ssvtiktok.com","stop-block.com","stripchat.com","surfshark.app","surfshark.com","surfshark.io","swipey.ai","tapas.io","tappytoon.com","theblank.net","theporndude.com","tikstoryview.com","tikt.com","tiktkviewer.com","tikview.io","tikviewer.com","toomics.com","toongod.app","toongod.cc","toongod.com.co","toongod.guru","toongod.org","toonily.com","toonily.me","toontop.io","toptoon.com","tor2web.org","torrentproxy.co","touchvpn.net","tpdoll.com","translated.turbopages.org","tt-view.com","ttanonviewer.com","tunnelbear.com","twiiit.com","ultraproxy.net","unblock-me.org","unblock-proxy.net","unblocker.co","unblocker.org","unblockyoutube.co","undressher.net","unknownproxy.com","urban-vpn.com","urlebird.com","urlebird.us","veepn.com","videoproxy.site","vidproxy.com","vpnbook.com","vpngate.net","vpnunlimited.com","vyprvpn.com","weasyl.com","webcomicsapp.com","webproxy.co","webproxy.one","webproxy.org","webproxy.site","webproxy.to","webproxysite.com","websiteunblocker.io","webtoons.com","webtoonscan.com","wildlife.adult","windscribe.com","windscribe.net","wproxy.net","xcancel.com","xerography14macro.com","xhamster.com","xhamsterlive.com","xnxx.com","xvideos.com","xvideos.es","youporn.com","youqdoll.com","youtubeunblocker.org","yt.chocolatemoo53.com","zelexdoll.com","zend2.com","zenmate.com","zproxy.org"]; }
+const DEFAULT_EXPLICIT_COMIC_SITE_TERMS = [
+    "honeytoon", "honeytoons", "hooneytoon", "hooneytoons", "mawha"
+];
+// These markers require a comic context, so "uncensored interview" and
+// "mature gardening" remain ordinary searches.
+const DEFAULT_EXPLICIT_CONTEXTUAL_RULES = [
+    {
+        id: "explicit-comics",
+        contexts: ["manhwa", "mawha", "manhua", "webtoon", "webtoons"],
+        markers: ["18", "18plus", "adult", "nsfw", "porn", "hentai", "lewd", "mature", "uncensored"]
+    }
+];
+function containsExplicitComicSearch(value) {
+    const text = value.toLowerCase();
+    // manhwa and toongod already belong to every profile's permanent URL rules.
+    if ([...DEFAULT_EXPLICIT_COMIC_SITE_TERMS, "manhwa", "toongod"].some(term => text.includes(term)))
+        return true;
+    const compact = text.replace(/[^\p{L}\p{N}]/gu, "");
+    return DEFAULT_EXPLICIT_CONTEXTUAL_RULES.some(rule => rule.contexts.some(context => rule.markers.some(marker => compact.includes(context + marker) || compact.includes(marker + context))));
+}
+
+
+/** Self-contained so the browser guards can use this exact implementation. */
+function matchSemanticExplicitUrl(value) {
+    let url;
+    try {
+        url = value instanceof URL ? value : new URL(String(value || ""));
+    }
+    catch {
+        return null;
+    }
+    if (!/^https?:$/u.test(url.protocol))
+        return null;
+    const strong = new Set([
+        "porn", "porno", "pornography", "pornographic", "p0rn", "p0rno", "p0rnography", "hentai", "h3ntai", "nhentai", "nsfw",
+        "rule34", "sexcam", "sexcams", "camsex", "sextape", "sextapes",
+        "futanari", "erotica", "pornhub", "xvideos", "xnxx", "redgifs"
+    ]);
+    const media = new Set([
+        "video", "videos", "vid", "vids", "photo", "photos", "pic", "pics", "image", "images",
+        "gif", "gifs", "cam", "cams", "comic", "comics", "manga", "manhwa", "manhua",
+        "webtoon", "webtoons", "doujin", "doujinshi", "novel", "novels", "art", "gallery", "galleries"
+    ]);
+    const weak = new Set(["adult", "adults", "mature", "uncensored", "lewd", "erotic", "nude", "nudes", "naked", "sex", "sexual", "xxx", "r18", "18plus"]);
+    const comics = new Set(["comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi"]);
+    const ordinary = new Set(["education", "medical", "health", "anatomy", "science", "research", "therapy", "history", "report", "news", "chromosome", "chromosomes"]);
+    const catalog = new Set(["genre", "genres", "category", "categories", "tag", "tags", "catalog", "browse"]);
+    function decode(text) {
+        let output = text;
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+                const next = decodeURIComponent(output);
+                if (next === output)
+                    break;
+                output = next;
+            }
+            catch {
+                // An unrelated malformed escape must not hide valid encoded words.
+                const next = output.replace(/(?:%[0-9a-f]{2})+/giu, run => {
+                    try {
+                        return decodeURIComponent(run);
+                    }
+                    catch {
+                        return run.replace(/%([0-9a-f]{2})/giu, (_match, hex) => String.fromCharCode(Number.parseInt(hex, 16)));
+                    }
+                });
+                if (next === output)
+                    break;
+                output = next;
+            }
+        }
+        return output;
+    }
+    // Browser URL objects expose IDNs as punycode. Decode one bounded DNS label
+    // before evaluating words; never scan the arbitrary xn-- payload as prose.
+    function unicodeLabel(label) {
+        if (!label.startsWith("xn--"))
+            return label;
+        const input = label.slice(4);
+        if (input.length > 63)
+            return label;
+        const delimiter = input.lastIndexOf("-");
+        const output = delimiter < 0 ? [] : [...input.slice(0, delimiter)].map(c => c.codePointAt(0));
+        let position = delimiter < 0 ? 0 : delimiter + 1;
+        let n = 128;
+        let index = 0;
+        let bias = 72;
+        while (position < input.length && output.length < 128) {
+            const previous = index;
+            let weight = 1;
+            for (let k = 36;; k += 36) {
+                if (position >= input.length)
+                    return label;
+                const code = input.charCodeAt(position++);
+                const digit = code >= 48 && code <= 57 ? code - 22
+                    : code >= 65 && code <= 90 ? code - 65 : code >= 97 && code <= 122 ? code - 97 : 36;
+                if (digit >= 36 || index + digit * weight > Number.MAX_SAFE_INTEGER)
+                    return label;
+                index += digit * weight;
+                const threshold = k <= bias ? 1 : k >= bias + 26 ? 26 : k - bias;
+                if (digit < threshold)
+                    break;
+                weight *= 36 - threshold;
+                if (!Number.isSafeInteger(weight))
+                    return label;
+            }
+            const count = output.length + 1;
+            let delta = Math.floor((index - previous) / (previous === 0 ? 700 : 2));
+            delta += Math.floor(delta / count);
+            let k = 0;
+            while (delta > 455) {
+                delta = Math.floor(delta / 35);
+                k += 36;
+            }
+            bias = k + Math.floor(36 * delta / (delta + 38));
+            n += Math.floor(index / count);
+            index %= count;
+            if (n > 0x10ffff || (n >= 0xd800 && n <= 0xdfff))
+                return label;
+            output.splice(index++, 0, n);
+        }
+        try {
+            return String.fromCodePoint(...output);
+        }
+        catch {
+            return label;
+        }
+    }
+    function normalize(text) {
+        return decode(text).normalize("NFKC").toLowerCase()
+            .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
+            .replace(/[аеорсхіу]/gu, c => ({ а: "a", е: "e", о: "o", р: "p", с: "c", х: "x", і: "i", у: "y" })[c])
+            .toLowerCase();
+    }
+    function words(text) {
+        // Long undelimited identifiers are metadata, not natural-language slugs.
+        if (/^[a-z\d_-]{24,}$/iu.test(text) && !/[-_]/u.test(text) && /\d/u.test(text))
+            return [];
+        if (/^[a-f\d]{16,}$/iu.test(text) || /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/iu.test(text))
+            return [];
+        return normalize(text).match(/[\p{L}\p{N}]+/gu) || [];
+    }
+    function classify(text, previousRoute = "", hostname = false) {
+        const tokens = words(text);
+        if (!tokens.length)
+            return "";
+        const explicit = tokens.find(token => strong.has(token));
+        if (explicit)
+            return explicit;
+        const compact = tokens.join("");
+        if (/^(?:p[o0]rn|h[e3]ntai|nsfw|rule34)(?:hub|tube|world|land|zone|site|sites|read|reader|live|free|hd|vr|4k|\d{1,3}|videos?|photos?|pics?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)?$/u.test(compact))
+            return compact;
+        if (/^(?:free|best|my|the|all|hd|new|daily|live|watch|read|anime|manga|comic|comics|webtoon|3d|vr|4k)(?:porn|hentai|nsfw)$/u.test(compact))
+            return compact;
+        // X runs only mean explicit content as a deliberate domain label or with
+        // media/catalog context. Embedded axxxb IDs and Chapter XXX are untouched.
+        if (hostname && /^x{3,}$/u.test(compact))
+            return "xxx";
+        const mediaAlternatives = "(?:videos?|vids?|photos?|pics?|images?|gifs?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))";
+        const markerAlternatives = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18(?:plus)?)";
+        const compound = new RegExp(`^(?:${markerAlternatives}${mediaAlternatives}|${mediaAlternatives}${markerAlternatives})$`, "u");
+        const compoundToken = tokens.find(token => compound.test(token));
+        if (compoundToken)
+            return compoundToken;
+        // R34 also names an ordinary Nissan chassis. Only comic/catalog context
+        // supplies an explicit meaning; car photos and videos remain ordinary.
+        if (tokens.some(token => /^r34(?:comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)$/u.test(token))
+            || (tokens.includes("r34") && (tokens.some(token => comics.has(token)) || catalog.has(previousRoute))))
+            return "r34";
+        if (tokens.some(token => ordinary.has(token)))
+            return "";
+        if (tokens.includes("nude") && (tokens.some(token => ["makeup", "lipstick", "lipsticks", "nail", "nails", "palette", "palettes", "manicure", "manicures", "beige"].includes(token))
+            || (tokens.includes("figure") && tokens.some(token => ["drawing", "drawings"].includes(token)))))
+            return "";
+        if (tokens.includes("naked") && tokens.includes("eye"))
+            return "";
+        const marker = tokens.find((token, index) => (weak.has(token) || /^x{3,}$/u.test(token))
+            && !(token === "uncensored" && tokens[index + 1] === "interview"))
+            || (/^18\+$/u.test(text) ? "18plus" : "");
+        return marker && (tokens.some(token => media.has(token)) || catalog.has(previousRoute)) ? marker : "";
+    }
+    const labels = url.hostname.toLowerCase().replace(/\.$/u, "").split(".");
+    if (["xxx", "porn"].includes(labels.at(-1) || "")) {
+        return { component: "hostname", term: labels.at(-1), normalizedText: url.hostname };
+    }
+    const hostLabels = labels.slice(0, -1).map(label => normalize(unicodeLabel(label)));
+    for (const [index, normalizedText] of hostLabels.entries()) {
+        const term = classify(normalizedText, "", true);
+        if (term)
+            return { component: "hostname", term, normalizedText };
+        if (weak.has(normalizedText) && media.has(hostLabels[index + 1] || "")
+            && !hostLabels.some(label => ordinary.has(label))) {
+            return { component: "hostname", term: normalizedText, normalizedText: `${normalizedText}.${hostLabels[index + 1]}` };
+        }
+    }
+    // Query values, fragments, credentials, ports and deep path identifiers are
+    // deliberately excluded. Existing explicit search/custom rules handle them.
+    const segments = url.pathname.split(/\/+/u, 6).filter(Boolean).slice(0, 4);
+    for (let i = 0; i < segments.length; i += 1) {
+        const normalizedText = normalize(segments[i].slice(0, 512));
+        const previousRoute = i ? normalize(segments[i - 1]) : "";
+        const term = classify(normalizedText, previousRoute);
+        if (term)
+            return { component: "path", term, normalizedText };
+        if ((weak.has(normalizedText) || /^x{3,}$/u.test(normalizedText) || /^18\+$/u.test(normalizedText)
+            || (normalizedText === "r34" && comics.has(normalize(segments[i + 1] || ""))))
+            && i + 1 < segments.length && words(segments[i + 1]).some(token => media.has(token))) {
+            return { component: "path", term: normalizedText, normalizedText };
+        }
+    }
+    return null;
+}
+
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
 const EXPLICIT_SEARCH_PARAMETER_NAMES = SEARCH_PARAMETER_NAMES;
 const EXPLICIT_SEARCH_PATTERN = /porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(?:\+|plus|-plus)/iu;
@@ -611,8 +833,18 @@ const SAFE_SEARCH_EVIDENCE_KEY = "vigil-safe-search-subjects-v1";
 const SAFE_SEARCH_SUBJECT_KEY_PREFIX = `${SAFE_SEARCH_EVIDENCE_KEY}:`;
 const SAFE_SEARCH_EVIDENCE_LIFETIME_MS = 30 * 60 * 1000;
 const safeSearchSubjects = new Map();
+const permanentBlockedDomains = new Set(browserPermanentBlockedDomains());
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
+let embeddedPolicyGeneration = 0;
+let embeddedPolicyCheckedAt = 0;
+let embeddedPolicyPendingUrl = "";
+let embeddedPolicyDeadline = null;
+let embeddedPolicyObserver = null;
+const embeddedPolicyPreviousDisplays = new Map();
+let embeddedPolicyAwaiting = false;
+let embeddedPolicyMediaGuardInstalled = false;
+const embeddedPolicyPausedMedia = new Set();
 function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
     let url;
     try {
@@ -623,10 +855,15 @@ function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
     }
     if (url.protocol !== "http:" && url.protocol !== "https:")
         return null;
+    const labels = url.hostname.toLowerCase().replace(/\.$/u, "").split(".");
+    if (labels.some((_label, index) => permanentBlockedDomains.has(labels.slice(index).join("."))))
+        return browserProtectionPageURL("blocked.html");
+    if (matchSemanticExplicitUrl(url.href))
+        return browserProtectionPageURL("blocked.html");
     if (matchContextualExplicitSearchUrl(url))
-        return vigilBlockedSearchURL();
+        return browserProtectionPageURL("blocked.html");
     if (searchQueries(url).some(({ query }) => containsExplicitSearchText(query, url.hostname)))
-        return vigilBlockedSearchURL();
+        return browserProtectionPageURL("blocked.html");
     return null;
 }
 function containsExplicitSearchText(rawValue, hostname = new URL(location.href).hostname, includeRedditShorthand = true) {
@@ -634,6 +871,7 @@ function containsExplicitSearchText(rawValue, hostname = new URL(location.href).
     const vocabulary = normalizeExplicitVocabulary(decoded);
     return EXPLICIT_SEARCH_PATTERN.test(vocabulary)
         || EXPLICIT_SEARCH_PATTERN.test(vocabulary.replace(/\+/gu, " "))
+        || containsExplicitComicSearch(vocabulary)
         || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
         || containsExplicitXxxSearchText(decoded)
         || containsExplicitPersonSearchText(decoded)
@@ -819,7 +1057,7 @@ function scanSafeSearchContext() {
     const query = currentGoogleSearchQuery();
     if (query) {
         if ((hasCurrentSafeSearchEvidence() || hasSavedSafeSearchSubject(query)) && hasSafeSearchContributor(query)) {
-            redirectAfterSearchWarning(vigilBlockedSearchURL());
+            redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"));
             return;
         }
     }
@@ -829,7 +1067,7 @@ function scanSafeSearchContext() {
         const evidence = !hasOrdinarySafeSearchContext(title) && [...safeSearchSubjects].some(([subject, at]) => at > Date.now() - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
             && at <= Date.now() && matchesSafeSearchSubject(title, subject));
         if (!hasOrdinarySafeSearchContext(title) && isExplicitLinkCollection(readerFileDestinations(roots), evidence)) {
-            redirectAfterSearchWarning(vigilBlockedSearchURL());
+            redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"));
             return;
         }
     }
@@ -994,8 +1232,139 @@ function alwaysOnSearchRedirect(rawUrl, baseUrl = location.href) {
 function enforceGoogleSafeSearchForCurrentNavigation() {
     lastInspectedSearchUrl = location.href;
     const redirect = alwaysOnSearchRedirect(location.href);
-    if (redirect && redirect !== location.href)
+    if (redirect && redirect !== location.href) {
         location.replace(redirect);
+        return;
+    }
+    checkEmbeddedFramePolicy();
+}
+function checkEmbeddedFramePolicy() {
+    // Safari keeps its supervised BuiltIn filter and bundled all-frame guard.
+    // Chrome can additionally ask its local companion for long-tail domains
+    // omitted from the capacity-limited dynamic rules, without moving the parent.
+    if (globalThis.top === globalThis.self || !/^https?:\/\//u.test(location.href))
+        return;
+    const api = globalThis.browser || globalThis.chrome;
+    try {
+        const origin = api?.runtime?.getURL("");
+        if (origin?.startsWith("safari-web-extension:"))
+            return;
+        if (!origin?.startsWith("chrome-extension:") || !api.runtime.sendMessage)
+            throw new Error("Frame policy authority unavailable");
+    }
+    catch {
+        concealEmbeddedPolicyDocument();
+        location.replace("about:blank");
+        return;
+    }
+    const url = location.href;
+    if (embeddedPolicyPendingUrl === url)
+        return;
+    if (lastInspectedSearchUrl === url && Date.now() - embeddedPolicyCheckedAt < 5_000)
+        return;
+    embeddedPolicyPendingUrl = url;
+    embeddedPolicyCheckedAt = Date.now();
+    const generation = ++embeddedPolicyGeneration;
+    concealEmbeddedPolicyDocument();
+    if (embeddedPolicyDeadline !== null)
+        clearTimeout(embeddedPolicyDeadline);
+    let closed = false;
+    const current = () => !closed && generation === embeddedPolicyGeneration && location.href === url;
+    const close = () => {
+        if (!current())
+            return;
+        closed = true;
+        if (embeddedPolicyDeadline !== null)
+            clearTimeout(embeddedPolicyDeadline);
+        embeddedPolicyDeadline = null;
+        embeddedPolicyPendingUrl = "";
+        location.replace(browserProtectionPageURL("blocked.html"));
+    };
+    embeddedPolicyDeadline = setTimeout(close, 3_000);
+    const request = () => {
+        if (!current())
+            return;
+        try {
+            const requestResult = api.runtime.sendMessage({ type: "VIGIL_EMBEDDED_FRAME_CHECK", url }).then(result => {
+                if (!current())
+                    return;
+                if (result?.stale === true || result?.skipped === true) {
+                    // Chrome can briefly report no frame at document_start. Keep it
+                    // concealed while retrying, under the original bounded deadline.
+                    setTimeout(request, 50);
+                    return;
+                }
+                if (result?.ok !== true || result.blocked !== false) {
+                    close();
+                    return;
+                }
+                if (embeddedPolicyDeadline !== null)
+                    clearTimeout(embeddedPolicyDeadline);
+                embeddedPolicyDeadline = null;
+                embeddedPolicyPendingUrl = "";
+                releaseEmbeddedPolicyDocument();
+            });
+            void requestResult.catch(close);
+        }
+        catch {
+            close();
+        }
+    };
+    request();
+}
+function concealEmbeddedPolicyDocument() {
+    embeddedPolicyAwaiting = true;
+    if (typeof document === "undefined")
+        return;
+    const conceal = () => {
+        const root = document.documentElement;
+        if (!root)
+            return;
+        if (!embeddedPolicyPreviousDisplays.has(root))
+            embeddedPolicyPreviousDisplays.set(root, {
+                value: root.style.getPropertyValue("display"), priority: root.style.getPropertyPriority("display")
+            });
+        if (root.style.getPropertyValue("display") !== "none" || root.style.getPropertyPriority("display") !== "important") {
+            root.style.setProperty("display", "none", "important");
+        }
+    };
+    conceal();
+    for (const media of document.querySelectorAll("video, audio")) {
+        if (!media.paused) {
+            embeddedPolicyPausedMedia.add(media);
+            media.pause();
+        }
+    }
+    if (!embeddedPolicyObserver && typeof MutationObserver === "function") {
+        embeddedPolicyObserver = new MutationObserver(conceal);
+        embeddedPolicyObserver.observe(document, { childList: true, subtree: true, attributes: true, attributeFilter: ["style"] });
+    }
+    if (!embeddedPolicyMediaGuardInstalled && typeof document.addEventListener === "function") {
+        embeddedPolicyMediaGuardInstalled = true;
+        document.addEventListener("play", event => {
+            if (embeddedPolicyAwaiting && event.target instanceof HTMLMediaElement)
+                event.target.pause();
+        }, true);
+    }
+}
+function releaseEmbeddedPolicyDocument() {
+    embeddedPolicyAwaiting = false;
+    embeddedPolicyObserver?.disconnect();
+    embeddedPolicyObserver = null;
+    for (const [root, previous] of embeddedPolicyPreviousDisplays) {
+        if (previous.value)
+            root.style.setProperty("display", previous.value, previous.priority);
+        else
+            root.style.removeProperty("display");
+    }
+    embeddedPolicyPreviousDisplays.clear();
+    // Resume only playback this veil interrupted, after a fresh authoritative
+    // allow. A site's new autoplay attempts made while pending stay paused.
+    for (const media of embeddedPolicyPausedMedia) {
+        if (media.isConnected && media.paused)
+            void media.play().catch(() => { });
+    }
+    embeddedPolicyPausedMedia.clear();
 }
 function enforceGoogleSafeSearchForLink(event) {
     if (enforceExplicitSearchControlInteraction(event))
@@ -1011,7 +1380,7 @@ function enforceGoogleSafeSearchForLink(event) {
     if (containsExplicitMediaLabel(label) || contextualLinkIsBlocked(anchor)) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        redirectAfterSearchWarning(vigilBlockedSearchURL(), "assign");
+        redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"), "assign");
         return;
     }
     const redirect = alwaysOnSearchRedirect(anchor.href);
@@ -1045,7 +1414,7 @@ function enforceGoogleSafeSearchForForm(event) {
     if (explicitFormSearch || directBlock) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        redirectAfterSearchWarning(vigilBlockedSearchURL(), "assign");
+        redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"), "assign");
         return;
     }
     if (method.toLowerCase() !== "get")
@@ -1097,7 +1466,7 @@ function enforceExplicitSearchControlInteraction(event) {
     if (event.cancelable)
         event.preventDefault();
     event.stopImmediatePropagation();
-    redirectAfterSearchWarning(vigilBlockedSearchURL(), "assign");
+    redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"), "assign");
     return true;
 }
 function eventTargetElement(event) {
@@ -1163,7 +1532,7 @@ function explicitSearchTextInContainer(container, includeRedditShorthand = true)
 function scanExistingSearchControls(root) {
     const controls = root.querySelectorAll?.("input[type='search'], [role='searchbox'], input[name], textarea[name], [contenteditable='true']") || [];
     if (Array.from(controls).some((control) => isSearchControl(control) && containsExplicitSearchText(searchControlValue(control), undefined, false))) {
-        redirectAfterSearchWarning(vigilBlockedSearchURL());
+        redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"));
         return true;
     }
     return false;
@@ -1172,7 +1541,7 @@ function installDynamicSearchGuard() {
     if (typeof document === "undefined")
         return;
     if (containsExplicitMediaLabel(document.title)) {
-        redirectAfterSearchWarning(vigilBlockedSearchURL());
+        redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"));
         return;
     }
     scanExistingSearchControls(document);
@@ -1180,7 +1549,7 @@ function installDynamicSearchGuard() {
         return;
     new MutationObserver((records) => {
         if (containsExplicitMediaLabel(document.title)) {
-            redirectAfterSearchWarning(vigilBlockedSearchURL());
+            redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"));
             return;
         }
         for (const record of records) {
@@ -1188,7 +1557,7 @@ function installDynamicSearchGuard() {
                 if (node instanceof Element) {
                     if ((isSearchControl(node) && containsExplicitSearchText(searchControlValue(node), undefined, false))
                         || explicitSearchTextInContainer(node, false)) {
-                        redirectAfterSearchWarning(vigilBlockedSearchURL());
+                        redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"));
                         return;
                     }
                 }
@@ -1197,13 +1566,19 @@ function installDynamicSearchGuard() {
     }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 }
 function checkForSearchUrlChange() {
-    if (lastInspectedSearchUrl === location.href)
+    if (lastInspectedSearchUrl === location.href) {
+        checkEmbeddedFramePolicy();
         return;
+    }
+    // A previous URL's pending decision cannot authorize or block this document.
+    embeddedPolicyCheckedAt = 0;
     enforceGoogleSafeSearchForCurrentNavigation();
     if (typeof document !== "undefined")
         scanSafeSearchContext();
 }
 addEventListener("click", enforceGoogleSafeSearchForLink, true);
+addEventListener("auxclick", enforceGoogleSafeSearchForLink, true);
+addEventListener("contextmenu", enforceGoogleSafeSearchForLink, true);
 addEventListener("submit", enforceGoogleSafeSearchForForm, true);
 addEventListener("input", enforceExplicitSearchControlInteraction, true);
 addEventListener("change", enforceExplicitSearchControlInteraction, true);

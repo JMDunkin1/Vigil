@@ -122,13 +122,8 @@ assert.match(
 );
 assert.match(
   socialRootViewSource,
-  /case \.loading where service == \.youtube:\s*(?:\/\/[^\n]*\n\s*)+EmptyView\(\)/u,
-  "YouTube launch must expose its already protected WKWebView immediately instead of waiting behind the generic health overlay"
-);
-assert.match(
-  socialRootViewSource,
-  /case \.loading where service == \.instagram:\s*\/\/[\s\S]*?EmptyView\(\)\s*case \.loading:/u,
-  "Instagram startup must expose its already-loading WKWebView instead of covering it with a protected-session spinner"
+  /case \.loading:\s*if !hasShownUsablePage \{ SocialLaunchScreen\(service: service\) \}/u,
+  "Initial loading uses the selected service's splash; a warm page stays visible during health checks"
 );
 assert.match(
   socialRootViewSource,

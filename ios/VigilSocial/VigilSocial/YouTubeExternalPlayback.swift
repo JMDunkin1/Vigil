@@ -189,7 +189,9 @@ enum YouTubeExternalPlaybackScript {
         return {
           videoID: currentID(), mediaID: video?.dataset.vigilMediaId || null,
           permittedUnderPolicy: permittedUnderPolicy(video),
-          playing: Boolean(video && !video.paused && !video.ended && video.readyState >= 2),
+          // A buffering player still has an active Play request. Progress is
+          // metered separately, so a lock-screen buffer must not become Pause.
+          playing: Boolean(video && !video.paused && !video.ended),
           seeking: Boolean(video?.seeking),
           pictureInPicture: Boolean(video && (video.webkitPresentationMode === 'picture-in-picture'
             || document.pictureInPictureElement === video)),

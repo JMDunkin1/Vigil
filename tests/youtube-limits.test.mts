@@ -31,6 +31,21 @@ test('four slots, exact full copy, duplicate saves and atomic replacement', () =
   assert.equal(act({ action: 'save', videoId: ids[4], replace: ids[0] }).ok, true);
   assert.equal(state.youtubeLimits!.slots[0]!.videoId, ids[4]);
 });
+test('opening eligibility checks never reserve playback or consume another video’s grace', () => {
+  const { act, state } = setup();
+  act({ action: 'save', videoId: ids[0] });
+  const before = structuredClone(state.youtubeLimits);
+  assert.equal(act({ action: 'check', videoId: ids[0] }).ok, true);
+  assert.equal(act({ action: 'check', videoId: ids[1] }).ok, false);
+  assert.deepEqual(state.youtubeLimits, before);
+  state.youtubeLimits!.grace = { status: 'active', videoId: ids[0], usedMs: 1000 };
+  state.youtubeLimits!.usedMs = YOUTUBE_BASE_MS;
+  const grace = structuredClone(state.youtubeLimits);
+  assert.equal(act({ action: 'check', videoId: ids[1] }).ok, false);
+  assert.deepEqual(state.youtubeLimits, grace);
+  assert.equal(act({ action: 'check', videoId: ids[0] }).ok, true);
+  assert.equal(state.youtubeLimits!.lease, null);
+});
 test('15 seconds is replaceable; 15.001 locks cumulatively across removal and re-save', () => {
   const { act, play, state } = setup();
   act({ action: 'save', videoId: ids[0] }); play(ids[0], 8000);

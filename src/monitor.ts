@@ -23,7 +23,7 @@ import { appCanReportUrls, safariHasContentBlockerError, browserActivityWatchHea
 import type { BrowserActivitySignal } from "./macos.js";
 import { BrowserActivityBurstScheduler } from "./monitor/browserActivity.js";
 import type { BrowserActivityBurstSchedulerDependencies } from "./monitor/browserActivity.js";
-import { appQuitEscalationDecision, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
+import { appQuitEscalationDecision, canonicalPolicySample, hostPathPatternCanUseSystemNetwork, policyForSample, shouldAttemptBlockedBrowserRedirect, shouldLockScreenForPolicy, shouldQuitAppForPolicy, shouldRedirectActiveBlockedBrowserTab, sweepBlockedApps } from "./monitor/policy.js";
 import type { AppBlockRecord, EnforcedPolicy } from "./monitor/policy.js";
 import { activeSecondsBeforeIdleThreshold, idleUsageThresholdSeconds, isInterruptedPollGap, roundSeconds } from "./monitor/timing.js";
 import { safariFilterStatus } from "./safariFilter.js";
@@ -1241,6 +1241,7 @@ export class Monitor implements MonitorHandle {
   }
 
   browserBlockDecision(front: FrontSample): BrowserBlockDecision | null {
+    front = canonicalPolicySample(front);
     if (isVigilBlockedPageUrl(front.url)) return null;
 
     // activePolicy performs expiry cleanup as part of evaluation. Use a private
@@ -2510,6 +2511,7 @@ export class Monitor implements MonitorHandle {
   }
 
   async enforce(front: FrontSample, options: { observeBrowserProtection?: boolean } = {}): Promise<void> {
+    front = canonicalPolicySample(front);
     await this.observeSafariContentBlockerEvidence(front);
     const preserveBlockedPage = isVigilBlockedPageUrl(front.url);
     const evaluationSample = preserveBlockedPage
@@ -3193,11 +3195,11 @@ function obsoleteEffectResult(action: string): UnknownRecord {
 
 function effectSample(payload: UnknownRecord): FrontSample {
   const url = String(payload.currentUrl || payload.sourceUrl || "");
-  return {
+  return canonicalPolicySample({
     app: String(payload.app || ""),
     hostname: String(payload.hostname || urlHostname(url) || ""),
     url
-  };
+  });
 }
 
 function intentionalPauseStillApplies(

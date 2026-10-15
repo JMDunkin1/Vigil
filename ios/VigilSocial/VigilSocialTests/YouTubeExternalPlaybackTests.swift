@@ -169,7 +169,7 @@ final class SocialContainerAccountTests: XCTestCase {
         let suite = "VigilSocial.account-tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         let instagram = container.store(for: .instagram)
         let originalYouTube = container.store(for: .youtube)
         XCTAssertNil(SocialContainerStore.websiteDataStore(for: .instagram).identifier)
@@ -188,7 +188,7 @@ final class SocialContainerAccountTests: XCTestCase {
         XCTAssertFalse(studyYouTube.youtubePictureInPictureEnabled)
         XCTAssertEqual(SocialContainerStore.websiteDataStore(for: .youtube, accountID: id).identifier, id)
         XCTAssertTrue(SocialContainerStore.websiteDataStore(for: .youtube, accountID: id).isPersistent)
-        let reopened = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        let reopened = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         XCTAssertEqual(reopened.selectedAccountID(for: .youtube), id)
         XCTAssertEqual(reopened.accounts(for: .youtube).first?.name, "Study")
         container.selectAccount(nil, for: .youtube)
@@ -203,7 +203,7 @@ final class SocialContainerAccountTests: XCTestCase {
         let suite = "VigilSocial.account-tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false)
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false, commitmentStorage: FixtureSocialCommitmentStorage())
         XCTAssertTrue(container.addAccount(for: .reddit, name: "Work"))
         let selected = container.selectedAccountID(for: .reddit)
         container.selectAccount(UUID(), for: .reddit)

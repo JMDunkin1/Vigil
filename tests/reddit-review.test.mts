@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
-import { redditReviewDestination, redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewRedirect } from "../src/redditReview.js";
+import { redditReviewDestination, redditReviewHost, redditReviewPostId, redditReviewSearchPage, redditReviewTarget, redditReviewRedirect, vigilReturnPage } from "../src/redditReview.js";
 import { assertGeneratedIosSafariGuardCurrent } from "../scripts/generate-ios-safari-guard.mjs";
 import { defaultState } from "../src/defaults.js";
 import { baselinePolicy, shouldBlockUrl } from "../src/policy.js";
@@ -21,11 +21,17 @@ assert.equal(redditReviewDestination(`https://www.google.com/url?q=${encodeURICo
 assert.equal(redditReviewDestination(`https://duckduckgo.com/l/?uddg=${encodeURIComponent(first)}`), first);
 assert.equal(redditReviewDestination(`https://www.bing.com/ck/a?u=a1${Buffer.from(first).toString("base64url")}`), first);
 assert.equal(redditReviewDestination("https://www.google.com/url?q=https://evil.example/"), null);
+for (const target of ["https://www.reddit.com/", "https://www.reddit.com/r/reviews/", "https://redd.it/abc123", first + ".json"]) {
+  for (const wrapped of [`https://www.google.com/url?q=${encodeURIComponent(target)}`, `https://duckduckgo.com/l/?uddg=${encodeURIComponent(target)}`, `https://www.bing.com/ck/a?u=a1${Buffer.from(target).toString("base64url")}`]) {
+    assert.equal(redditReviewTarget(wrapped), target);
+    assert.equal(redditReviewDestination(wrapped), null);
+  }
+}
 assert.equal(redditReviewHost("https://reddit.com.evil.example/"), false);
 
 const source = await readFile(new URL("../extension/reddit-review-background.js", import.meta.url), "utf8");
 type Listener = (...args: unknown[]) => unknown; // Browser API harness deliberately exercises malformed senders too.
-function harness(storageValues: Record<string, unknown> = {}, incognito = false) {
+function harness(storageValues: Record<string, unknown> = {}, incognito = false, safari = false) {
   const listeners: Record<string, Listener> = {};
   const tabs = new Map<number, { id: number; url: string; windowId?: number; incognito?: boolean }>([[1, { id: 1, url: search, windowId: 10, incognito }]]);
   const creations: Array<{ windowId: number; openerTabId: number }> = [];
@@ -41,22 +47,27 @@ function harness(storageValues: Record<string, unknown> = {}, incognito = false)
     async set(values: Record<string, unknown>) { Object.assign(storageValues, structuredClone(values)); },
     async remove(keys: string | string[]) { for (const key of Array.isArray(keys) ? keys : [keys]) delete storageValues[key]; }
   };
+  const verifyReturn = async (body: { candidates: string[]; inspect?: string }) => {
+    returnChecks.push(structuredClone(body));
+    if (!verifierAvailable) throw new Error("Verifier temporarily unavailable");
+    return { ok: true, url: body.candidates.find(url => !url.includes("porn")) || "about:blank" };
+  };
   const api = {
     storage: { session: storage },
-    runtime: { onMessage: event("message"), onStartup: event("startup"), getURL: (path: string) => `extension://vigil/${path.replace(/^\//u, "")}` },
+    runtime: { onMessage: event("message"), onStartup: event("startup"), getURL: (path: string) => `extension://vigil/${path.replace(/^\//u, "")}`,
+      sendNativeMessage: async (_host: string, body: { candidates: string[]; inspect?: string }) => verifyReturn(body) },
     tabs: { async get(id: number) { return tabs.get(id); },
       async create({ url, windowId, openerTabId }: { url: string; windowId: number; openerTabId: number }) { creations.push({ windowId, openerTabId }); const tab = { id: nextTab++, url, windowId, incognito: tabs.get(openerTabId)?.incognito }; void tabs.set(tab.id, tab); return tab; },
       async update(id: number, { url }: { url: string }) { updates.push({ id, url }); void tabs.set(id, { ...tabs.get(id), id, url }); return tabs.get(id); },
       onRemoved: event("removed") },
     webNavigation: { onBeforeNavigate: event("before"), onCommitted: event("committed"), onHistoryStateUpdated: event("history") }
   };
-  runInNewContext(source, { chrome: api, URL, atob, console, fetchVigil: async (_path: string, options: { body: string }) => {
+  runInNewContext(source, { chrome: api, ...(safari ? { browser: api } : {}), URL, atob, console, fetchVigil: async (_path: string, options: { body: string }) => {
     const body: { candidates: string[]; inspect?: string } = JSON.parse(options.body);
-    returnChecks.push(body);
-    if (!verifierAvailable) throw new Error("Verifier temporarily unavailable");
-    return { json: async () => ({ ok: true, url: body.candidates.find(url => !url.includes("porn")) || "about:blank" }) };
+    const result = await verifyReturn(body);
+    return { json: async () => result };
   } });
-  const send = (action: string, url?: string, options: { tabId?: number; frameId?: number; senderURL?: string; newTab?: boolean } = {}) => new Promise<{ ok: boolean; retry?: boolean; url?: string; handled?: boolean }>(resolve => {
+  const send = (action: string, url?: string, options: { tabId?: number; frameId?: number; senderURL?: string; newTab?: boolean } = {}) => new Promise<{ ok: boolean; retry?: boolean; url?: string; handled?: boolean; exhausted?: boolean }>(resolve => {
     const tabId = options.tabId || 1;
     listeners.message({ type: "VIGIL_REDDIT_REVIEW", action, url, newTab: options.newTab },
       { tab: { id: tabId }, frameId: options.frameId ?? 0, url: options.senderURL || tabs.get(tabId)?.url }, resolve);
@@ -70,6 +81,43 @@ function harness(storageValues: Record<string, unknown> = {}, incognito = false)
 }
 const holding = "http://127.0.0.1:8787/blocked#vigil-holding-12345678-1234-1234-1234-123456789abc";
 const replacement = holding.replace("vigil-holding-", "vigil-blocker-");
+for (const root of ["chrome-extension://vigil/", "safari-web-extension://vigil/"]) {
+  assert.equal(vigilReturnPage(root + "search-break.html", root), true, "search-break Back must use the verified return handler");
+  assert.equal(vigilReturnPage("https://example.com/search-break.html", root), false, "websites cannot act as extension return pages");
+}
+for (const safari of [false, true]) {
+  const blocker = "extension://vigil/search-break.html";
+  const redirect = "https://example.com/redirect";
+  const h = harness({}, false, safari);
+  await h.navigate(search);
+  await h.navigate(redirect);
+  await h.navigate(blocker);
+  assert.equal((await h.send("return")).url, redirect);
+  await h.navigate(redirect);
+  await h.navigate("https://example.com/redirected", "committed", 1, { transitionType: "link", transitionQualifiers: ["client_redirect"] });
+  await h.navigate(blocker);
+  assert.equal((await h.send("return")).url, search, "a return that redirects into a blocker is skipped in Safari and Chrome");
+  assert.deepEqual(h.returnChecks.at(-1)?.candidates, [search], "the whole failed redirect chain is excluded");
+  const exhausted = harness({}, false, safari);
+  await exhausted.navigate(redirect);
+  await exhausted.navigate(blocker);
+  assert.equal((await exhausted.send("return")).url, redirect);
+  await exhausted.navigate(redirect);
+  await exhausted.navigate(blocker);
+  assert.equal((await exhausted.send("return")).exhausted, true, "no candidate means stop rather than native Back into the same loop");
+  const rejected = harness({}, false, safari);
+  await rejected.navigate("https://example.com/porn");
+  await rejected.navigate(blocker);
+  assert.equal((await rejected.send("return")).exhausted, true, "policy-rejected history never falls back into denied URLs");
+  const manual = harness({}, false, safari);
+  await manual.navigate(redirect);
+  await manual.navigate(blocker);
+  await manual.send("return");
+  await manual.navigate(redirect);
+  await manual.navigate("https://example.com/another-page", "committed", 1, { transitionType: "link" });
+  await manual.navigate(blocker);
+  assert.equal((await manual.send("return")).url, "https://example.com/another-page", "new user navigation is distinct from a failed return");
+}
 {
   const h = harness({}, true);
   await h.navigate(search);
@@ -162,6 +210,12 @@ for (const [windowId, incognito] of [[11, true], [10, false]] as const) {
   assert.equal(resumed.updates.at(-1)?.url, "https://example.com/", "leaving Reddit consumes permission and returns to the same tab's previous page");
 }
 const wrapper = "https://www.google.com/goto?opaque=actual-search-result";
+{
+  const h = harness();
+  assert.equal((await h.send("open", "https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2F")).ok, false, "a known wrapped homepage cannot become an opaque navigation ticket");
+  assert.equal(h.updates.length, 0, "forbidden wrapped links never enter the network loader");
+  assert.equal((await h.send("open", first)).ok, true, "rejecting a feed does not consume this search's thread selection");
+}
 assert.equal(redditReviewRedirect(wrapper, search), true);
 for (const invalid of ["https://google.com.evil.example/goto", "https://www.google.com/maps", "https://user@www.google.com/goto", "http://www.google.com/goto"]) assert.equal(redditReviewRedirect(invalid, search), false);
 {

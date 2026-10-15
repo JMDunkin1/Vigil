@@ -1,8 +1,9 @@
 import { limitedSearchPage, limitedSearchWarning } from "../src/searchBreak.js";
+import { browserProtectionPageURL } from "../src/browserExtensionPages.js";
 
 export const checkSearchBreakBeforeNavigation: () => Promise<boolean> | undefined = (() => {
   if (globalThis.top !== globalThis.self || typeof document === "undefined" || typeof document.addEventListener !== "function") return () => undefined;
-  const api = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || chrome;
+  const api = (globalThis as typeof globalThis & { browser?: typeof chrome }).browser || globalThis.chrome;
   let warningURL = "";
   let warningID = "";
   let reported = false;
@@ -27,7 +28,7 @@ export const checkSearchBreakBeforeNavigation: () => Promise<boolean> | undefine
           id: warningID, warning: notice, url });
         if (result?.ok && notice && warningURL === url) reported = true;
         if (result?.ok && result.blocked && location.href === url) {
-          location.replace(api.runtime.getURL("search-break.html"));
+          location.replace(browserProtectionPageURL("search-break.html"));
           return true;
         }
       } catch { /* The background retains the durable break across page retries. */ }

@@ -1,0 +1,98 @@
+[
+  {
+    "id": 1,
+    "priority": 10,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/reddit-review-blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/($|[?#]|r/[^/?#]+/?([?#]|$)|search([/?.#]|$)|user([/?.#]|$)|u([/?.#]|$)|gallery([/?.#]|$))",
+      "resourceTypes": [
+        "main_frame"
+      ]
+    }
+  },
+  {
+    "id": 4,
+    "priority": 10,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/reddit-review-blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/(subreddits([/?.#]|$)|over18([/?.#]|$)|api([/?.#]|$)|message([/?.#]|$)|chat([/?.#]|$)|best([/?.#]|$))",
+      "resourceTypes": [
+        "main_frame"
+      ]
+    }
+  },
+  {
+    "id": 5,
+    "priority": 10,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/reddit-review-blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/(hot([/?.#]|$)|new([/?.#]|$)|top([/?.#]|$)|controversial([/?.#]|$)|rising([/?.#]|$)|login([/?.#]|$))",
+      "resourceTypes": [
+        "main_frame"
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "priority": 10,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/reddit-review-blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/register([/?.#]|$)",
+      "resourceTypes": [
+        "main_frame"
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "priority": 10,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/reddit-review-blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*(redd\\.it|redditmedia\\.com)(:[0-9]+)?/",
+      "resourceTypes": [
+        "main_frame"
+      ]
+    }
+  },
+  {
+    "id": 3,
+    "priority": 10,
+    "action": {
+      "type": "redirect",
+      "redirect": {
+        "extensionPath": "/reddit-review-blocked.html"
+      }
+    },
+    "condition": {
+      "regexFilter": "^https?://([a-z0-9-]+\\.)*reddit\\.com(:[0-9]+)?/[^#]*[?&]js_challenge=1([&#]|$)",
+      "resourceTypes": [
+        "main_frame"
+      ]
+    }
+  }
+]

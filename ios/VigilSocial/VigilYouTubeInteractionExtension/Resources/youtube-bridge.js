@@ -1,8 +1,9 @@
 (() => {
-  // Safari does not reliably classify an incoming Google result as a "link"
-  // navigation. Capture the trusted click in the isolated extension world and
-  // persist its allowance before the source document is destroyed.
-  if (!/(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/.test(location.hostname)) {
+  // Both browsers capture trusted external result clicks in their isolated
+  // extension world, preserving the shared allowance before the source
+  // document is destroyed and retaining native middle/new-tab navigation.
+  const currentHost = location.hostname.toLowerCase().replace(/\.$/u, '');
+  if (!/(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/.test(currentHost)) {
     if (window.top !== window) return;
     const externalClick = event => {
       if (!event.isTrusted || (event.type === 'auxclick' && event.button !== 1)) return;
@@ -35,7 +36,7 @@
     document.addEventListener('auxclick', externalClick, true);
     return;
   }
-  if (!/^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(location.hostname)) return;
+  if (!/^(www\.|m\.)?youtube(?:-nocookie)?\.com$/.test(currentHost)) return;
   window.addEventListener('message', event => {
     if (event.source !== window || event.origin !== location.origin || event.data?.type !== 'VIGIL_YOUTUBE_REQUEST') return;
     const { id, body } = event.data;

@@ -12,6 +12,7 @@ async function main() {
  <header id="navigation">Home <input type="search"></header><aside id="recommendations">More posts</aside>
  <shreddit-post id="t3_abc123" permalink="${post}"><h1>Kettle review</h1><p id="post-text">This kettle lasted five years.</p></shreddit-post>
  <div id="comments"><p id="comment">Mine is still working.</p><button id="more">More replies</button><button id="reply">Reply</button><textarea></textarea>
+ <button id="install-app">Download the Reddit app</button><a id="app-store" href="https://apps.apple.com/app/reddit/id1064216828">Get Reddit</a>
  <a id="permalink" href="${post}ghi789/?context=3">Comment link</a>
  <a id="another" href="${other}">Another Reddit post</a><a id="external" href="https://manufacturer.example/">Specifications</a></div>
  <shreddit-post id="t3_def456" permalink="${other}"><h2>Recommended post</h2><img src="data:,"></shreddit-post>
@@ -27,6 +28,7 @@ async function main() {
  const visibility = await win.webContents.executeJavaScript(`['navigation','recommendations','t3_abc123','comments','reply','more','another','external','t3_def456'].map(id=>getComputedStyle(document.getElementById(id)).display==='none')`);
  assert.deepEqual(visibility,[true,true,false,false,true,false,true,false,true]);
  assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.documentElement).visibility`),'visible');
+ assert.deepEqual(await win.webContents.executeJavaScript(`['install-app','app-store'].map(id=>getComputedStyle(document.getElementById(id)).display==='none')`),[true,true],'permitted reader pages hide app-download prompts');
  await win.webContents.executeJavaScript(`window.siteClicks=0; document.addEventListener('click',()=>siteClicks++); document.getElementById('another').click(); document.getElementById('reply').click();`);
  assert.equal(await win.webContents.executeJavaScript('siteClicks'),0,'hidden links and social controls remain inert');
  await win.webContents.executeJavaScript(`document.getElementById('comments').insertAdjacentHTML('beforeend','<button id="late-upvote" aria-label="Upvote">▲</button>'); document.getElementById('late-upvote').click();`);
@@ -59,12 +61,14 @@ async function main() {
  await wait(100);
  assert.equal(await win.webContents.executeJavaScript(`reviewMessages.at(-1).url`),'https://www.google.com/goto?opaque=result','actual Google redirect clicks reach the background');
  const count = await win.webContents.executeJavaScript(`reviewMessages.length`);
- await win.webContents.executeJavaScript(`document.getElementById('result').href='https://www.reddit.com/'`);
- win.webContents.sendInputEvent({type:'mouseDown',x:40,y:40,button:'left',clickCount:1});
- win.webContents.sendInputEvent({type:'mouseUp',x:40,y:40,button:'left',clickCount:1});
- await wait(100);
- assert.equal(win.webContents.getURL(),'https://www.google.com/search?q=kettle+reddit','accidental Reddit homepage clicks leave the search page in place');
- assert.equal(await win.webContents.executeJavaScript(`reviewMessages.length`),count,'homepage clicks produce no notice');
+ for (const destination of ['https://www.reddit.com/', 'https://www.reddit.com/r/reviews/', 'https://www.google.com/url?q=https%3A%2F%2Fwww.reddit.com%2F', 'https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.reddit.com%2Fr%2Freviews%2F']) {
+  await win.webContents.executeJavaScript(`document.getElementById('result').href=${JSON.stringify(destination)}`);
+  win.webContents.sendInputEvent({type:'mouseDown',x:40,y:40,button:'left',clickCount:1});
+  win.webContents.sendInputEvent({type:'mouseUp',x:40,y:40,button:'left',clickCount:1});
+  await wait(100);
+  assert.equal(win.webContents.getURL(),'https://www.google.com/search?q=kettle+reddit','direct and wrapped feed clicks leave the search page in place');
+  assert.equal(await win.webContents.executeJavaScript(`reviewMessages.length`),count,'feed clicks never start a redirect or download');
+ }
  console.log('Reddit reader Chromium checks passed: concealed permission check, readable post/comments, hidden browsing UI, immediate social-control blocking, shadow DOM, SPA denial and trusted external clicks.');
  win.destroy(); app.quit();
 }

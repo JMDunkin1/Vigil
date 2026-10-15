@@ -20,7 +20,9 @@ const SAFARI_HISTORY_RESTRICTIONS_PAYLOAD_ID = `${SAFARI_FILTER_PROFILE_ID}.hist
 export const SAFARI_FILTER_PROFILE_PATH = join(DATA_DIR, "vigil-safari-url-filter.mobileconfig");
 
 const execFileAsync = promisify(execFile);
-const URL_LIMIT = 500;
+// Apple's macOS parental-controls filterDenyList has no documented 500-URL
+// ceiling. That ceiling belongs to the iOS BuiltIn DenyListURLs payload.
+// Preserve every generated deny instead of silently dropping existing rules.
 const SAFARI_FILTER_SIGNATURE_VERSION = 4;
 const PRIORITY_BLOCKED_SITE_KEYS = new Set([
   ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES,
@@ -153,7 +155,7 @@ export function safariFilterTargets(state: VigilState, now = new Date()): Safari
     targets.push(...siteTargetUrls(site, "adult-blocklist:preload"));
   }
 
-  return uniqueTargets(targets).slice(0, URL_LIMIT);
+  return uniqueTargets(targets);
 }
 
 export function safariFilterPolicySignature(state: VigilState, now = new Date()): string {
@@ -162,11 +164,10 @@ export function safariFilterPolicySignature(state: VigilState, now = new Date())
 
 function safariFilterPolicyData(state: VigilState, now: Date): SafariFilterPolicyData {
   const targets = safariFilterTargets(state, now);
-  const denyUrls = targets.map((target) => target.url).slice(0, URL_LIMIT);
+  const denyUrls = targets.map((target) => target.url);
   const pathDenyUrls = targets
     .filter((target) => target.pathSpecific)
-    .map((target) => target.url)
-    .slice(0, URL_LIMIT);
+    .map((target) => target.url);
   const siteAllowList = vigilLocalSiteAllowList();
   const signature = safariFilterPolicySignatureForUrls(denyUrls, siteAllowList);
   return { denyUrls, pathDenyUrls, siteAllowList, signature };

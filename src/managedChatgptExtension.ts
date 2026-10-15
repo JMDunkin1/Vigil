@@ -16,9 +16,11 @@ const ARCHIVE_NAME = "store-upload.zip";
 const PACKAGE_FILES = new Set([
   "manifest.json", "background.js", "content.js", "options.html", "options.js", "options.css",
   "blocked.html", "blocked.css", "blocked.js", "blocked-navigation.js", "rules.json",
+  "browser-protection-rules.json", "reddit-navigation-rules.json",
   "reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html",
   "reddit-child-lock.js", "google-safe-search.js", "media-child-lock.js",
   "youtube-bridge.js", "youtube-limits.js", "search-break.html", "search-break.js",
+  "youtube-parity.js", "youtube-player-response.js",
   "search-break-background.js", "search-break-page.js",
   ...[16, 32, 48, 128].map(size => `icons/icon-${size}.png`)
 ]);

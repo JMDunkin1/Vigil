@@ -7,6 +7,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual, promisify } from "node:util";
+import { freshSigningBuild, installPhoneRenewal, publishPhoneLauncherState, renewalDecision, RENEWAL_WINDOW_MS, withPhoneUpdateLock } from "./ios-phone-renewal.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -60,6 +61,9 @@ const OBSOLETE_YOUTUBE_WEB_CLIP_PROFILE_PROBLEM = "The obsolete Vigil YouTube We
 const PHONE_SOURCE_FILES = [
   "extension/google-safe-search.ts",
   "src/contextualExplicitSearch.ts",
+  "src/browserStaticProtection.ts",
+  "src/browserExtensionPages.ts",
+  "src/explicitComicPolicy.ts",
   "src/explicitMediaContext.ts",
   "src/safeSearchContext.ts",
   "scripts/generate-ios-safari-guard.mts",
@@ -68,6 +72,7 @@ const PHONE_SOURCE_FILES = [
   "scripts/build-ios-social-app.mts",
   "scripts/generate-ios-content-policy.mts",
   "scripts/ios-phone-suite.mjs",
+  "scripts/ios-phone-renewal.mjs",
   "scripts/watch-ios-usb-profile.mjs",
   "src/adultBlocklist.ts",
   "src/adultBlocklistPhoneArtifact.ts",
@@ -105,7 +110,7 @@ const REQUIRED_SOCIAL_APPS = [
 const DEFAULT_SOCIAL_APPS = REQUIRED_SOCIAL_APPS.filter((app) => app.id === "instagram");
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
 export const COMBINED_SOCIAL_SERVICE_IDS = ["instagram", "youtube", "snapchat", "linkedin", "facebook", "x", "tiktok", "reddit"];
-const PERSONAL_TEAM_RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
+const PERSONAL_TEAM_RENEWAL_WINDOW_MS = RENEWAL_WINDOW_MS;
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
   : [...REQUIRED_SOCIAL_APPS];
@@ -118,7 +123,7 @@ if (resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
 async function main(selectedCommand, selectedOptions) {
   // Every maintenance alias now updates the same combined binary. There must
   // never be a fourth install, or an old command reinstalling a retired shell.
-  if (["update", "develop", "status", "check"].includes(selectedCommand)) selectedOptions.app = "instagram";
+  if (["update", "renew", "develop", "status", "check"].includes(selectedCommand)) selectedOptions.app = "instagram";
   if (selectedCommand === "help") return printHelp();
   await configureRuntimeDataDirectory();
   const edition = await selectedPhoneEdition(selectedOptions.edition);
@@ -147,8 +152,19 @@ async function main(selectedCommand, selectedOptions) {
     printBlocklistReadiness(blocklist);
     return;
   }
-  if (selectedCommand === "update") {
-    await updatePhone({ ...selectedOptions, edition });
+  if (["update", "renew"].includes(selectedCommand)) {
+    await withPhoneUpdateLock(ROOT, async () => {
+      if (selectedCommand === "renew") {
+        const receipt = await readReceipt(selectedOptions.device);
+        const fingerprint = await implementationFingerprint(edition);
+        const decision = renewalDecision(receipt, fingerprint.hash);
+        if (decision.status === "current") return;
+        if (decision.status !== "due" || edition !== "personal") {
+          throw new Error("Automatic renewal requires the exact verified Personal phone sources. Run npm run agent:update:social to verify changed sources first.");
+        }
+      }
+      await updatePhone({ ...selectedOptions, edition });
+    });
     return;
   }
   if (selectedCommand === "develop") {
@@ -157,7 +173,7 @@ async function main(selectedCommand, selectedOptions) {
     }
     // The native YouTube companion depends on exact BuiltIn web-filter auth
     // routes. Keep its app and supervised policy in one verified transaction.
-    await updatePhone({ ...selectedOptions, app: "instagram", edition, noPolicy: false });
+    await withPhoneUpdateLock(ROOT, () => updatePhone({ ...selectedOptions, app: "instagram", edition, noPolicy: false }));
     return;
   }
   if (!["status", "check"].includes(selectedCommand)) throw new Error(`Unknown command: ${selectedCommand}`);
@@ -1323,6 +1339,10 @@ async function updatePhone(selectedOptions) {
   const report = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
   printStatus(report);
   if (report.problems.length) process.exitCode = 1;
+  else if (edition === "personal") {
+    await publishPhoneLauncherState(report.receipt, ROOT);
+    await installPhoneRenewal(deviceReceiptId, selectedOptions.server, ROOT);
+  }
 }
 
 function printBlocklistReadiness(readiness) {
@@ -1489,19 +1509,27 @@ async function buildPhoneApps(
         "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
       );
     }
-    try {
-      await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
-    } catch (error) {
-      if (reducedEntitlements) throw error;
-      reducedEntitlements = true;
-      console.warn("Full Apple capabilities are unavailable for the fixed social companions; retrying with the conservative Personal Team entitlement set.");
-      await run("xcodebuild", [
-        ...socialArguments,
-        `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`,
-        "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
-      ], { cwd: ROOT, env: environment });
-    }
+    const buildSocialApp = async () => {
+      try {
+        await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
+      } catch (error) {
+        if (reducedEntitlements) throw error;
+        reducedEntitlements = true;
+        console.warn("Full Apple capabilities are unavailable for the fixed social companions; retrying with the conservative Personal Team entitlement set.");
+        socialArguments.push(
+          `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`,
+          "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
+        );
+        await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
+      }
+    };
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
+    const profiles = await freshSigningBuild({
+      build: buildSocialApp,
+      readProfiles: () => signedAppProvisioningProfiles(path),
+      quarantine: quarantineCachedSigningProfiles,
+      ...(edition === "personal" ? {} : { window: PERSONAL_TEAM_RENEWAL_WINDOW_MS })
+    });
     const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
     const youtubeParityScript = ["youtube", "instagram"].includes(social.id)
       ? await verifyBundledYouTubeParityScript(path)
@@ -1510,7 +1538,12 @@ async function buildPhoneApps(
       ? await verifyBundledYouTubeInteractionExtension(path, social.bundleId)
       : null;
     const signingCapabilities = await signedAppCapabilities(path);
-    const signingProfile = await signedAppProvisioningProfile(path);
+    const signingProfile = {
+      ...profiles[0],
+      appExpiresAt: profiles[0].expiresAt,
+      expiresAt: profiles.map((profile) => profile.expiresAt).sort()[0],
+      profiles
+    };
     if (signingExpirationNeedsRenewal(signingProfile.expiresAt)) {
       throw new Error(`${social.name} built with a provisioning profile that expires too soon (${signingProfile.expiresAt}); refusing to install a companion that cannot survive the renewal window.`);
     }
@@ -1701,7 +1734,7 @@ export async function verifyBundledYouTubeInteractionExtension(appPath, parentBu
     throw new Error("Stale or substituted YouTube player-response guard; refusing companion update.");
   }
   const redditReviewBytes = [];
-  for (const name of ["reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html"]) {
+  for (const name of ["reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html", "reddit-navigation-rules.json"]) {
     const [bundled, iosSource, generated] = await Promise.all([
       readFile(join(extensionPath, name)),
       readFile(join(ROOT, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name)),
@@ -1779,7 +1812,8 @@ export function validYouTubeInteractionManifest(manifest) {
   const scripts = Array.isArray(manifest?.content_scripts) ? manifest.content_scripts : [];
   return manifest?.manifest_version === 3
     && JSON.stringify(manifest.host_permissions) === JSON.stringify([...expectedHosts, "http://*/*", "https://*/*"])
-    && JSON.stringify(manifest.permissions) === JSON.stringify(["nativeMessaging", "webNavigation", "storage", "tabs"])
+    && JSON.stringify(manifest.permissions) === JSON.stringify(["nativeMessaging", "webNavigation", "storage", "tabs", "declarativeNetRequest"])
+    && JSON.stringify(manifest.declarative_net_request) === JSON.stringify({ rule_resources: [{ id: "vigil_reddit_navigation", enabled: true, path: "reddit-navigation-rules.json" }] })
     && JSON.stringify(manifest.background) === JSON.stringify({ scripts: ["reddit-review-background.js", "youtube-background.js"] })
     && JSON.stringify(manifest.web_accessible_resources) === JSON.stringify([{ resources: ["blocked.html", "blocked.css", "reddit-review-blocked.html", "search-break.html"], matches: ["http://*/*", "https://*/*"] }])
     && scripts.length === 6
@@ -2001,6 +2035,48 @@ async function signedAppProvisioningProfile(appPath) {
   if (!await isFile(embeddedProfile)) {
     throw new Error(`${basename(appPath)} does not contain an embedded provisioning profile.`);
   }
+  return signedProvisioningFile(embeddedProfile);
+}
+
+async function signedAppProvisioningProfiles(appPath) {
+  const profiles = [await signedAppProvisioningProfile(appPath)];
+  let extensions;
+  try { extensions = await readdir(join(appPath, "PlugIns"), { withFileTypes: true }); }
+  catch (error) { if (error.code !== "ENOENT") throw error; extensions = []; }
+  for (const extension of extensions) {
+    if (extension.isDirectory() && extension.name.endsWith(".appex")) {
+      profiles.push(await signedAppProvisioningProfile(join(appPath, "PlugIns", extension.name)));
+    }
+  }
+  return profiles;
+}
+
+async function quarantineCachedSigningProfiles(profiles) {
+  const caches = [
+    join(homedir(), "Library", "Developer", "Xcode", "UserData", "Provisioning Profiles"),
+    join(homedir(), "Library", "MobileDevice", "Provisioning Profiles")
+  ];
+  const backup = join(ROOT, "data", "ios-provisioning-backups", `${Date.now()}-${randomUUID()}`);
+  for (const cache of caches) {
+    let entries;
+    try { entries = await readdir(cache, { withFileTypes: true }); }
+    catch (error) { if (error.code !== "ENOENT") throw error; continue; }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".mobileprovision")) continue;
+      const path = join(cache, entry.name);
+      let cached;
+      try { cached = await signedProvisioningFile(path); } catch { continue; }
+      if (!profiles.some((profile) => profile.uuid === cached.uuid && profile.teamIdentifier === cached.teamIdentifier)) continue;
+      // Move only the specific stale profiles used by this build. Keep a
+      // recovery copy; installed device profiles and certificates stay intact.
+      await mkdir(backup, { recursive: true, mode: 0o700 });
+      await rename(path, join(backup, `${randomUUID()}-${entry.name}`));
+      console.log(`Backed up stale Xcode signing profile ${cached.uuid}; requesting a fresh profile.`);
+    }
+  }
+}
+
+async function signedProvisioningFile(embeddedProfile) {
   const directory = await mkdtemp(join(tmpdir(), "vigil-provisioning-profile-"));
   const decodedProfile = join(directory, "profile.plist");
   try {
@@ -2039,7 +2115,7 @@ async function signedAppProvisioningProfile(appPath) {
   }
 }
 
-async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment) {
+async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt = Date.now()) {
   try {
     const launch = await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--terminate-existing", social.bundleId], toolEnvironment);
     const processIdentifier = Number(launch.result?.process?.processIdentifier);
@@ -2065,6 +2141,14 @@ async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment) 
       .join(" ")
       .replace(/\s+/gu, " ")
       .trim();
+    // A lock during packaging does not invalidate the signed install. Wait
+    // for the user's ordinary unlock, then repeat every launch/process check.
+    if (/Unable to launch[\s\S]*because the device was not, or could not be, unlocked/iu.test(detail)
+        && Date.now() - unlockWaitStartedAt < 180_000) {
+      console.log("Waiting for the iPhone to be unlocked for launch verification…");
+      await new Promise((resolveWait) => setTimeout(resolveWait, 3000));
+      return verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt);
+    }
     return { ok: false, detail: detail || String(error) };
   }
 }
@@ -2697,6 +2781,7 @@ Commands:
   check        Status with a nonzero exit when drift exists
   audit        Build and validate Normal, Soft Lock, Full Brick, and Panic profiles
   update       Bump when needed, audit, build, install, sync policy, and verify
+  renew        Renew due signing using only the last verified phone sources
   develop      Safely update the Personal YouTube companion and matching supervised policy
   bump [kind]  Bump patch, minor, or major only when phone inputs changed
   fingerprint  Print the current phone implementation fingerprint
