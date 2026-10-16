@@ -1919,8 +1919,8 @@ enum DOMAdapters {
         html[data-vigil-single-reel] video:not([data-vigil-single-reel-media="allowed"]) {
           visibility: hidden !important;
         }
-        [data-vigil-single-reel-card="blocked"],
-        [data-vigil-single-reel-card="blocked"] * {
+        html[data-vigil-single-reel] [data-vigil-single-reel-card="blocked"],
+        html[data-vigil-single-reel] [data-vigil-single-reel-card="blocked"] * {
           visibility: hidden !important;
           pointer-events: none !important;
         }
@@ -1961,10 +1961,19 @@ enum DOMAdapters {
         delete document.documentElement.dataset.vigilSingleReel;
         delete document.documentElement.dataset.vigilSingleReelKind;
       };
-      const activeModal = node => node?.isConnected && !node.hidden
-        && node.getAttribute('aria-hidden') !== 'true' && getComputedStyle(node).display !== 'none';
+      const activeModal = node => {
+        if (!node?.isConnected) return false;
+        // React retains the dialog while hiding its portal ancestor on close.
+        // A retained viewer must not keep the Direct thread pinned or hidden.
+        for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
+          if (ancestor.hidden || ancestor.getAttribute('aria-hidden') === 'true'
+              || getComputedStyle(ancestor).display === 'none') return false;
+        }
+        return true;
+      };
       const syncRoute = () => {
         const route = mediaRoute(location.href);
+        if (route && !modalContext) modalContext = foregroundModal();
         const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
           || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
             && Date.now() >= sharedStory.at && Date.now() - sharedStory.at < 30 * 60 * 1000));
@@ -2026,7 +2035,8 @@ enum DOMAdapters {
         // semantics. The message thread itself must remain scrollable.
         for (const media of document.querySelectorAll('video, img')) {
           const rect = media.getBoundingClientRect();
-          if (rect.width < 220 || rect.height < 280 || rect.bottom <= 0 || rect.top >= innerHeight) continue;
+          if (!activeModal(media) || rect.width < 220 || rect.height < 280
+              || rect.bottom <= 0 || rect.top >= innerHeight) continue;
           for (let node = media.parentElement; node && node !== document.body; node = node.parentElement) {
             if (getComputedStyle(node).position === 'fixed' && !inSheet(node)) return node;
           }
@@ -2130,11 +2140,12 @@ enum DOMAdapters {
           const routes = [...node.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
           if (routes.some(route => route.id !== pinnedID || route.kind !== pinnedKind)) break;
           if (routes.some(route => route.id === pinnedID && route.kind === pinnedKind)) identityCard = node;
-          if (node.matches('[role="dialog"], [aria-modal="true"]')) break;
+          if (node === modalContext || node.matches('[role="dialog"], [aria-modal="true"]')) break;
         }
         if (identityCard) return identityCard;
         let card = media;
-        for (let node = media.parentElement; node && !node.matches('body, main, [role="main"], [role="dialog"], [aria-modal="true"]'); node = node.parentElement) {
+        for (let node = media.parentElement; node && node !== modalContext
+            && !node.matches('body, main, [role="main"], [role="dialog"], [aria-modal="true"]'); node = node.parentElement) {
           card = node;
           const peers = [...node.parentElement.children].filter(sibling =>
             [...sibling.querySelectorAll('video, img')].some(contentMedia));
@@ -2245,24 +2256,10 @@ enum DOMAdapters {
             && (activeModal(modalContext) || mediaRoute(location.href)?.id === pinnedID);
           video.dataset.vigilSingleReelMedia = allowed ? 'allowed' : 'blocked';
           if (!allowed && !video.paused) video.pause();
-          let card = video.closest('article, [role="article"]');
-          if (!card) {
-            // Instagram's newer viewer uses anonymous div cards. Include the
-            // whole item, so a hidden video cannot leave recommended captions,
-            // posters or controls visible alongside it.
-            for (let node = video.parentElement; node && node !== document.body; node = node.parentElement) {
-              if (node.querySelectorAll('video').length !== 1) break;
-              card = node;
-              const siblingsWithMedia = [...(node.parentElement?.children || [])].filter((sibling) =>
-                [...sibling.querySelectorAll('video, img')].some((media) => {
-                  const rect = media.getBoundingClientRect();
-                  return rect.width >= 220 && rect.height >= 280;
-                }));
-              if (siblingsWithMedia.length > 1) break;
-            }
-          }
-          // For carousels the whole post owns all its media, not one slide.
-          if (pinnedKind === 'p') card = cardFor(video);
+          // Use the same item boundary for selection and classification. An
+          // anonymous viewer must never promote its portal, body or thread to
+          // a media card just because only one video has loaded so far.
+          const card = cardFor(video);
           recordCard(card, allowed);
           if (allowed && card?.parentElement) {
             for (const sibling of card.parentElement.children) {
@@ -2300,7 +2297,11 @@ enum DOMAdapters {
               ? source === pinnedImageSource
               : (remembered.source === null ? pendingMedia : remembered.source === source)))
             && (!(media instanceof HTMLVideoElement) || media.dataset.vigilSingleReelMedia === 'allowed');
-          recordCard(card, allowed);
+          // A Reel's poster can hydrate or change resolution independently of
+          // the video. Only the selected video's source authorizes playback;
+          // a decorative image must not veto that unchanged video and hide it.
+          if (!(pinnedKind === 'reel' && card === pinnedCard
+              && media instanceof HTMLImageElement && pinnedVideo)) recordCard(card, allowed);
           if (allowed) {
             // Recycled Home classifications belong to the old feed card.
             // Release only the exact pinned item, never the retained stream.

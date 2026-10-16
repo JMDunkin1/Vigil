@@ -8232,6 +8232,59 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramSharedReelPosterRefreshAndRetainedPortal() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Shared reel portal loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            body{margin:0} video,img{display:block;width:390px;height:700px}#portal{position:fixed;inset:0}
+          </style></head><body>
+            <main><article id="message"><a href="/reel/Shared123/"><img src="/preview.svg"></a></article></main>
+            <div id="portal"><div role="dialog"><article id="selected"><a href="/reel/Shared123/">
+              <video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></article>
+              <article><video id="suggested" src="/suggested.mp4"></video></article>
+            </div></div>
+          </body></html>
+          """#, baseURL: URL(string: "https://www.instagram.com/reel/Shared123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        _ = try await webView.evaluateJavaScript("document.getElementById('poster').src='/sharper-poster.svg'; true;")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let visible = try await webView.evaluateJavaScript(#"""
+          ({selected:getComputedStyle(document.getElementById('opened')).visibility,
+            suggested:getComputedStyle(document.getElementById('suggested')).visibility,
+            message:getComputedStyle(document.getElementById('message')).visibility})
+          """#) as? [String: String]
+        XCTAssertEqual(visible?["selected"], "visible", "Poster hydration cannot hide the unchanged reel")
+        XCTAssertEqual(visible?["suggested"], "hidden")
+        XCTAssertEqual(visible?["message"], "visible", "The underlying thread is outside the viewer's classifications")
+        _ = try await webView.evaluateJavaScript(#"""
+          document.getElementById('portal').style.display='none';history.pushState({},'', '/direct/t/123/');true;
+          """#)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let closed = try await webView.evaluateJavaScript(#"""
+          !document.documentElement.hasAttribute('data-vigil-single-reel')
+            && !document.querySelector('[data-vigil-single-reel-card]')
+            && getComputedStyle(document.getElementById('message')).visibility==='visible'
+          """#) as? Bool
+        XCTAssertEqual(closed, true, "Hiding a retained portal must release the thread")
+        _ = try await webView.evaluateJavaScript("document.getElementById('portal').style.display='';true;")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let reopened = try await webView.evaluateJavaScript(#"""
+          getComputedStyle(document.getElementById('opened')).visibility==='visible'
+            && getComputedStyle(document.getElementById('suggested')).visibility==='hidden'
+          """#) as? Bool
+        XCTAssertEqual(reopened, true, "Reopening the same share retains single-item containment")
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
     func testInstagramRightStoryTouchActivatesNativeNextExactlyOnce() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(

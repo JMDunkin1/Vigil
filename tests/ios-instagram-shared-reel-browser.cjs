@@ -15,7 +15,11 @@ async function main() {
     : new Response('<!doctype html><html><body></body></html>', {
       headers: { 'content-type': 'text/html' }
     }));
-  const run = code => win.webContents.executeJavaScript(code);
+  const run = async code => {
+    const result = await win.webContents.executeJavaScript(code);
+    await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 0))');
+    return result;
+  };
   for (const path of ['/reel/Shared123/', '/p/Shared123/', '/direct/t/123/']) {
     await win.loadURL(`https://www.instagram.com${path}`);
     await run(guard);
@@ -89,6 +93,38 @@ async function main() {
     })()`), { allowed: 'blocked', visible: 'hidden', card: 'blocked' },
     `${path}: a recycled source stays blocked even when the same article contains a poster`);
   }
+  // Direct keeps its thread mounted under the viewer and may hide a portal
+  // ancestor before removing the dialog. Neither transition may hide messages.
+  for (const route of ['/direct/t/123/', '/reel/Shared123/']) {
+    await win.loadURL(`https://www.instagram.com${route}`);
+    await run(guard);
+    await run(`document.body.innerHTML = ${JSON.stringify(`
+      <style>body{margin:0} video,img{width:390px;height:700px} #portal{position:fixed;inset:0}</style>
+      <main id="thread"><article id="message"><a href="/reel/Shared123/"><img src="/poster.svg"></a></article></main>
+      <div id="portal"><div role="dialog" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article></div></div>
+    `)}; history.pushState({}, '', ${JSON.stringify(route)});`);
+    assert.equal(await run(`getComputedStyle(document.getElementById('message')).visibility`), 'visible',
+      `${route}: viewer containment must not classify the retained Direct thread`);
+    await run(`document.getElementById('portal').style.display = 'none'; history.pushState({}, '', '/direct/t/123/');`);
+    assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
+      visible: getComputedStyle(document.getElementById('message')).visibility,
+      blocked: document.querySelectorAll('[data-vigil-single-reel-card="blocked"]').length })`),
+      { pinned: false, visible: 'visible', blocked: 0 }, 'closing a retained viewer releases all chat classifications');
+    await run(`document.getElementById('portal').style.display = '';`);
+    assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
+      'the same shared reel can be reopened');
+  }
+  await win.loadURL('https://www.instagram.com/reel/Shared123/');
+  await run(guard);
+  await run(`document.body.innerHTML = '<style>video,img{width:390px;height:700px}</style><main><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></article><article><video src="/suggested.mp4"></video></article></main>'`);
+  await run(`document.getElementById('poster').src = '/replacement.svg';`);
+  assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
+    'a delayed poster refresh must not veto the unchanged selected video');
+  await run(`const selected = document.getElementById('selected');
+    const wrapper = document.createElement('div'); selected.before(wrapper); wrapper.append(selected);
+    selected.removeAttribute('id'); selected.removeAttribute('role'); selected.outerHTML = selected.outerHTML.replaceAll('article', 'div');`);
+  assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
+    'a delayed layout wrapper remount preserves the exact selected video source');
   for (const initialSource of ['', 'src="about:blank"']) {
     await win.loadURL('https://www.instagram.com/p/LazyVideo/');
     await run(guard);
@@ -324,6 +360,7 @@ async function main() {
   console.log('Shared reel hold regressions passed for reel/post permalinks and Direct modals; playback taps, comments, Like, and Back remain usable.');
   console.log('Single-photo lazy src/srcset hydration passed; source replacement, recycled posts, unrelated media, and feed/story/reel navigation remain blocked.');
   console.log('Mixed photo/video carousel playback, horizontal swipes, photo arrows, hold containment, and source/slide freezes passed.');
+  console.log('Poster hydration, retained portal close/reopen, viewer boundaries, and unchanged-source layout remounts passed.');
   console.log('VIGIL_INSTAGRAM_SHARED_REEL_BROWSER_COMPLETE');
   win.destroy();
   app.quit();
