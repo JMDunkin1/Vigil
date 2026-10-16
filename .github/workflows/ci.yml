@@ -38,6 +38,34 @@ jobs:
           PYIOSBACKUP_PYTHON: python
         run: npm run check
 
+      - name: Test Instagram shared post browser regressions
+        timeout-minutes: 3
+        shell: bash
+        env:
+          ELECTRON_ENABLE_LOGGING: "1"
+        run: |
+          set -euo pipefail
+          node_modules/.bin/electron --enable-logging=stderr tests/ios-instagram-shared-reel-browser.cjs 2>&1 | tee "$RUNNER_TEMP/vigil-instagram-browser.log"
+          node --input-type=module - "$RUNNER_TEMP/vigil-instagram-browser.log" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          assert.ok(readFileSync(process.argv[2], 'utf8').split(/\r?\n/).includes('VIGIL_INSTAGRAM_SHARED_REEL_BROWSER_COMPLETE'), 'Instagram browser fixture did not complete');
+          NODE
+
+      - name: Test block page Back browser regressions
+        timeout-minutes: 3
+        shell: bash
+        env:
+          ELECTRON_ENABLE_LOGGING: "1"
+        run: |
+          set -euo pipefail
+          node_modules/.bin/electron --enable-logging=stderr tests/block-page-back-browser.cjs 2>&1 | tee "$RUNNER_TEMP/vigil-block-page-back-browser.log"
+          node --input-type=module - "$RUNNER_TEMP/vigil-block-page-back-browser.log" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          assert.ok(readFileSync(process.argv[2], 'utf8').split(/\r?\n/).includes('Real browser Back handles fresh visits, replacement bounces, conservative unverified assign bounces, verified returns, exhausted history, and empty tabs.'), 'Block page Back browser fixture did not complete');
+          NODE
+
       - name: Validate packaged Chrome rule compiler budget and quota
         run: python tests/extension-dnr-budget.py dist/runtime/extension
 
