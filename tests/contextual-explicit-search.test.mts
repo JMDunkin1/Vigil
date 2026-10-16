@@ -152,7 +152,8 @@ for (const hostname of ["health.example", "news.example", "reddit.com.example.or
 }
 
 const staticRules = JSON.parse(await readFile(new URL("../extension/rules.json", import.meta.url), "utf8"));
-const staticSearchRule = new RegExp(staticRules.find((rule: { id: number }) => rule.id === 4).condition.regexFilter, "i");
+const staticSearchMatchers: RegExp[] = staticRules.filter((rule: { id: number }) => rule.id === 4 || rule.id >= 7).map((rule: { condition: { regexFilter: string } }) => new RegExp(rule.condition.regexFilter, "i"));
+const staticSearchRule = { test: (url: string) => staticSearchMatchers.some(matcher => matcher.test(url)) };
 for (const url of [
   "https://news.example/articles/xxx-report",
   "https://news.example/article?id=aXXXb&tracking=xxx",

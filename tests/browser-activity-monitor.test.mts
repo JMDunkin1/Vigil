@@ -137,6 +137,13 @@ import { recordUsage } from "../src/usage.js";
 
 {
   const state = defaultState();
+  const authoredPattern = "/blocked";
+  const authoredProfile = {
+    ...state.profiles[0]!, id: "blocker-route-fixture", name: "Blocker route fixture",
+    blockedApps: [], blockedSites: [], blockedUrlPatterns: [authoredPattern]
+  };
+  state.profiles.push(authoredProfile);
+  state.settings.baselineProfileId = authoredProfile.id;
   const monitor = new Monitor({ state, usage: {} });
   const encodedBlockedTarget = encodeURIComponent("https://www.google.com/search?q=porn");
   const vigilBlockedPage = `http://127.0.0.1:${PORT}/blocked?back=${encodedBlockedTarget}#details`;
@@ -155,9 +162,10 @@ import { recordUsage } from "../src/usage.js";
     "the fast path must leave Vigil's exact blocker route visible even when its back query contains a blocked URL"
   );
   for (const url of lookalikes) {
-    assert.ok(
-      monitor.browserBlockDecision({ app: "Safari", hostname: new URL(url).hostname, url }),
-      `the fast path must still evaluate blocker-route lookalike ${url}`
+    assert.equal(
+      monitor.browserBlockDecision({ app: "Safari", hostname: new URL(url).hostname, url })?.options.urlPattern?.pattern,
+      authoredPattern,
+      `the fast path must apply the authored URL restriction to blocker-route lookalike ${url}`
     );
   }
 

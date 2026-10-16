@@ -201,11 +201,13 @@ async function reviewNavigation(details: { tabId: number; frameId: number; url: 
   if (current.url !== details.url) return;
   const state = await readReview(details.tabId, current);
   await restoreReplacementReturn(details.tabId, current, state);
-  if (vigilReturnPage(details.url, reviewApi.runtime.getURL("/"))) trackBlockedReturn(state);
-  else if (state.returning && details.url !== state.returning.url
+  // Static rules can commit a blocker without an intermediate destination.
+  // Clear a fresh deliberate navigation before attributing that blocker to Back.
+  if (state.returning && details.url !== state.returning.url
     && (Date.now() - state.returning.startedAt > 15_000
       || (["link", "typed", "auto_bookmark", "keyword", "keyword_generated"].includes(details.transitionType || "")
         && !details.transitionQualifiers?.some(value => value === "server_redirect" || value === "client_redirect")))) state.returning = undefined;
+  if (vigilReturnPage(details.url, reviewApi.runtime.getURL("/"))) trackBlockedReturn(state);
   if (state.pending && ["typed", "auto_bookmark", "keyword", "keyword_generated"].includes(details.transitionType || "")
     && !details.transitionQualifiers?.some(value => value === "server_redirect" || value === "client_redirect")) state.pending = undefined;
   if (redditReviewHost(details.url)) {

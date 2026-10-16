@@ -51,7 +51,7 @@ for (const source of guards) for (const surface of ["chrome", "browser"] as cons
       assert.deepEqual(fixture(source, surface, failure, url).redirects, ["about:blank"], `${surface}/${failure}: ${url}`);
     }
     const dynamic = fixture(source, surface, failure);
-    dynamic.location.href = "https://catalog.example/search?q=manhwa";
+    dynamic.location.href = "https://catalog.example/search?q=adult%20manhwa";
     dynamic.tick();
     assert.deepEqual(dynamic.redirects, ["about:blank"], `${surface}/${failure}: SPA navigation`);
     for (const [type, target] of [["keydown", new Element()], ["click", new Anchor()], ["auxclick", new Anchor()], ["contextmenu", new Anchor()], ["submit", new Form()]] as const) {
@@ -63,10 +63,13 @@ for (const source of guards) for (const surface of ["chrome", "browser"] as cons
       assert.equal(stopped, true, `${surface}/${failure}: ${type} stops the site's handler`);
       assert.deepEqual(page.redirects, ["about:blank"], `${surface}/${failure}: ${type} leaves restricted content`);
     }
-    const ordinary = fixture(source, surface, failure);
-    ordinary.listeners.get("keydown")!({ type: "keydown", key: "Enter", target: new Element("INPUT", "adult education video") });
-    ordinary.listeners.get("submit")!({ type: "submit", target: new Form("Middlesex gardening") });
-    assert.deepEqual(ordinary.redirects, [], `${surface}/${failure}: ordinary searches remain usable`);
+    for (const query of ["manhwa", "manhua", "manga", "adult education video", "Middlesex gardening"]) {
+      const ordinary = fixture(source, surface, failure, `https://catalog.example/search?q=${encodeURIComponent(query)}`);
+      ordinary.tick();
+      ordinary.listeners.get("keydown")!({ type: "keydown", key: "Enter", target: new Element("INPUT", query) });
+      ordinary.listeners.get("submit")!({ type: "submit", target: new Form(query) });
+      assert.deepEqual(ordinary.redirects, [], `${surface}/${failure}: ordinary search remains usable: ${query}`);
+    }
   }
 
   // A durable break remains enforceable when messaging works but the extension

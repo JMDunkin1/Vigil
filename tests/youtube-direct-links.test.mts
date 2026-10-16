@@ -30,7 +30,7 @@ test('external clicks wait for the allowance write and preserve timestamps', asy
 });
 
 test('Chrome incoming links get time-only access; recommendations, new-tab recommendations, reloads and Shorts do not', async () => {
-  const start = background.indexOf('async function authorizeDirectYouTubeNavigation(');
+  const start = background.indexOf('function externalYouTubeVideoId(');
   const end = background.indexOf('chrome.webNavigation.onHistoryStateUpdated', start);
   for (const scenario of [
     { previous: 'https://www.google.com/search?q=econ', transitionType: 'link', allowed: true },
@@ -214,7 +214,7 @@ test('Chrome uses the same trusted middle/new-tab click capture and source restr
 });
 
 test('Chrome external-click authority verifies top-frame provenance and target before granting', async () => {
-  const start = background.indexOf('async function authorizeExternalYouTubeClick(');
+  const start = background.indexOf('function externalYouTubeVideoId(');
   const end = background.indexOf('async function authorizeDirectYouTubeNavigation(', start);
   assert.ok(start >= 0 && end > start);
   const requests: Array<{ action: string; videoId: string }> = [];

@@ -71,6 +71,8 @@ for (const query of ['r34', 's3x', 'nud', 's3xnud']) {
   runInContext(source, navigation);
   assert.deepEqual(redirects, ['chrome-extension://vigil/blocked.html']);
 }
-const variantRule = new RegExp(rules.find(rule => rule.id === 4)!.condition.regexFilter, 'i');
-for (const query of ['r34', 's3x', 'nud', 's3xnud', 'pornnudes']) assert.equal(variantRule.test(`https://www.reddit.com/search?q=${query}`), true);
+const variantMatchers = rules.filter(rule => rule.id === 4 || rule.id >= 7).map(rule => new RegExp(rule.condition.regexFilter, 'i'));
+const variantRule = { test: (url: string) => variantMatchers.some(matcher => matcher.test(url)) };
+for (const query of ['r34', 's3x', 'nud', 'pornnudes']) assert.equal(variantRule.test(`https://www.reddit.com/search?q=${query}`), true);
+assert.equal(variantRule.test('https://www.reddit.com/search?q=s3xnud'), false, 'the contextual static base delegates ambiguous composite variants to the browser guard');
 for (const query of ['nudging', 'nudibranch', 'NUD+command+reference', 'SKU-R34567', 'Middlesex']) assert.equal(variantRule.test(`https://www.google.com/search?q=${query}`), false);

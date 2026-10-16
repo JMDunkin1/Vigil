@@ -8,11 +8,12 @@ import { baselinePolicy, shouldBlockSite, shouldBlockUrl } from "../src/policy.j
 const sources = [await readFile(new URL("../extension/google-safe-search.js", import.meta.url), "utf8"), await generatedIosSafariGuard()];
 const rules = JSON.parse(await readFile(new URL("../extension/rules.json", import.meta.url), "utf8")) as chrome.declarativeNetRequest.Rule[];
 const staticRule = rules.find(rule => rule.id === 4)!;
-const staticSearch = new RegExp(staticRule.condition.regexFilter!, "i");
+const staticSearchMatchers = rules.filter(rule => rule.id === 4 || rule.id >= 7).map(rule => new RegExp(rule.condition.regexFilter!, "i"));
+const staticSearch = { test: (url: string) => staticSearchMatchers.some(matcher => matcher.test(url)) };
 assert.equal(staticRule.priority, 1_000);
 assert.deepEqual(staticRule.action, { type: "redirect", redirect: { extensionPath: "/blocked.html" } });
-assert.deepEqual(staticRule.condition.resourceTypes, ["main_frame"]);
-assert.equal(rules.length, 6, "precision changes retain the complete existing SafeSearch and explicit-domain ruleset");
+assert.deepEqual(staticRule.condition.resourceTypes, ["main_frame", "sub_frame"]);
+assert.deepEqual(rules.filter(rule => rule.id < 7).map(rule => rule.id).sort(), [1, 2, 3, 4, 5, 6], "precision changes retain the complete existing SafeSearch and explicit-domain ruleset");
 
 class SearchInput {
   readonly tagName = "INPUT";

@@ -1899,6 +1899,8 @@ enum DOMAdapters {
       let pinnedCard = null;
       let pinnedImageSource = '';
       let mediaSources = new WeakMap();
+      let postCarousel = null;
+      let postLayoutCaptured = false;
       const sharedStoryKey = 'vigil.instagram.shared-story.v1';
       let sharedStory = null;
       try { sharedStory = JSON.parse(sessionStorage.getItem(sharedStoryKey) || 'null'); } catch (_) {}
@@ -1946,6 +1948,8 @@ enum DOMAdapters {
         pinnedCard = null;
         pinnedImageSource = '';
         mediaSources = new WeakMap();
+        postCarousel = null;
+        postLayoutCaptured = false;
         modalContext = null;
         sharedIntent = null;
         gesture = null;
@@ -2088,7 +2092,6 @@ enum DOMAdapters {
         if (reelAdvanceControl(event.target)) { cancel(event); return true; }
         const control = event.target?.closest?.('button, a[href], [role="button"]');
         if (control && !control.querySelector('video, img') && !mediaRoute(control.href)) return false;
-        if (isPostCarousel() && pinnedCard?.contains(event.target)) return false;
         // A hold can arm Instagram's recommendation viewer before any move
         // event occurs. Keep press/release listeners away from the media while
         // retaining the browser's ordinary click for playback and pinch zoom.
@@ -2143,10 +2146,46 @@ enum DOMAdapters {
         const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
         return !routes.length || routes.some(route => route.id === pinnedID && route.kind === pinnedKind);
       };
-      const isPostCarousel = () => pinnedKind === 'p' && pinnedCard
-        && ([...pinnedCard.querySelectorAll('video, img')].filter(contentMedia).length > 1
-          || [...pinnedCard.querySelectorAll('*')].some(node => node.clientWidth > 0
-            && node.scrollWidth > node.clientWidth + 1 && /auto|scroll/.test(getComputedStyle(node).overflowX)));
+      const emptyMediaSource = source => !source.trim() || /^about:blank(?:[?#]|$)/i.test(source.trim());
+      const exactPostCard = card => {
+        const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
+        return routes.length > 0 && routes.every(route => route.id === pinnedID && route.kind === pinnedKind);
+      };
+      const capturePostCarousel = card => {
+        if (pinnedKind !== 'p' || !exactPostCard(card)) return null;
+        for (const track of [card, ...card.querySelectorAll('*')]) {
+          if (!horizontalCarousel(track) || !(track.getAttribute('aria-roledescription') === 'carousel'
+              || (track.clientWidth > 0 && track.scrollWidth > track.clientWidth + 1
+                && /auto|scroll/.test(getComputedStyle(track).overflowX)))) continue;
+          const slides = mediaGroups(track);
+          if (slides.length < 2) continue;
+          const boxes = slides.map(slide => slide.getBoundingClientRect()).sort((a, b) => a.left - b.left);
+          // A video and its overlaid poster are one slide. Only distinct,
+          // substantial horizontal groups can authorize additional videos.
+          if (boxes.some((box, index) => box.width < 180 || box.height < 140
+              || (index > 0 && box.left < boxes[index - 1].right - 1))) continue;
+          return { track, rejected: false, slides: slides.map(node => ({ node,
+            media: [...(node.matches('video, img') ? [node] : node.querySelectorAll('video, img'))]
+              .filter(contentMedia).map(media => ({ node: media,
+                video: media instanceof HTMLVideoElement,
+                source: emptyMediaSource(mediaSource(media)) ? null : mediaSource(media) }))
+          })) };
+        }
+        return null;
+      };
+      const carouselMediaAllowed = (media, source) => {
+        if (!postCarousel || postCarousel.rejected || !pinnedCard?.contains(postCarousel.track)) return false;
+        if (!exactPostCard(pinnedCard)) { postCarousel.rejected = true; return false; }
+        const slide = postCarousel.slides.find(slide => slide.node.parentElement === postCarousel.track
+          && (slide.node === media || slide.node.contains(media)));
+        if (!slide) return false;
+        const video = media instanceof HTMLVideoElement;
+        const remembered = slide.media.find(entry => entry.node === media)
+          || slide.media.find(entry => entry.video === video && entry.source !== null && entry.source === source);
+        if (!remembered || remembered.video !== video) return false;
+        if (remembered.source === null && !emptyMediaSource(source)) remembered.source = source;
+        return remembered.source === null ? emptyMediaSource(source) : remembered.source === source;
+      };
       const reconcile = () => {
         if (!syncRoute()) return;
         const videos = [...(modalContext || document).querySelectorAll('video')];
@@ -2183,13 +2222,26 @@ enum DOMAdapters {
           const media = pinnedVideo?.isConnected ? pinnedVideo : candidates[0];
           pinnedCard = media ? cardFor(media) : null;
         }
+        if (pinnedCard && !postLayoutCaptured) {
+          postCarousel = capturePostCarousel(pinnedCard);
+          postLayoutCaptured = true;
+        }
+        if (postCarousel && (!pinnedCard?.contains(postCarousel.track) || !exactPostCard(pinnedCard))) {
+          postCarousel.rejected = true;
+        }
+        const cardDecisions = new Map();
+        const recordCard = (card, allowed) => {
+          if (card) cardDecisions.set(card, (cardDecisions.get(card) ?? true) && allowed);
+        };
         for (const video of videos) {
           const source = mediaSource(video);
-          if (video === pinnedVideo && !pinnedSource && source) pinnedSource = source;
+          if (video === pinnedVideo && !pinnedSource && !emptyMediaSource(source)) pinnedSource = source;
           // React can recycle the same video node without changing history.
-          // A different source must never inherit permission from that node.
-          const allowed = (isPostCarousel() ? pinnedCard?.contains(video) && cardMatches(pinnedCard)
-            : video === pinnedVideo && (!pinnedSource || source === pinnedSource))
+          // Carousel permission belongs to the original slide and source,
+          // never to every video subsequently inserted into the post.
+          const allowed = cardFor(video) === pinnedCard && cardMatches(pinnedCard) && !mediaSources.get(video)?.rejected
+            && (postCarousel ? carouselMediaAllowed(video, source)
+              : video === pinnedVideo && (!pinnedSource || source === pinnedSource))
             && (activeModal(modalContext) || mediaRoute(location.href)?.id === pinnedID);
           video.dataset.vigilSingleReelMedia = allowed ? 'allowed' : 'blocked';
           if (!allowed && !video.paused) video.pause();
@@ -2211,7 +2263,7 @@ enum DOMAdapters {
           }
           // For carousels the whole post owns all its media, not one slide.
           if (pinnedKind === 'p') card = cardFor(video);
-          if (card) card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
+          recordCard(card, allowed);
           if (allowed && card?.parentElement) {
             for (const sibling of card.parentElement.children) {
               if (sibling === card || inSheet(sibling)) continue;
@@ -2226,15 +2278,29 @@ enum DOMAdapters {
           if (!contentMedia(media)) continue;
           const card = cardFor(media);
           const source = mediaSource(media);
-          if (!mediaSources.has(media)) mediaSources.set(media, source);
+          // Empty media shells may hydrate once while their original card
+          // still identifies the selected item. An existing source is frozen.
+          const pendingMedia = (media instanceof HTMLVideoElement || pinnedKind === 'p') && emptyMediaSource(source);
+          if (!mediaSources.has(media)) mediaSources.set(media, { source: pendingMedia ? null : source, card });
+          const remembered = mediaSources.get(media);
+          if (card !== remembered.card) remembered.rejected = true;
+          if (remembered.source === null) {
+            const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
+            const matches = route => route.id === pinnedID && route.kind === pinnedKind;
+            if (card !== pinnedCard || routes.some(route => !matches(route))) remembered.rejected = true;
+            const selectedVideo = media === pinnedVideo && (activeModal(modalContext)
+              || mediaRoute(location.href)?.id === pinnedID);
+            if (!remembered.rejected && !pendingMedia && (routes.some(matches) || selectedVideo)) remembered.source = source;
+          }
           if (card === pinnedCard && media instanceof HTMLImageElement && pinnedKind !== 'p' && !pinnedImageSource) {
             pinnedImageSource = source;
           }
-          const allowed = card === pinnedCard && cardMatches(card)
-            && (isPostCarousel() || (media instanceof HTMLImageElement && pinnedKind !== 'p'
-              ? source === pinnedImageSource : mediaSources.get(media) === source))
+          const allowed = card === pinnedCard && cardMatches(card) && !remembered.rejected
+            && (postCarousel ? carouselMediaAllowed(media, source) : (media instanceof HTMLImageElement && pinnedKind !== 'p'
+              ? source === pinnedImageSource
+              : (remembered.source === null ? pendingMedia : remembered.source === source)))
             && (!(media instanceof HTMLVideoElement) || media.dataset.vigilSingleReelMedia === 'allowed');
-          card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
+          recordCard(card, allowed);
           if (allowed) {
             // Recycled Home classifications belong to the old feed card.
             // Release only the exact pinned item, never the retained stream.
@@ -2242,6 +2308,9 @@ enum DOMAdapters {
               'data-vigil-instagram-story-panel']) card.removeAttribute(name);
           }
         }
+        cardDecisions.forEach((allowed, card) => {
+          card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
+        });
         if (pinnedCard?.isConnected) {
           for (let node = pinnedCard; node; node = node.parentElement) {
             if (inSheet(node)) continue;

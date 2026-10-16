@@ -904,6 +904,13 @@ export function applePresetUrlPatternVariants(value: unknown, trustedRoute = fal
   try { parsed = new URL(absolute ? String(value) : `https://${normalized}`); } catch { return null; }
   if (!trustedRoute && matchGeneratedPresetUrlPattern(value, parsed) === null) return null;
   if (parsed.search) {
+    // Companion probes are exact trusted HTTPS URLs, not explicit-search terms.
+    // Keep their query so each feature remains detectable without blocking the
+    // service root or adding HTTP/host variants to Apple's limited deny list.
+    if (trustedRoute && absolute && parsed.protocol === "https:"
+      && parsed.searchParams.size === 1 && parsed.searchParams.has("__vigil_feature")) {
+      return [parsed.toString()];
+    }
     return [...parsed.searchParams].flatMap(([name, term]) => appleMediaPhraseEncodings(term)
       .map(encoded => `${absolute ? `${parsed.protocol}//` : ""}${parsed.hostname}${parsed.pathname}?${name}=${encoded}`));
   }

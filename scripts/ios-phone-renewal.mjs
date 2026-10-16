@@ -1,5 +1,6 @@
 import { execFile, spawn } from "node:child_process";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,9 +94,7 @@ export async function withPhoneUpdateLock(root, action) {
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
     const recovery = `${path}.recovery`;
-    try { await mkdir(recovery); }
-    catch (error) { throw new Error("Another Vigil phone update owns the update lock; retry after it finishes.", { cause: error }); }
-    try {
+    await withPhoneRecoveryLock(recovery, async () => {
       const owner = await readFile(join(path, "pid"), "utf8").catch(() => "");
       const pid = Number(owner);
       let alive = true;
@@ -113,15 +112,48 @@ export async function withPhoneUpdateLock(root, action) {
       await rm(stale, { recursive: true, force: true });
       await mkdir(path);
       await writeFile(join(path, "pid"), String(process.pid), { mode: 0o600 });
-    } finally {
-      await rm(recovery, { recursive: true, force: true });
-    }
+    });
   }
   try {
     await writeFile(join(path, "pid"), String(process.pid), { mode: 0o600 });
     return await action();
   } finally {
     await rm(path, { recursive: true, force: true });
+  }
+}
+
+async function withPhoneRecoveryLock(path, action) {
+  const ready = join(path, "claims-v1");
+  const created = await mkdir(path).then(() => true, (error) => {
+    if (error.code !== "EEXIST") throw error;
+    return false;
+  });
+  if (!created && !await readFile(ready, "utf8").then((value) => value === "1\n", () => false)
+    && Date.now() - (await stat(path)).mtimeMs < 60_000) {
+    // An older updater may have created its ownerless recovery directory and
+    // still be using it. Give that publication gap the same grace as the lock.
+    throw new Error("Another Vigil phone update owns the update lock; retry after it finishes.");
+  }
+  await writeFile(ready, "1\n", { mode: 0o600 });
+  // Keep this registry directory: each immutable claim publishes its PID in
+  // its name atomically. Reaping a dead claim cannot remove a replacement
+  // owner's claim or require another recovery mutex that could be abandoned.
+  const claim = `${process.pid}-${randomUUID()}`;
+  await mkdir(join(path, claim));
+  try {
+    for (const other of await readdir(path)) {
+      if (other === "claims-v1" || other === claim) continue;
+      const pid = Number(/^(\d+)-[\da-f-]+$/u.exec(other)?.[1]);
+      let alive = true;
+      if (Number.isInteger(pid) && pid > 0) {
+        try { process.kill(pid, 0); } catch (error) { if (error.code === "ESRCH") alive = false; }
+      }
+      if (alive) throw new Error("Another Vigil phone update owns the update lock; retry after it finishes.");
+      await rm(join(path, other), { recursive: true, force: true });
+    }
+    return await action();
+  } finally {
+    await rm(join(path, claim), { recursive: true, force: true });
   }
 }
 

@@ -55,12 +55,12 @@ async function main() {
     assert.equal(await win.webContents.executeJavaScript('getComputedStyle(document.body).visibility'), 'visible');
     assert.equal(win.webContents.getURL(), 'https://catalog.example/');
 
-    for (const query of ['honeytoon', 'manhwa', 'mature webtoon', 'p.o.r.n', 'spicy clips', 'naked girls']) {
+    for (const query of ['honeytoon', 'adult manhwa', 'mature webtoon', 'p.o.r.n', 'spicy clips', 'naked girls']) {
       await load('https://catalog.example/');
       await win.webContents.executeJavaScript(`document.querySelector('input').value=${JSON.stringify(query)}; document.querySelector('input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));`);
       await waitFor(() => win.webContents.getURL() === 'https://vigil-fixture.test/blocked', `keyword ${query}`);
     }
-    for (const query of ['Middlesex gardening', 'adult education video', 'uncensored interview', 'banana cream pie video']) {
+    for (const query of ['manhwa', 'Middlesex gardening', 'adult education video', 'uncensored interview', 'banana cream pie video']) {
       await load('https://catalog.example/');
       await win.webContents.executeJavaScript(`document.querySelector('input').value=${JSON.stringify(query)}; document.querySelector('input').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true,cancelable:true}));`);
       await new Promise(resolve => setTimeout(resolve, 150));

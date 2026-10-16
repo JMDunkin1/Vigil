@@ -64,6 +64,9 @@ assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=ordinary+
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=explicit+porn+query"), true);
 assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), false, "age markers alone require contextual interpretation");
 assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B+videos"), true);
+for (const query of ["18%2B+travel+insurance", "pornography+blocker", "chapter+xxx"]) {
+  assert.equal(explicitSearchRegex.test(`https://www.google.com/search?q=${query}`), false, `contextual search remains allowed: ${query}`);
+}
 assert.equal(explicitSearchRegex.test("https://archive.org/search?query=explicit+porn+query"), true);
 assert.equal(explicitSearchRegex.test("https://example.com/find?keywords=rule34"), true);
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=prno"), true);

@@ -18,10 +18,18 @@ function blockedPageBack(destination = "", exhausted = false) {
     }
     if (!exhausted && history.length > 1) {
         let previous = state.attempt;
+        const navigation = globalThis.navigation;
+        const entry = navigation?.currentEntry;
         try {
-            previous = JSON.parse(sessionStorage.getItem(key) || "null") || previous;
+            const stored = JSON.parse(sessionStorage.getItem(key) || "null");
+            const earlierEntry = stored?.entryKey && entry && navigation?.entries().some(candidate => candidate.key === stored.entryKey && candidate.index > entry.index);
+            // A tab-wide timestamp cannot distinguish a denied-entry bounce from a
+            // successful Back followed by Forward and reload. Reuse it only when the
+            // attempted blocker remains ahead of this earlier history entry.
+            if (earlierEntry)
+                previous = stored || previous;
         }
-        catch { /* Retain the in-document fallback. */ }
+        catch { /* Retain the in-document fallback when provenance is unavailable. */ }
         const retry = previous && Number.isInteger(previous.steps) && previous.steps > 0
             && Number.isInteger(previous.length) && previous.length >= history.length
             && previous.at <= now && now - previous.at < 30_000;
@@ -29,7 +37,7 @@ function blockedPageBack(destination = "", exhausted = false) {
         if (steps < history.length) {
             // A denied entry can redirect back here after native Back. Remember the
             // attempt in this tab and advance past it on a retry, including reloads.
-            state.attempt = { steps, length: history.length, at: now };
+            state.attempt = { steps, length: history.length, at: now, entryKey: entry?.key };
             try {
                 sessionStorage.setItem(key, JSON.stringify(state.attempt));
             }
@@ -47,7 +55,7 @@ function blockedPageBack(destination = "", exhausted = false) {
                 blockedPageBack("", true);
             }, 1500);
             // A timer frozen in BFCache must not navigate when this page is restored.
-            addEventListener("pagehide", () => clearTimeout(fallback), { once: true });
+            addEventListener("pagehide", () => { clearTimeout(fallback); state.attempt = undefined; state.busyUntil = 0; }, { once: true });
             if (steps === 1)
                 history.back();
             else

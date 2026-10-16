@@ -117,6 +117,30 @@ for (const safari of [false, true]) {
   await manual.navigate("https://example.com/another-page", "committed", 1, { transitionType: "link" });
   await manual.navigate(blocker);
   assert.equal((await manual.send("return")).url, "https://example.com/another-page", "new user navigation is distinct from a failed return");
+  for (const transitionType of ["link", "typed", "auto_bookmark", "keyword", "keyword_generated"]) {
+    const deliberate = harness({}, false, safari);
+    await deliberate.navigate(search);
+    await deliberate.navigate(redirect);
+    await deliberate.navigate(blocker);
+    assert.equal((await deliberate.send("return")).url, redirect);
+    await deliberate.navigate(redirect);
+    // A static rule can commit the blocker directly, with no intermediate
+    // destination event at which to clear the completed return attempt.
+    await deliberate.navigate("extension://vigil/blocked.html", "committed", 1, { transitionType });
+    assert.equal((await deliberate.send("return")).url, redirect, `a fresh ${transitionType} navigation into a blocker preserves the successful return`);
+    assert.deepEqual(deliberate.returnChecks.at(-1)?.candidates, [redirect, search], "fresh blocked navigation must not blacklist safe history");
+  }
+  for (const qualifier of ["client_redirect", "server_redirect"]) {
+    const bounced = harness({}, false, safari);
+    await bounced.navigate(search);
+    await bounced.navigate(redirect);
+    await bounced.navigate(blocker);
+    assert.equal((await bounced.send("return")).url, redirect);
+    await bounced.navigate(redirect);
+    await bounced.navigate("extension://vigil/blocked.html", "committed", 1, { transitionType: "link", transitionQualifiers: [qualifier] });
+    assert.equal((await bounced.send("return")).url, search, `a ${qualifier} bounce into a blocker still skips the failed return`);
+    assert.deepEqual(bounced.returnChecks.at(-1)?.candidates, [search], "automatic blocker redirects retain failed-return protection");
+  }
 }
 {
   const h = harness({}, true);
