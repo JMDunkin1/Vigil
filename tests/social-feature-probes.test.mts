@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { SOFT_BLOCK_PROFILE_ID, defaultState } from "../src/defaults.js";
-import { buildIosConfigurationProfile } from "../src/iosProfiles.js";
+import { applePresetUrlPatternVariants, buildIosConfigurationProfile } from "../src/iosProfiles.js";
 import { parsePlist } from "../src/plist.js";
 import { profileById } from "../src/policy.js";
 import {
@@ -73,6 +73,24 @@ const allProbes = focusedSocialDeniedUrls(settings).filter((url) => url.includes
 assert.equal(allProbes.length, 15);
 assert.equal(allProbes.every((url) => url.startsWith("https://")), true);
 assert.equal(allProbes.filter((url) => url.startsWith("https://m.youtube.com/")).length, 4);
+for (const probe of allProbes) {
+  assert.deepEqual(applePresetUrlPatternVariants(probe, true), [probe]);
+}
+assert.deepEqual(
+  applePresetUrlPatternVariants("https://www.youtube.com/results?search_query=porn", true),
+  [
+    "https://www.youtube.com/results?search_query=porn%20videos",
+    "https://www.youtube.com/results?search_query=porn+videos",
+    "https://www.youtube.com/results?search_query=porn%20photos",
+    "https://www.youtube.com/results?search_query=porn+photos"
+  ],
+  "trusted search routes must retain conservative explicit-media phrase conversion"
+);
+assert.deepEqual(
+  applePresetUrlPatternVariants("https://www.youtube.com/results?search_query=reels", true),
+  [],
+  "ordinary trusted query parameters must not be mistaken for feature probes"
+);
 assert.deepEqual(withoutFocusedSocialDeniedUrls(allProbes), []);
 assert.equal(
   focusedSocialDeniedUrls(settings).includes("instagram.com/explore"),

@@ -211,14 +211,6 @@ async function makeExtensionScriptsClassic(): Promise<void> {
     + searchGuard.replace(extensionPageHelper, ""));
 }
 
-// Safari ships the same generated review guards as the browser extension.
-// Refresh these before Xcode bundles them so the phone integrity audit can
-// compare the native resources to this build's exact generated scripts.
-for (const name of ["reddit-review-background.js", "reddit-review-guard.js", "reddit-review-blocked.html"]) {
-  await cp(join(runtimeRoot, "extension", name),
-    join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources", name));
-}
-
 await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/reddit-child-lock.js"), join(runtimeRoot, "extension/reddit-child-lock.js"));
 
 const mediaGuardPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js");

@@ -11,7 +11,7 @@ async function main() {
   const navigation = await fs.readFile('dist/runtime/extension/blocked-navigation.js', 'utf8');
   const server = http.createServer((request, response) => {
     response.setHeader('Content-Type', 'text/html');
-    response.end(request.url === '/previous'
+    response.end(request.url === '/previous' || request.url === '/earlier'
       ? '<!doctype html><title>Previous page</title><h1>Previous page</h1>'
       : request.url.startsWith('/trap-')
       ? `<!doctype html><title>Denied history entry</title><script>
@@ -40,17 +40,32 @@ async function main() {
   });
   try {
     for (const script of ['', guard, navigation]) {
-      const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
-      try {
-        await win.loadURL(`${base}/previous`);
-        await win.loadURL(`${base}/blocked`);
-        if (script) await win.webContents.executeJavaScript(mock + script);
-        const returned = new Promise(resolve => win.webContents.once('did-finish-load', resolve));
-        await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
-        await returned;
-        assert.equal(win.webContents.getURL(), `${base}/previous`);
-        assert.equal(await win.webContents.executeJavaScript('document.querySelector("h1").textContent'), 'Previous page');
-      } finally { win.destroy(); }
+      for (const longerHistory of [false, true]) {
+        const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
+        try {
+          if (longerHistory) await win.loadURL(`${base}/earlier`);
+          await win.loadURL(`${base}/previous`);
+          for (const visit of [1, 2]) {
+            await win.loadURL(`${base}/blocked?visit=${visit}`);
+            if (script) await win.webContents.executeJavaScript(mock + script);
+            const returned = loaded(win, `${base}/previous`);
+            await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
+            await returned;
+            assert.equal(win.webContents.getURL(), `${base}/previous`, 'a fresh block visit after successful Back still returns to the exact safe page');
+            assert.equal(await win.webContents.executeJavaScript('document.querySelector("h1").textContent'), 'Previous page');
+            if (visit === 1) {
+              const forwarded = loaded(win, `${base}/blocked?visit=1`);
+              win.webContents.navigationHistory.goForward();
+              await forwarded;
+              if (script) await win.webContents.executeJavaScript(mock + script);
+              const backAgain = loaded(win, `${base}/previous`);
+              await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
+              await backAgain;
+              assert.equal(win.webContents.getURL(), `${base}/previous`, 'browser Forward to the original blocker cannot skip the safe page on its next Back');
+            }
+          }
+        } finally { win.destroy(); }
+      }
     }
     for (const script of ['', guard, navigation]) {
       for (const mode of ['replace', 'assign']) {
@@ -65,10 +80,21 @@ async function main() {
           await returned;
           assert.equal(win.webContents.getURL(), `${base}/blocked`, 'fixture reproduces the denied-entry bounce');
           if (script) await win.webContents.executeJavaScript(mock + script);
-          returned = loaded(win, `${base}/previous`);
+          returned = loaded(win, `${base}/${mode === 'replace' ? 'previous' : 'blocked'}`);
           await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
           await returned;
-          assert.equal(win.webContents.getURL(), `${base}/previous`, 'retry skips the denied entry for replacement and appended redirects');
+          if (mode === 'replace') {
+            assert.equal(win.webContents.getURL(), `${base}/previous`, 'retry skips a positively identified replacement bounce');
+          } else {
+            assert.equal(win.webContents.getURL(), `${base}/blocked`, 'an unverified appended redirect remains ambiguous with a fresh visit and retains one-step Back');
+            if (script) {
+              await win.webContents.executeJavaScript(mock.replace("url: 'about:blank'", `url: ${JSON.stringify(`${base}/previous`)}`) + script);
+              returned = loaded(win, `${base}/previous`);
+              await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
+              await returned;
+              assert.equal(win.webContents.getURL(), `${base}/previous`, 'a verified destination still escapes an appended redirect bounce');
+            }
+          }
         } finally { win.destroy(); }
       }
     }
@@ -90,7 +116,7 @@ async function main() {
       assert.equal(empty.webContents.getURL(), `${base}/blocked`);
       assert.match(await empty.webContents.executeJavaScript('document.querySelector("#vigilBackStatus").textContent'), /previous page/);
     } finally { empty.destroy(); }
-    console.log('Real browser Back handles redirect loops, exhausted history, and empty tabs for server, content-script, and extension-page handlers.');
+    console.log('Real browser Back handles fresh visits, replacement bounces, conservative unverified assign bounces, verified returns, exhausted history, and empty tabs.');
   } finally { await new Promise(resolve => server.close(resolve)); }
 }
 void main().then(() => app.quit()).catch(error => { console.error(error); app.exit(1); });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, mkdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FRESH_SIGNING_WINDOW_MS, RENEWAL_WINDOW_MS, freshSigningBuild, renewalDecision, renewalLaunchAgent, runPhoneRenewal, signingProfilesNeedingRefresh, verifiedLauncherState, withPhoneUpdateLock } from "../scripts/ios-phone-renewal.mjs";
@@ -63,6 +63,47 @@ try {
   // PID 2147483647 is outside macOS's PID range and cannot own an update.
   await writeFile(join(lock, "pid"), "2147483647");
   assert.equal(await withPhoneUpdateLock(root, async () => readFile(join(lock, "pid"), "utf8")), String(process.pid));
+  const recovery = `${lock}.recovery`;
+  await rm(recovery, { recursive: true, force: true });
+  await mkdir(recovery);
+  await mkdir(lock);
+  await writeFile(join(lock, "pid"), "2147483647");
+  await assert.rejects(withPhoneUpdateLock(root, async () => { throw new Error("Unowned recovery action ran"); }), /Another Vigil phone update/,
+    "a newly created legacy recovery directory may still have a live owner");
+  const abandonedAt = new Date(Date.now() - 60_001);
+  await utimes(recovery, abandonedAt, abandonedAt);
+  assert.equal(await withPhoneUpdateLock(root, async () => "recovered"), "recovered",
+    "an abandoned ownerless recovery directory must not permanently prevent updates");
+  assert.equal(await withPhoneUpdateLock(root, async () => "retried"), "retried");
+
+  const liveClaim = `${process.pid}-00000000-0000-0000-0000-000000000001`;
+  const deadClaim = "2147483647-00000000-0000-0000-0000-000000000002";
+  await mkdir(join(recovery, liveClaim));
+  await mkdir(lock);
+  await writeFile(join(lock, "pid"), "2147483647");
+  await assert.rejects(withPhoneUpdateLock(root, async () => { throw new Error("Concurrent recovery action ran"); }), /Another Vigil phone update/);
+  assert.equal(await readFile(join(lock, "pid"), "utf8"), "2147483647", "a live recovery owner must retain the original update lock");
+  assert.deepEqual((await readdir(recovery)).sort(), ["claims-v1", liveClaim].sort());
+  await rm(join(recovery, liveClaim), { recursive: true });
+  await mkdir(join(recovery, deadClaim));
+  assert.equal(await withPhoneUpdateLock(root, async () => "dead owner recovered"), "dead owner recovered",
+    "a dead recovery claim must be recoverable immediately, even when it was just created");
+  assert.deepEqual(await readdir(recovery), ["claims-v1"], "each attempt must remove only its own claim and dead claims");
+
+  await mkdir(lock);
+  await writeFile(join(lock, "pid"), "2147483647");
+  await mkdir(join(recovery, deadClaim));
+  let running = 0;
+  let peak = 0;
+  await Promise.allSettled(Array.from({ length: 8 }, () => withPhoneUpdateLock(root, async () => {
+    running += 1;
+    peak = Math.max(peak, running);
+    await new Promise((done) => setTimeout(done, 10));
+    running -= 1;
+  })));
+  assert.ok(peak <= 1, "competing recovery attempts must never run update actions concurrently");
+  assert.equal(await withPhoneUpdateLock(root, async () => "after contention"), "after contention",
+    "competing recoveries must leave both locks recoverable");
   const plist = renewalLaunchAgent({ root: "/Work/Vigil & Focus", home: "/Users/test", node: "/usr/local/bin/node", device: "phone-1", server: "http://127.0.0.1:8787" });
   assert.match(plist, /Vigil &amp; Focus/);
   assert.match(plist, /<key>StartInterval<\/key><integer>21600<\/integer>/);

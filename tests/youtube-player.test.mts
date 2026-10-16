@@ -9,7 +9,20 @@ import { youtubeAction, YOUTUBE_BASE_MS } from '../src/youtubeLimits.js';
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
 const id = 'video000000';
 type Callback = (event?: unknown) => unknown;
-async function playerFixture(nativeReply: boolean | 'safari' = false, initiallySaved = true, renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = "", accountInitiallySaved = initiallySaved, holdAccountLookup = false) {
+interface PlayerFixtureOptions {
+  nativeReply?: boolean | 'safari';
+  ledgerInitiallySaved?: boolean;
+  accountInitiallySaved?: boolean;
+  renewalDelay?: number;
+  timerCadence?: number;
+  settlementDelay?: number;
+  embedHost?: string;
+  holdAccountLookup?: boolean;
+}
+async function playerFixture({
+  nativeReply = false, ledgerInitiallySaved = true, accountInitiallySaved = ledgerInitiallySaved,
+  renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = '', holdAccountLookup = false
+}: PlayerFixtureOptions = {}) {
   let accountSaved = accountInitiallySaved;
   let finishAccountLookup: (() => void) | undefined;
   const accountRequests: string[] = [];
@@ -44,7 +57,7 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
   });
   const state = defaultState();
   const act = (body: YouTubeRequest) => youtubeAction(state, body, new Date(Date.UTC(2026, 8, 7, 16) + clock));
-  if (initiallySaved) act({ action: 'save', videoId: id });
+  if (ledgerInitiallySaved) act({ action: 'save', videoId: id });
   const replies: { at: number; resolve: () => void }[] = [];
   const delayedAct = (body: YouTubeRequest) => {
     const response = act(body);
@@ -154,7 +167,7 @@ async function playerFixture(nativeReply: boolean | 'safari' = false, initiallyS
 }
 
 test('opening a video checks Watch Later before Play without allocating a slot or playback lease', async () => {
-  const f = await playerFixture('safari', false, 0, 50, 0, '', true);
+  const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false, accountInitiallySaved: true });
   assert.deepEqual(f.accountRequests, ['/playlist?list=WL']);
   assert.equal(f.media.paused, true);
   assert.equal(f.state.youtubeLimits!.lease, null);
@@ -167,7 +180,7 @@ test('opening a video checks Watch Later before Play without allocating a slot o
 });
 
 test('mobile touch handling cannot turn the original Play tap into Pause', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.mobileTap('Play', 'Pause');
   assert.equal(f.media.paused, false);
   await f.mobileTap('Pause', 'Play');
@@ -177,7 +190,7 @@ test('mobile touch handling cannot turn the original Play tap into Pause', async
 });
 
 test('an incoming external grant does not wait behind a slow Watch Later preflight', async () => {
-  const f = await playerFixture('safari', false, 0, 50, 0, '', false, true);
+  const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false, accountInitiallySaved: false, holdAccountLookup: true });
   assert.equal(f.accountRequests.length, 1);
   // The navigation authority can finish after the document-start Check.
   f.state.youtubeLimits!.external.push(id);
@@ -237,7 +250,7 @@ test('authorization renewals do not interrupt ordinary playback', async () => {
 });
 
 test('native WebKit promise replies populate slots and authorize playback without injected callbacks', async () => {
-  const { state, media, click, advance, nodes } = await playerFixture(true);
+  const { state, media, click, advance, nodes } = await playerFixture({ nativeReply: true });
   assert.ok(nodes.some(node => node.textContent.includes('3 saves left')));
   await click('Play this video');
   assert.equal(media.paused, false);
@@ -246,14 +259,14 @@ test('native WebKit promise replies populate slots and authorize playback withou
 });
 
 test('standard YouTube save and remove controls change the account playlist and daily slot together', async () => {
-  const { state, standardSave } = await playerFixture(false, false);
+  const { state, standardSave } = await playerFixture({ ledgerInitiallySaved: false });
   assert.equal(await standardSave(), true);
   assert.equal(state.youtubeLimits!.slots[0]!.videoId, id);
   assert.equal(await standardSave(true), false);
   assert.equal(state.youtubeLimits!.slots.filter(Boolean).length, 0);
 });
 test('a full daily allowance blocks the standard save before YouTube changes its playlist', async () => {
-  const { state, standardSave } = await playerFixture(false, false);
+  const { state, standardSave } = await playerFixture({ ledgerInitiallySaved: false });
   state.youtubeLimits!.slots = Array.from({ length: 4 }, (_, i) => ({ videoId: `other${String(i).padStart(6, '0')}`, title: `Existing ${i}`, locked: false, removed: false }));
   assert.equal(await standardSave(), false);
   assert.equal(state.youtubeLimits!.slots.filter(Boolean).length, 4);
@@ -297,7 +310,7 @@ test('quality buffering longer than a lease renews without charging stalled time
 });
 
 test('Safari isolated content world authorizes through its extension runtime without a page bridge', async () => {
-  const { state, media, click, advance, nodes } = await playerFixture('safari');
+  const { state, media, click, advance, nodes } = await playerFixture({ nativeReply: 'safari' });
   assert.ok(nodes.some(node => node.textContent.includes('3 saves left')));
   await media.play(); assert.equal(media.paused, true);
   await click('Play this video'); assert.equal(media.paused, false);
@@ -321,7 +334,7 @@ test('a pending browser play promise does not prevent authorization renewal duri
 });
 
 test('an unsaved video stays blocked and shows a dismissible save-first notification', async () => {
-  const { media, click, nodes } = await playerFixture('safari', false);
+  const { media, click, nodes } = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false });
   await click('Play this video');
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(media.paused, true);
@@ -339,13 +352,13 @@ test('an unsaved video stays blocked and shows a dismissible save-first notifica
 
 
 test('the held player exposes native Play controls until a saved video receives authorization', async () => {
-  const unsaved = await playerFixture('safari', false);
+  const unsaved = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false });
   assert.equal(unsaved.root.getAttribute('data-vigil-playback-held'), '');
   await unsaved.click('Play this video');
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(unsaved.root.getAttribute('data-vigil-playback-held'), '');
   assert.equal(unsaved.media.paused, true);
-  const saved = await playerFixture(true);
+  const saved = await playerFixture({ nativeReply: true });
   await saved.click('Play this video');
   assert.equal(saved.root.getAttribute('data-vigil-playback-held'), null);
   assert.equal(saved.media.paused, false);
@@ -353,7 +366,7 @@ test('the held player exposes native Play controls until a saved video receives 
 
 
 test('space tap toggles once on release; holding uses 2x and restores the chosen speed', async () => {
-  const f = await playerFixture('safari');
+  const f = await playerFixture({ nativeReply: 'safari' });
   await f.key('keydown'); await f.advance(100,false);
   assert.equal(f.media.paused,true);
   await f.key('keyup'); assert.equal(f.media.paused,false);
@@ -367,7 +380,7 @@ test('space tap toggles once on release; holding uses 2x and restores the chosen
 });
 
 test('a paused video can sit for minutes and resume at its position without an expiry message', async () => {
-  const f=await playerFixture(true);
+  const f=await playerFixture({ nativeReply: true });
   await f.click('Play this video'); await f.advance(1500);
   f.media.pause(); const position=f.media.currentTime;
   await f.advance(120000,false);
@@ -386,7 +399,7 @@ test('space does not intercept text entry', async()=>{
 
 
 test('a suspended paused tab reacquires authorization on the first Play click without a timeout', async()=>{
-  const f=await playerFixture('safari');
+  const f=await playerFixture({ nativeReply: 'safari' });
   await f.click('Play this video'); await f.advance(500); f.media.pause();
   const position=f.media.currentTime; f.jump(120000);
   await f.click('Play this video');
@@ -410,7 +423,7 @@ test('high-frequency clock runs only for playback or a held spacebar', async () 
 
 
 test('Safari renewal latency does not cause repeated playback dropouts', async () => {
-  const { state, media, click, advance } = await playerFixture('safari', true, 750);
+  const { state, media, click, advance } = await playerFixture({ nativeReply: 'safari', renewalDelay: 750 });
   await click('Play this video');
   await advance(30000);
   assert.equal(media.pauseCount, 0, 'renew before a delayed native reply exhausts the authorized tail');
@@ -419,7 +432,7 @@ test('Safari renewal latency does not cause repeated playback dropouts', async (
 });
 
 test('a stalled Safari renewal still stops at the existing playback allowance', async () => {
-  const { media, click, advance } = await playerFixture('safari', true, 6000);
+  const { media, click, advance } = await playerFixture({ nativeReply: 'safari', renewalDelay: 6000 });
   await click('Play this video');
   await advance(2500);
   assert.equal(media.paused, true);
@@ -429,7 +442,7 @@ test('a stalled Safari renewal still stops at the existing playback allowance', 
 
 test('background Safari playback survives throttled timers and native bridge latency', async () => {
   for (const cadence of [1000, 2000]) {
-    const { state, media, click, advance } = await playerFixture('safari', true, 750, cadence);
+    const { state, media, click, advance } = await playerFixture({ nativeReply: 'safari', renewalDelay: 750, timerCadence: cadence });
     await click('Play this video');
     await advance(30000);
     assert.equal(media.pauseCount, 0, `no dropout with ${cadence} ms timer callbacks`);
@@ -440,7 +453,7 @@ test('background Safari playback survives throttled timers and native bridge lat
 
 test('a clicked YouTube search result plays without saving on phone and Safari', async () => {
   for (const transport of [true, 'safari'] as const) {
-    const f = await playerFixture(transport, false);
+    const f = await playerFixture({ nativeReply: transport, ledgerInitiallySaved: false });
     await f.searchClick();
     await f.click('Play this video');
     assert.equal(f.media.paused, false);
@@ -452,14 +465,14 @@ test('a clicked YouTube search result plays without saving on phone and Safari',
 });
 
 test('clicking an unsaved home recommendation does not grant search playback', async () => {
-  const f = await playerFixture('safari', false);
+  const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false });
   await f.searchClick('/');
   assert.deepEqual(f.state.youtubeLimits!.external, []);
 });
 
 test('a search-result card title outside its anchor uses time without a save', async () => {
   for (const path of ['/results?search_query=economics', '/results?search_query=']) {
-    const f = await playerFixture(true, false);
+    const f = await playerFixture({ nativeReply: true, ledgerInitiallySaved: false });
     await f.searchClick(path, true);
     assert.equal(f.state.youtubeLimits!.external.includes(id), path.endsWith('economics'));
     assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 0);
@@ -468,7 +481,7 @@ test('a search-result card title outside its anchor uses time without a save', a
 
 
 test('phone startup preserves the trusted YouTube Play handler while gating media' , async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   assert.equal(await f.startupControl(), 1);
   assert.equal(f.media.readyState, 4);
   assert.equal(f.media.paused, false);
@@ -476,13 +489,13 @@ test('phone startup preserves the trusted YouTube Play handler while gating medi
 });
 
 test('blocked startup permits source initialization but never permits playback', async () => {
-  const f = await playerFixture(true, false);
+  const f = await playerFixture({ nativeReply: true, ledgerInitiallySaved: false });
   assert.equal(await f.startupControl(), 1);
   assert.equal(f.media.paused, true);
 });
 
 test('native fullscreen Play reacquires authorization after a long pause at the same position', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   await f.advance(1000);
   f.media.webkitDisplayingFullscreen = true;
@@ -501,7 +514,7 @@ test('native fullscreen Play reacquires authorization after a long pause at the 
 });
 
 test('fullscreen autoplay without prior deliberate playback remains blocked', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   f.media.webkitDisplayingFullscreen = true;
   await f.media.play();
   await f.flush();
@@ -510,7 +523,7 @@ test('fullscreen autoplay without prior deliberate playback remains blocked', as
 });
 
 test('fullscreen resume still respects an exhausted daily allowance', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   f.media.webkitDisplayingFullscreen = true;
   await f.click('Pause');
@@ -523,7 +536,7 @@ test('fullscreen resume still respects an exhausted daily allowance', async () =
 });
 
 test('a source reload abort during startup retries when media becomes playable without refreshing', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   const play = f.media.play.bind(f.media);
   f.media.play = async () => {
     f.emit('loadstart');
@@ -543,7 +556,7 @@ test('a source reload abort during startup retries when media becomes playable w
 
 
 test('Watch Later list/index URL updates preserve playback and metering for the same video', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   await f.advance(500);
   f.location.search += '&list=WL&index=2';
@@ -554,7 +567,7 @@ test('Watch Later list/index URL updates preserve playback and metering for the 
 });
 
 test('a different video route revokes fullscreen resume intent', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   f.media.webkitDisplayingFullscreen = true;
   f.location.search = '?v=video000001';
@@ -566,7 +579,7 @@ test('a different video route revokes fullscreen resume intent', async () => {
 });
 
 test('fullscreen Play during a pending pause settlement resumes after the settlement completes', async () => {
-  const f = await playerFixture(true, true, 0, 50, 1500);
+  const f = await playerFixture({ nativeReply: true, settlementDelay: 1500 });
   await f.click('Play this video');
   await f.advance(500);
   f.media.webkitDisplayingFullscreen = true;
@@ -581,7 +594,7 @@ test('fullscreen Play during a pending pause settlement resumes after the settle
 
 
 test('phone content classification can hold startup longer than a lease without losing Play intent', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   const play = f.media.play.bind(f.media);
   f.media.play = async () => { f.media.dataset.vigilPlaybackRequested = 'true'; };
   await f.click('Play this video');
@@ -599,7 +612,7 @@ test('phone content classification can hold startup longer than a lease without 
 });
 
 test('startup recovers when canplay arrives before the aborted play promise rejects', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   const play = f.media.play.bind(f.media);
   let attempts = 0;
   f.media.play = async () => {
@@ -620,7 +633,7 @@ test('startup recovers when canplay arrives before the aborted play promise reje
 
 test('native full-screen entry supports the first Play without playing inline first', async () => {
   for (const saved of [true, false]) {
-    const f = await playerFixture(true, saved);
+    const f = await playerFixture({ nativeReply: true, ledgerInitiallySaved: saved });
     f.media.webkitDisplayingFullscreen = true;
     f.emit('webkitbeginfullscreen');
     assert.equal(f.state.youtubeLimits!.lease, null, 'entering fullscreen cannot start playback');
@@ -633,7 +646,7 @@ test('native full-screen entry supports the first Play without playing inline fi
 });
 
 test('an aborted full-screen resume uses the same bounded retry as initial startup', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   f.media.pause();
   f.media.webkitDisplayingFullscreen = true;
@@ -651,7 +664,7 @@ test('an aborted full-screen resume uses the same bounded retry as initial start
 });
 
 test('buffering presents pending playback instead of a second large Play button', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   f.emit('waiting');
   await f.advance(100, false);
@@ -664,7 +677,7 @@ test('buffering presents pending playback instead of a second large Play button'
 
 test('external embedded players use the normal playback ledger, including privacy-enhanced YouTube', async () => {
   for (const host of ['www.youtube.com', 'www.youtube-nocookie.com']) {
-    const f = await playerFixture('safari', false, 0, 50, 0, host);
+    const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false, embedHost: host });
     await f.media.play();
     assert.equal(f.media.paused, true, 'embed autoplay stays blocked');
     youtubeAction(f.state, { action: 'external', videoId: id }, new Date(Date.UTC(2026, 8, 7, 16)));
@@ -680,7 +693,7 @@ test('external embedded players use the normal playback ledger, including privac
 });
 
 test('an embedded player without verified external provenance still requires saving', async () => {
-  const f = await playerFixture('safari', false, 0, 50, 0, 'www.youtube.com');
+  const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false, embedHost: 'www.youtube.com' });
   await f.click('Play this video');
   assert.equal(f.media.paused, true);
   assert.equal(f.state.youtubeLimits!.external.length, 0);
@@ -688,7 +701,7 @@ test('an embedded player without verified external provenance still requires sav
 
 
 test('a delayed Play abort cannot undo a deliberate Pause or strand the next tap', async () => {
-  const f = await playerFixture('safari');
+  const f = await playerFixture({ nativeReply: 'safari' });
   await f.click('Play this video');
   f.media.pause();
   let rejectPlay!: (error: Error) => void;
@@ -706,7 +719,7 @@ test('a delayed Play abort cannot undo a deliberate Pause or strand the next tap
 });
 
 test('brief pauses retain the bounded lease so the next tap needs no new allowance check', async () => {
-  const f = await playerFixture('safari');
+  const f = await playerFixture({ nativeReply: 'safari' });
   await f.click('Play this video'); await f.advance(300);
   const leaseID = f.state.youtubeLimits!.lease!.id;
   await f.rawTap(); await f.advance(1800, false);
@@ -718,7 +731,7 @@ test('brief pauses retain the bounded lease so the next tap needs no new allowan
 });
 
 test('Pause cancels the app safety gate intent while a saved video is awaiting inspection', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   const nativePlay = f.media.play.bind(f.media);
   let rememberedPlay = false;
   let inspectionPending = true;
@@ -749,7 +762,7 @@ test('Pause cancels the app safety gate intent while a saved video is awaiting i
 });
 
 test('a delayed app-native resume cannot use a valid lease after an explicit Pause', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   await f.rawTap('Pause');
   await f.media.play();
@@ -759,7 +772,7 @@ test('a delayed app-native resume cannot use a valid lease after an explicit Pau
 });
 
 test('an already queued fullscreen play event cannot reverse a later Pause', async () => {
-  const f = await playerFixture(true);
+  const f = await playerFixture({ nativeReply: true });
   await f.click('Play this video');
   f.media.webkitDisplayingFullscreen = true;
   await f.rawTap('Pause');
@@ -773,7 +786,7 @@ test('an already queued fullscreen play event cannot reverse a later Pause', asy
 
 
 test('replacing the watch player preserves only the existing same-video authorization', async () => {
-  const f = await playerFixture('safari');
+  const f = await playerFixture({ nativeReply: 'safari' });
   await f.click('Play this video'); await f.advance(300);
   const leaseID = f.state.youtubeLimits!.lease!.id;
   const replacement = f.replaceMedia();
@@ -787,7 +800,7 @@ test('replacing the watch player preserves only the existing same-video authoriz
 
 
 test('repeated explicit Play taps during startup stay Play requests until Pause is selected', async () => {
-  const f = await playerFixture('safari');
+  const f = await playerFixture({ nativeReply: 'safari' });
   let resolvePlay!: () => void;
   f.media.play = () => { f.media.paused = false; f.emit('play'); f.emit('waiting'); return new Promise<void>(resolve => { resolvePlay = resolve; }); };
   await f.rawTap('Play'); await f.rawTap('Play'); await f.rawTap('Play');

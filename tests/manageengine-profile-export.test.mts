@@ -73,8 +73,15 @@ try {
   const baselineWebFilter = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
     .find((payload) => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn");
-  assert.ok(Array.isArray(baselineWebFilter?.DenyListURLs));
-  assert.equal((baselineWebFilter?.DenyListURLs as unknown[]).includes("https://youtube.com/shorts"), true);
+  assert.ok(baselineWebFilter && Array.isArray(baselineWebFilter.DenyListURLs));
+  const baselineDeniedUrls = baselineWebFilter.DenyListURLs as string[];
+  assert.equal(baselineWebFilter.AutoFilterEnabled, true);
+  assert.equal(baselineDeniedUrls.includes("https://youtube.com/shorts/"), true,
+    "the supervised export must retain the bounded Shorts route");
+  assert.equal(baselineDeniedUrls.some(pattern => "https://youtube.com/shorts/video-id".includes(pattern)), true,
+    "the exported route must cover Shorts descendants");
+  assert.equal(baselineDeniedUrls.some(pattern => "https://youtube.com/shortsish".includes(pattern)), false,
+    "the exported route must keep unrelated sibling paths usable");
   const webClips = profile.PayloadContent
     .map((item) => recordValue(item, "profile payload"))
     .filter((payload) => payload.PayloadType === "com.apple.webClip.managed");

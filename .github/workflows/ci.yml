@@ -28,7 +28,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install Python validation dependencies
-        run: python -m pip install cryptography
+        run: python -m pip install cryptography google-re2
 
       - name: Install
         run: npm ci
@@ -37,6 +37,9 @@ jobs:
         env:
           PYIOSBACKUP_PYTHON: python
         run: npm run check
+
+      - name: Validate packaged Chrome rule compiler budget and quota
+        run: python tests/extension-dnr-budget.py dist/runtime/extension
 
       - name: Build iOS social app
         # Hosted runners can hang indefinitely while starting CoreSimulator.

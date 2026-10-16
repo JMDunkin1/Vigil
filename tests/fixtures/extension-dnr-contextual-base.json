@@ -1,5 +1,7 @@
 {
-  "version": "0.3.17",
+  "searchBaseRef": "296c5e6648b5c0d917b6c524e3d449ede2575b0a",
+  "searchMetadataRef": "3258db6d354f2d6253056528b76215287c2e146f",
+  "redditVersion": "0.3.17",
   "search": [
     {
       "id": 1,
@@ -93,7 +95,7 @@
         }
       },
       "condition": {
-        "regexFilter": "^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd)=[^&#]*(porn|porno|prno|p0rn|nsfw|hentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|18(%2b|\\+|plus|-plus))|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?xxx($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b|porn\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)=([^&#]*([^a-z0-9%]|%20|%2b|%2d|%5f))?(r[_.-]*34|s3x|(s[e3]x|nud([e3]s?|s)?|p[o0]rn|r34|nsfw){2,})($|[^a-z0-9]|videos?\\b|photos?\\b|pics?\\b)|^https?://[^/]+/[^#]*[?&](q|query|search_query|search|keyword|term|text|p|k|s)=nud(s|3s?)?($|[&#])",
+        "regexFilter": "^https?://[^/?#]+/[^?#]*\\?(?:[^&#]*&)*(?:q|query|search_query|search|searchterm|search_term|keyword|keywords|term|text|wd|word|tags|tag)=(?:(?:(?:free|hd|explicit|hardcore|watch|read)(?:[ +._-]|%20|%2b|%2d|%5f|%2e)+)?(?:(?:porn(?:o|ography|ographic|stars?)?|prno|p0rn|nsfw|hentai|nhentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|honeytoons?|hooneytoons?|toongod|(?:p|%[57]0)(?:o|%[46]f)(?:r|%[57]2)(?:n|%[46]e))|xxx|r[_.-]*34|s[_.-]*3[_.-]*x|nud(?:s|3s?)?|(?:sex|nud(?:s|es?)?|p[o0]rn|r34|nsfw){2,})(?:(?:[ +._-]|%20|%2b|%2d|%5f|%2e)+(?:query|search))?(?:$|[&#])|(?:[^&#]*(?:[ +._-]|%20|%2b|%2d|%5f|%2e))?(?:porn(?:o|ography|ographic|stars?)?|prno|p0rn|nsfw|hentai|nhentai|rule34|gonewild|onlyfans|fansly|chaturbate|stripchat|cam4|redtube|youporn|spankbang|xvideos|xnxx|xhamster|honeytoons?|hooneytoons?|toongod|(?:p|%[57]0)(?:o|%[46]f)(?:r|%[57]2)(?:n|%[46]e))(?:[ +._-]|%20|%2b|%2d|%5f|%2e)+(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|leaks?|nudes?)(?:$|[&#]|(?:[ +._-]|%20|%2b|%2d|%5f|%2e))|(?:(?:free|hd|explicit|hardcore|watch|read)(?:[ +._-]|%20|%2b|%2d|%5f|%2e)+)?(?:xxx|18(?:%2b|\\+|plus|-plus)|adult|adults)(?:[ +._-]|%20|%2b|%2d|%5f|%2e)+(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|leaks?|nudes?)(?:$|[&#])|(?:xxx(?:videos?|vids?|photos?|pics?)|r[_.-]*34(?:[ +._-]|%20|%2b|%2d|%5f|%2e)*(?:comics?|manga|manhwa|manhua|webtoons?))(?:$|[&#]))",
         "resourceTypes": [
           "main_frame",
           "sub_frame"

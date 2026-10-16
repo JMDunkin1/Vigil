@@ -8,7 +8,8 @@ const extension = await readFile(new URL("../extension/blocked-navigation.js", i
 const guard = await readFile(new URL("../extension/reddit-review-guard.js", import.meta.url), "utf8");
 const server = blockedPage({ url: new URL("http://127.0.0.1:8787/blocked"), state: defaultState() }).match(/<script>([\s\S]*?)<\/script>/u)![1];
 type Reply = { ok?: boolean; url?: string; handled?: boolean; exhausted?: boolean };
-function harness(source: string, length: number, quiet = false, stored = new Map<string, string>(), href = "extension://vigil/blocked.html") {
+type Provenance = { type?: string; key?: string; entries?: { key: string; index: number }[]; index?: number };
+function harness(source: string, length: number, quiet = false, stored = new Map<string, string>(), href = "extension://vigil/blocked.html", provenance: Provenance = { type: "navigate", key: "current" }) {
   const destinations: string[] = [];
   const traversals: number[] = [];
   let backCount = 0;
@@ -27,6 +28,8 @@ function harness(source: string, length: number, quiet = false, stored = new Map
   const window = {}; Object.assign(window, { top: window });
   runInNewContext(source, {
     window, Element, URL, atob, Date: class extends Date { static override now() { return now; } },
+    performance: { getEntriesByType: () => provenance.type ? [{ type: provenance.type }] : [] },
+    navigation: provenance.key ? { currentEntry: { key: provenance.key, index: provenance.index ?? 2 }, entries: () => provenance.entries || [] } : undefined,
     addEventListener(name: string, fn: () => void) {
       if (name === "click" && !clickRegistered) { click = fn; clickRegistered = true; }
       if (name === "pageshow") pageshow = fn;
@@ -67,20 +70,78 @@ for (const source of [extension, guard, server]) {
   assert.deepEqual(empty.destinations, []);
   const firstAttempt = harness(source, 4);
   firstAttempt.click(); await firstAttempt.reply({ ok: false });
-  const retry = harness(source, 4, false, firstAttempt.stored);
+  const firstAttemptState = new Map(firstAttempt.stored);
+  firstAttempt.advance(); firstAttempt.click(); await firstAttempt.reply({ ok: false });
+  assert.deepEqual(firstAttempt.traversals, [-2], "the same document can retry a failed Back");
+  const earlierReload = {
+    type: "reload", key: "denied", index: 1, entries: [{ key: "denied", index: 1 }, { key: "current", index: 2 }]
+  };
+  const retry = harness(source, 4, false, new Map(firstAttemptState), undefined, earlierReload);
   retry.click(); await retry.reply({ ok: false });
   assert.deepEqual(retry.traversals, [-2], "a reloaded block page skips the entry that just bounced back");
   retry.click(); await retry.reply({ ok: false });
   assert.deepEqual(retry.traversals, [-2], "rapid clicks cannot queue multiple history traversals");
   retry.returnTimeout();
   assert.equal(retry.backCount(), 1, "an oversized traversal retries one step because history length includes forward entries");
-  const stale = harness(source, 4, false, new Map([["vigil-blocked-page-back", JSON.stringify({ steps: 2, length: 4, at: Date.now() - 60_000 })]]));
+  const stale = harness(source, 4, false, new Map([["vigil-blocked-page-back", JSON.stringify({ steps: 2, length: 4, at: Date.now() - 60_000, entryKey: "current" })]]), undefined, earlierReload);
   stale.click(); await stale.reply({ ok: false });
   assert.equal(stale.backCount(), 1, "old fallback attempts do not affect a new browsing session");
-  const cached = harness(source, 4, false, new Map([["vigil-blocked-page-back", JSON.stringify({ steps: 1, length: 4, at: Date.now() })]]));
+  const cached = harness(source, 4, false, new Map([["vigil-blocked-page-back", JSON.stringify({ steps: 1, length: 4, at: Date.now(), entryKey: "current" })]]), undefined, earlierReload);
   cached.click(); await cached.reply({ ok: false });
   cached.pagehide(); cached.returnTimeout();
   assert.equal(cached.backCount(), 0, "a timer suspended in BFCache cannot navigate on restoration");
+  for (const length of [2, 4]) {
+    const previousVisit = harness(source, length);
+    previousVisit.click(); await previousVisit.reply({ ok: false });
+    assert.equal(previousVisit.backCount(), 1);
+    previousVisit.pagehide();
+    const freshVisit = harness(source, length, false, previousVisit.stored, undefined, { type: "navigate", key: "fresh" });
+    freshVisit.click(); await freshVisit.reply({ ok: false });
+    assert.equal(freshVisit.backCount(), 1, "a successful Back followed by a fresh block visit still returns one entry");
+    assert.deepEqual(freshVisit.traversals, [], "a new visit cannot skip the safe page because it shares retry storage");
+  }
+  const originalEntry = {
+    key: "current", index: 1, entries: [{ key: "safe", index: 0 }, { key: "current", index: 1 }]
+  };
+  const successfulReturn = harness(source, 2, false, undefined, undefined, { ...originalEntry, type: "navigate" });
+  successfulReturn.click(); await successfulReturn.reply({ ok: false });
+  assert.equal(successfulReturn.backCount(), 1);
+  successfulReturn.pagehide();
+  const forwarded = harness(source, 2, false, successfulReturn.stored, undefined, { ...originalEntry, type: "back_forward" });
+  forwarded.pagehide();
+  const reloaded = harness(source, 2, false, forwarded.stored, undefined, { ...originalEntry, type: "reload" });
+  reloaded.click(); await reloaded.reply({ ok: false });
+  assert.equal(reloaded.backCount(), 1, "successful Back followed by Forward and reload still reaches the safe predecessor");
+  assert.deepEqual(reloaded.traversals, [], "reloading the original blocker does not prove that its previous Back failed");
+  assert.equal(reloaded.status(), undefined, "an available safe predecessor must not be reported exhausted");
+  const replaced = harness(source, 4, false, new Map(firstAttemptState), undefined, {
+    type: "navigate", key: "denied", index: 1, entries: [{ key: "denied", index: 1 }, { key: "current", index: 2 }]
+  });
+  replaced.click(); await replaced.reply({ ok: false });
+  assert.deepEqual(replaced.traversals, [-2], "a client replacement bounce retains the attempted blocker as a forward entry");
+  const traversed = harness(source, 4, false, new Map(firstAttemptState), undefined, {
+    type: "back_forward", key: "earlier", index: 1, entries: [{ key: "earlier", index: 1 }, { key: "current", index: 2 }]
+  });
+  traversed.click(); await traversed.reply({ ok: false });
+  assert.deepEqual(traversed.traversals, [-2], "a native history bounce can retry the failed traversal");
+  const unavailable = harness(source, 4, false, new Map(firstAttemptState), undefined, {});
+  unavailable.click(); await unavailable.reply({ ok: false });
+  assert.equal(unavailable.backCount(), 1, "unavailable navigation provenance conservatively uses one-step Back");
+  assert.deepEqual(unavailable.traversals, []);
+  for (const provenance of [{ type: "back_forward", key: "current" }, { type: "back_forward" }, { type: "reload", key: "fresh" }]) {
+    const forward = harness(source, 4, false, new Map(firstAttemptState), undefined, provenance);
+    forward.click(); await forward.reply({ ok: false });
+    assert.equal(forward.backCount(), 1, "Forward to the original blocker or reload of a new visit cannot reuse an unrelated retry");
+    assert.deepEqual(forward.traversals, []);
+  }
+  const assigned = harness(source, 4, false, new Map(firstAttemptState), undefined, { type: "navigate", key: "assigned" });
+  assigned.click(); await assigned.reply({ ok: false });
+  assert.equal(assigned.backCount(), 1, "an unverified client assign bounce is ambiguous with a fresh visit and uses ordinary Back");
+  const restored = harness(source, 4);
+  restored.click(); await restored.reply({ ok: false });
+  restored.pagehide(); restored.pageshow(); restored.click(); await restored.reply({ ok: false });
+  assert.equal(restored.backCount(), 2, "restoring the original blocker after successful Back does not retain its in-document retry");
+  assert.deepEqual(restored.traversals, []);
 }
 for (const source of [extension, guard]) {
   const h = harness(source, 4);

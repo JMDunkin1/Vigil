@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { matchSemanticExplicitUrl } from "../src/explicitUrlContext.js";
 import { semanticExplicitUrlBlocked, semanticExplicitUrlAllowed } from "./semantic-explicit-url.test.mjs";
@@ -49,7 +50,13 @@ for (const [url, blocked] of cases) {
 
 if (process.platform === "darwin") {
   const execute = promisify(execFile);
-  const projectRoot = process.env.VIGIL_TEST_SOURCE_ROOT || process.cwd();
+  const root = dirname(dirname(fileURLToPath(import.meta.url)));
+  const runtimeParent = dirname(root);
+  const projectRoot = process.env.VIGIL_TEST_SOURCE_ROOT || (
+    basename(root) === "runtime" && ["dist", "dist.nosync"].includes(basename(runtimeParent))
+      ? dirname(runtimeParent)
+      : root
+  );
   const directory = await mkdtemp(join(tmpdir(), "vigil-native-semantic-url-"));
   try {
     const filterPath = join(directory, "FilterRules.swift");

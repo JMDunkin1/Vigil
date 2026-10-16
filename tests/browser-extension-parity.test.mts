@@ -40,9 +40,9 @@ assert.equal(searchScripts.length, 1);
 assert.equal(searchScripts[0].all_frames, true, "embedded searches require the same guard as the top-level page");
 assert.equal(searchScripts[0].run_at, "document_start");
 const searchRules = JSON.parse(await readFile(new URL("../extension/rules.json", import.meta.url), "utf8"));
-for (const rule of searchRules.slice(0, 4)) {
+for (const rule of searchRules) {
   assert.deepEqual(rule.condition.resourceTypes, ["main_frame", "sub_frame"],
-    "SafeSearch and explicit-query network rules must cover embedded searches before document scripts run");
+    `SafeSearch and every explicit-query partition must cover embedded searches before document scripts run: rule ${rule.id}`);
 }
 assert.equal(manifest.content_scripts.find((entry: { js: string[] }) => entry.js.includes("content.js")).all_frames, undefined,
   "activity accounting and whole-page pause overlays stay in the top frame");
@@ -78,10 +78,10 @@ function page(source: string, url: string) {
 }
 
 const blocked = [
-  "honeytoon", "hooneytoons", "manhwa", "toongod", "adult manhua", "mature webtoons", "uncensored webtoon",
+  "honeytoon", "hooneytoons", "adult manhwa", "toongod", "adult manhua", "mature webtoons", "uncensored webtoon",
   "r_34", "p.o.r.n", "ｒ３４", "r\u200b34", "spicy clips", "cream pie videos", "adult vids", "naked girls"
 ];
-const ordinary = ["Middlesex gardening", "nudging", "SKU-R34567", "uncensored interview", "adult education video", "banana cream pie video", "X-Men film"];
+const ordinary = ["manhwa", "manhua", "manga", "Middlesex gardening", "nudging", "SKU-R34567", "uncensored interview", "adult education video", "banana cream pie video", "X-Men film"];
 const state = defaultState();
 for (const source of [chromeSource, safariSource]) {
   for (const domain of browserPermanentBlockedDomains()) {

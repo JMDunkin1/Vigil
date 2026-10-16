@@ -298,20 +298,24 @@ chrome.webNavigation.onCommitted.addListener((details) => {
   void checkUrl(details.tabId, details.url, "navigation", 0, "", { documentId });
 });
 
-async function authorizeExternalYouTubeClick(url: string | undefined, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
-  if (sender.frameId !== 0 || sender.tab?.id === undefined) return { ok: false };
-  const source = new URL(sender.url || "about:blank");
-  if (!/^https?:$/u.test(source.protocol)
-    || /(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/u.test(source.hostname.replace(/\.$/u, ""))) return { ok: false };
-  const target = new URL(url || "");
-  if (target.protocol !== "https:" || target.username || target.password || (target.port && target.port !== "443")) return { ok: false };
+function externalYouTubeVideoId(target: URL): string | null {
+  if (target.protocol !== "https:" || target.username || target.password || (target.port && target.port !== "443")) return null;
   const parts = target.pathname.split("/").filter(Boolean);
   const id = target.hostname === "youtu.be" && parts.length === 1 ? parts[0]
     : /^(www\.|m\.)?youtube\.com$/u.test(target.hostname)
       ? /^\/watch\/?$/u.test(target.pathname) ? target.searchParams.get("v")
         : parts.length === 2 && ["live", "embed"].includes(parts[0]) ? parts[1] : null
       : null;
-  if (!id || !/^[\w-]{11}$/u.test(id)) return { ok: false };
+  return id && /^[\w-]{11}$/u.test(id) ? id : null;
+}
+
+async function authorizeExternalYouTubeClick(url: string | undefined, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
+  if (sender.frameId !== 0 || sender.tab?.id === undefined) return { ok: false };
+  const source = new URL(sender.url || "about:blank");
+  if (!/^https?:$/u.test(source.protocol)
+    || /(^|\.)(youtube(?:-nocookie)?\.com|youtu\.be)$/u.test(source.hostname.replace(/\.$/u, ""))) return { ok: false };
+  const id = externalYouTubeVideoId(new URL(url || ""));
+  if (!id) return { ok: false };
   const response = await fetchVigil("/api/extension/youtube", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action: "external", videoId: id })
@@ -327,15 +331,8 @@ async function authorizeDirectYouTubeNavigation(details: chrome.webNavigation.We
   if (details.transitionQualifiers.includes("forward_back")) return;
   const deliberate = ["typed", "auto_bookmark"].includes(details.transitionType);
   if (!deliberate && details.transitionType !== "link") return;
-  const target = new URL(details.url);
-  if (target.protocol !== "https:" || target.username || target.password || (target.port && target.port !== "443")) return;
-  const parts = target.pathname.split("/").filter(Boolean);
-  const id = target.hostname === "youtu.be" && parts.length === 1 ? parts[0]
-    : /^(www\.|m\.)?youtube\.com$/.test(target.hostname)
-      ? /^\/watch\/?$/.test(target.pathname) ? target.searchParams.get("v")
-        : parts.length === 2 && ["live", "embed"].includes(parts[0]) ? parts[1] : null
-      : null;
-  if (!id || !/^[\w-]{11}$/.test(id)) return;
+  const id = externalYouTubeVideoId(new URL(details.url));
+  if (!id) return;
   const tab = await getTab(details.tabId);
   let source = previous;
   if (!source && tab?.openerTabId !== undefined) {
