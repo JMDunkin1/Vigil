@@ -36,6 +36,14 @@ const loaded = (win, expectedURL, scenario) => new Promise((resolve, reject) => 
   win.webContents.on('did-finish-load', finish);
 });
 
+async function historyState(win) {
+  return win.webContents.executeJavaScript(`({
+    index: navigation.currentEntry.index,
+    key: navigation.currentEntry.key,
+    entries: navigation.entries().map(entry => ({ key: entry.key, path: new URL(entry.url).pathname }))
+  })`);
+}
+
 async function main() {
   const { blockedPage } = await import('../dist/runtime/src/server/pages.js');
   const { defaultState } = await import('../dist/runtime/src/defaults.js');
@@ -49,9 +57,23 @@ async function main() {
       ? `<!doctype html><title>Denied history entry</title><script>
           const key = ${JSON.stringify('trap-')} + location.pathname;
           const bounce = () => location.${request.url === '/trap-replace' ? 'replace' : 'assign'}('/blocked');
-          addEventListener('pageshow', event => { if (event.persisted) bounce(); });
-          if (sessionStorage.getItem(key)) bounce();
-          else sessionStorage.setItem(key, 'visited');
+          const visited = sessionStorage.getItem(key);
+          if (${request.url === '/trap-assign'}) {
+            // Without user activation, Location.assign during loading replaces
+            // the entry. Use a task after pageshow to append a redirect instead.
+            addEventListener('pageshow', event => { if (visited || event.persisted) setTimeout(bounce, 0); });
+          } else {
+            addEventListener('pageshow', event => {
+              if (event.persisted) {
+                // Keep the loading-assign case on its pre-load path even if
+                // this trap document is restored from BFCache.
+                if (${request.url === '/trap-loading-assign'}) location.reload();
+                else bounce();
+              }
+            });
+            if (visited) bounce();
+          }
+          sessionStorage.setItem(key, 'visited');
         </script>`
       : blockedPage({ url: new URL(request.url, 'http://127.0.0.1'), state: defaultState() }));
   });
@@ -90,7 +112,7 @@ async function main() {
       }
     }
     for (const [surface, script] of surfaces) {
-      for (const mode of ['replace', 'assign']) {
+      for (const mode of ['replace', 'loading-assign', 'assign']) {
         const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
         try {
           await win.loadURL(`${base}/previous`);
@@ -98,18 +120,29 @@ async function main() {
           await win.loadURL(`${base}/blocked`);
           await configureSurface(win, script);
           const scenario = `${surface}, ${mode} bounce`;
+          const original = await historyState(win);
+          assert.deepEqual(original.entries.map(entry => entry.path), ['/previous', `/trap-${mode}`, '/blocked'], `${scenario}: fixture has the intended starting history`);
+          assert.equal(original.index, 2, `${scenario}: blocker starts at the final history entry`);
           let returned = loaded(win, `${base}/blocked`, `${scenario}, initial Back`);
           await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
           await returned;
           assert.equal(win.webContents.getURL(), `${base}/blocked`, 'fixture reproduces the denied-entry bounce');
+          const bounced = await historyState(win);
+          const appended = mode === 'assign';
+          assert.deepEqual(bounced.entries.map(entry => entry.path), ['/previous', appended ? '/trap-assign' : '/blocked', '/blocked'], `${scenario}: redirect produces the intended history shape`);
+          assert.equal(bounced.index, appended ? 2 : 1, `${scenario}: redirect ${appended ? 'appends after' : 'replaces'} the denied entry`);
+          assert.equal(bounced.entries.some(entry => entry.key === original.key), !appended, `${scenario}: only a replacement bounce retains the attempted blocker as a forward entry`);
           await configureSurface(win, script);
-          returned = loaded(win, `${base}/${mode === 'replace' ? 'previous' : 'blocked'}`, `${scenario}, unverified retry`);
+          returned = loaded(win, `${base}/${appended ? 'blocked' : 'previous'}`, `${scenario}, unverified retry`);
           await win.webContents.executeJavaScript(`document.querySelector('#leaveBlockedPage').click()`);
           await returned;
-          if (mode === 'replace') {
+          if (!appended) {
             assert.equal(win.webContents.getURL(), `${base}/previous`, 'retry skips a positively identified replacement bounce');
           } else {
             assert.equal(win.webContents.getURL(), `${base}/blocked`, 'an unverified appended redirect remains ambiguous with a fresh visit and retains one-step Back');
+            const retried = await historyState(win);
+            assert.equal(retried.index, 2, `${scenario}: unverified retry returns through the denied predecessor`);
+            assert.notEqual(retried.key, bounced.key, `${scenario}: retry reaches a new appended blocker`);
             if (script) {
               await configureSurface(win, script, { ok: true, url: `${base}/previous` });
               returned = loaded(win, `${base}/previous`, `${scenario}, verified return`);

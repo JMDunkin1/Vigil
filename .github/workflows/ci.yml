@@ -66,6 +66,20 @@ jobs:
           assert.ok(readFileSync(process.argv[2], 'utf8').split(/\r?\n/).includes('Real browser Back handles fresh visits, replacement bounces, conservative unverified assign bounces, verified returns, exhausted history, and empty tabs.'), 'Block page Back browser fixture did not complete');
           NODE
 
+      - name: Test packaged browser extension parity
+        timeout-minutes: 3
+        shell: bash
+        env:
+          ELECTRON_ENABLE_LOGGING: "1"
+        run: |
+          set -euo pipefail
+          node_modules/.bin/electron --enable-logging=stderr tests/browser-extension-parity-browser.cjs 2>&1 | tee "$RUNNER_TEMP/vigil-browser-extension-parity.log"
+          node --input-type=module - "$RUNNER_TEMP/vigil-browser-extension-parity.log" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          assert.ok(readFileSync(process.argv[2], 'utf8').split(/\r?\n/).includes('Packaged Chrome scripts passed Chromium isolated-world startup, keyword actions, ordinary searches, encoded SPA navigation and all-frame domain/POST protection.'), 'Browser extension parity fixture did not complete');
+          NODE
+
       - name: Validate packaged Chrome rule compiler budget and quota
         run: python tests/extension-dnr-budget.py dist/runtime/extension
 
