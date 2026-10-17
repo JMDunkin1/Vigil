@@ -2244,6 +2244,17 @@ enum DOMAdapters {
         const recordCard = (card, allowed) => {
           if (card) cardDecisions.set(card, (cardDecisions.get(card) ?? true) && allowed);
         };
+        const isPosterForPinnedReel = media => {
+          if (pinnedKind !== 'reel' || !(media instanceof HTMLImageElement)
+              || !pinnedVideo?.isConnected) return false;
+          const image = media.getBoundingClientRect();
+          const video = pinnedVideo.getBoundingClientRect();
+          const overlapWidth = Math.max(0, Math.min(image.right, video.right) - Math.max(image.left, video.left));
+          const overlapHeight = Math.max(0, Math.min(image.bottom, video.bottom) - Math.max(image.top, video.top));
+          const overlap = overlapWidth * overlapHeight;
+          const smallerArea = Math.min(image.width * image.height, video.width * video.height);
+          return smallerArea > 0 && overlap / smallerArea >= 0.5;
+        };
         for (const video of videos) {
           const source = mediaSource(video);
           if (video === pinnedVideo && !pinnedSource && !emptyMediaSource(source)) pinnedSource = source;
@@ -2300,8 +2311,7 @@ enum DOMAdapters {
           // A Reel's poster can hydrate or change resolution independently of
           // the video. Only the selected video's source authorizes playback;
           // a decorative image must not veto that unchanged video and hide it.
-          if (!(pinnedKind === 'reel' && card === pinnedCard
-              && media instanceof HTMLImageElement && pinnedVideo)) recordCard(card, allowed);
+          if (!isPosterForPinnedReel(media)) recordCard(card, allowed);
           if (allowed) {
             // Recycled Home classifications belong to the old feed card.
             // Release only the exact pinned item, never the retained stream.

@@ -117,6 +117,15 @@ async function main() {
   await win.loadURL('https://www.instagram.com/reel/Shared123/');
   await run(guard);
   await run(`document.body.innerHTML = '<style>video,img{width:390px;height:700px}</style><main><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></article><article><video src="/suggested.mp4"></video></article></main>'`);
+  await run(`document.body.innerHTML = '<style>video,img{width:390px;height:700px}#poster{position:absolute;inset:0}</style><main><div id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></div><div id="suggestion"><video id="suggested" src="/suggested.mp4"></video></div></main>'`);
+  assert.deepEqual(await run(`({selected:getComputedStyle(document.getElementById('opened')).visibility,
+    card:document.getElementById('selected').dataset.vigilSingleReelCard,
+    suggestion:getComputedStyle(document.getElementById('suggestion')).visibility})`),
+    { selected: 'visible', card: 'allowed', suggestion: 'hidden' },
+    'an overlapping poster in an anonymous card cannot hide the shared reel or reveal recommendations');
+  await run(`document.getElementById('poster').src='/poster-hydrated.svg'`);
+  assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
+    'poster source replacement keeps the anonymous shared reel visible');
   await run(`document.getElementById('poster').src = '/replacement.svg';`);
   assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
     'a delayed poster refresh must not veto the unchanged selected video');
