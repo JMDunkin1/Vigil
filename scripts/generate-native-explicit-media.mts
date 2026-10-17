@@ -100,7 +100,7 @@ ${ordinaryReplacements}
         return false
     }
 
-    private static let semanticMedia: Set<String> = ["video", "videos", "vid", "vids", "photo", "photos", "pic", "pics", "image", "images", "gif", "gifs", "cam", "cams", "comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi", "novel", "novels", "art", "gallery", "galleries"]
+    private static let semanticMedia: Set<String> = ["video", "videos", "vid", "vids", "photo", "photos", "photograph", "photographs", "pic", "pics", "image", "images", "gif", "gifs", "print", "prints", "poster", "posters", "pinup", "pinups", "calendar", "calendars", "cam", "cams", "comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi", "novel", "novels", "art", "gallery", "galleries"]
     private static let semanticWeak: Set<String> = ["adult", "adults", "mature", "uncensored", "lewd", "erotic", "nude", "nudes", "naked", "sex", "sexual", "xxx", "r18", "18plus"]
     private static let semanticComics: Set<String> = ["comic", "comics", "manga", "manhwa", "manhua", "webtoon", "webtoons", "doujin", "doujinshi"]
     private static let semanticCatalog: Set<String> = ["genre", "genres", "category", "categories", "tag", "tags", "catalog", "browse"]

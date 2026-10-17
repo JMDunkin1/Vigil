@@ -20,8 +20,8 @@ export function matchSemanticExplicitUrl(value: unknown): SemanticExplicitUrlMat
     "futanari", "erotica", "pornhub", "xvideos", "xnxx", "redgifs"
   ]);
   const media = new Set([
-    "video", "videos", "vid", "vids", "photo", "photos", "pic", "pics", "image", "images",
-    "gif", "gifs", "cam", "cams", "comic", "comics", "manga", "manhwa", "manhua",
+    "video", "videos", "vid", "vids", "photo", "photos", "photograph", "photographs", "pic", "pics", "image", "images",
+    "gif", "gifs", "print", "prints", "poster", "posters", "pinup", "pinups", "calendar", "calendars", "cam", "cams", "comic", "comics", "manga", "manhwa", "manhua",
     "webtoon", "webtoons", "doujin", "doujinshi", "novel", "novels", "art", "gallery", "galleries"
   ]);
   const weak = new Set(["adult", "adults", "mature", "uncensored", "lewd", "erotic", "nude", "nudes", "naked", "sex", "sexual", "xxx", "r18", "18plus"]);
@@ -114,7 +114,7 @@ export function matchSemanticExplicitUrl(value: unknown): SemanticExplicitUrlMat
     // X runs only mean explicit content as a deliberate domain label or with
     // media/catalog context. Embedded axxxb IDs and Chapter XXX are untouched.
     if (hostname && /^x{3,}$/u.test(compact)) return "xxx";
-    const mediaAlternatives = "(?:videos?|vids?|photos?|pics?|images?|gifs?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))";
+    const mediaAlternatives = "(?:videos?|vids?|photos?|photographs?|pics?|images?|gifs?|prints?|posters?|pin[\\s_-]?ups?|calendars?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))";
     const markerAlternatives = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18plus)";
     const compound = new RegExp(`^(?:${markerAlternatives}${mediaAlternatives}|${mediaAlternatives}${markerAlternatives})$`, "u");
     const compoundToken = tokens.find(token => compound.test(token));

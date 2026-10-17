@@ -165,7 +165,7 @@ const EXPLICIT_MEDIA_PATTERNS = {
     connectors: /^(?:a|an|the|of|with|who|that|are|is|were|was|be|being|their|very|really|absolutely|totally|completely|fully|amazingly|beautiful|gorgeous|amazing|pretty|lovely)$/u.source,
     body: /^(?:boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?)$/u.source,
     people: /^(?:girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?)$/u.source,
-    media: /^(?:videos?|vids?|movies?|films?|clips?|photos?|pics?|pictures?|images?|gifs?|galler(?:y|ies)|albums?|wallpapers?|footage|streams?|livestreams?|webcams?|compilations?|documentar(?:y|ies)|animations?|animated|illustrations?|comics?|manga|hentai|audios?)$/u.source,
+    media: /^(?:videos?|vids?|movies?|films?|clips?|photos?|photographs?|pics?|pictures?|images?|gifs?|prints?|posters?|pin(?:[-_ ]?up)s?|calendars?|galler(?:y|ies)|albums?|wallpapers?|footage|streams?|livestreams?|webcams?|compilations?|documentar(?:y|ies)|animations?|animated|illustrations?|comics?|manga|hentai|audios?)$/u.source,
     marketing: /^(?:adults?|spicy|mature|steamy|uncensored|unfiltered|uncut|explicit|revealing|suggestive|provocative|teasing|tease|thirst|thirsttraps?|nsfl)$/u.source,
     ordinary: /^(?:recipes?|cooking|baking|food|desserts?|kitchen|chicken|sauce|peppers?|banana|chocolate|coconut|vanilla|pastry|education|educational|learning|classes|training|tutorials?|fitness|medical|medicine|health|anatomy|clinical|diagnosis|symptoms?|treatment|cancer|screening|mammography|reconstruction|surgery|histology|breastfeeding|lactation|consent|prevention|safety|research|scientific|biology|orientation|identity|identities|gender|genders|equality|rights|discrimination|harassment|assault|abuse|violence|victims?|survivors?|legal|laws?)$/u.source,
     relationship: /^(?:same|opposite|biological|assigned)$/u.source,
@@ -297,6 +297,16 @@ function containsContextualExplicitMedia(value) {
     return /(?:^|[^a-z0-9])(?:porn(?:ography|ographic)?|p0rn|hentai|nsfw|gonewild|onlyfans|fansly|blowjob|cumshot)(?:$|[^a-z0-9])|\b(?:nude|naked|sex|xxx)\s+(?:videos?|photos?|tapes?)\b/i.test(text)
       || (isContextualPlatform && /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu.test(text));
   };
+  const explicitStorefrontPage = () => {
+    const heading = [
+      document.querySelector('h1')?.textContent,
+      document.querySelector('meta[property="og:title"]')?.getAttribute('content'),
+      document.title
+    ].filter(Boolean).join(' ');
+    if (!heading || !explicitTitle(heading)) return false;
+    const storefrontText = (document.body?.innerText || '').slice(0, 12000);
+    return /(?:\b(?:availability\s*:|price\s*[:$]|(?:us|ca|au|nz)\s*\$\s*\d)|\b(?:out of stock|currently unavailable|no longer available|listing.{0,40}ended|ended by seller|add to cart|buy now|notify me when.{0,40}stock)\b|[$£€]\s*\d)/i.test(storefrontText);
+  };
   const isX = /(^|\.)(x\.com|twitter\.com)$/i.test(location.hostname);
   const sensitiveWarning = value => /(?:this (?:post|media|profile|account)|the following media|content warning)[\s\S]{0,100}(?:sensitive|adult|nudity|sexual)|^(?:sensitive content|adult content|age.restricted content)$/i.test(String(value || '').trim());
   const scanX = root => {
@@ -420,6 +430,16 @@ function containsContextualExplicitMedia(value) {
   const scan = () => {
     if (!document.documentElement) return;
     observe(document);
+    if (explicitStorefrontPage()) {
+      let blockedPage = '';
+      try { blockedPage = runtime?.getURL?.('blocked.html') || ''; } catch { /* Fall back to concealing the product page. */ }
+      if (blockedPage) {
+        location.replace(blockedPage);
+        return;
+      }
+      conceal(document.querySelector('main, [role="main"]') || document.body || document.documentElement);
+      return;
+    }
     for (const root of roots) {
       if (root !== document && !root.host.isConnected) { roots.delete(root); continue; }
       scanX(root);
