@@ -47,7 +47,7 @@ const SAFE_SEARCH_SUBJECT_KEY_PREFIX = `${SAFE_SEARCH_EVIDENCE_KEY}:`;
 const SAFE_SEARCH_EVIDENCE_LIFETIME_MS = 30 * 60 * 1000;
 const safeSearchSubjects = new Map<string, number>();
 const permanentBlockedDomains = new Set(browserPermanentBlockedDomains());
-const hiddenSafeSearchResultCards = new Map<HTMLElement, { display: string; priority: string }>();
+const hiddenSafeSearchElements = new Map<HTMLElement, { display: string; priority: string }>();
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
 let safeSearchLockObservedUrl = "";
@@ -210,8 +210,7 @@ function readerFileDestinations(roots: Element[]): string[] {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       if (node.parentElement?.closest(`${excluded}, script, style, noscript`)) continue;
-      for (const url of (node.textContent || "").match(/https?:\/\/[^\s<>"']+/gu) || []) {
-        const file = sharedFileDestination(url.replace(/[),.;]+$/u, ""));
+      for (const file of sharedFileUrlsInText(node.textContent || "")) {
         if (file) files.add(file);
       }
     }
@@ -219,25 +218,40 @@ function readerFileDestinations(roots: Element[]): string[] {
   return [...files];
 }
 
+function sharedFileUrlsInText(value: string): string[] {
+  const files = new Set<string>();
+  for (const url of value.match(/https?:\/\/[^\s<>"']+/gu) || []) {
+    const file = sharedFileDestination(url.replace(/[),.;]+$/u, ""));
+    if (file) files.add(file);
+  }
+  return [...files];
+}
+
+function elementExposesSharedFileLink(element: Element): boolean {
+  return (element instanceof HTMLAnchorElement && Boolean(sharedFileDestination(element.href, location.href)))
+    || readerFileDestinations([element]).length > 0;
+}
+
 function googleResultCardWithSharedFileLinks(element: Element): HTMLElement | null {
   const results = document.querySelector("#rso");
   if (!results || !results.contains(element)) return null;
+  let resultCard: HTMLElement | null = null;
   for (let candidate: Element | null = element, depth = 0; candidate && candidate !== results && depth < 10;
     candidate = candidate.parentElement, depth += 1) {
     if (candidate instanceof HTMLElement && candidate.querySelectorAll("h3").length === 1
-      && readerFileDestinations([candidate]).length > 0) return candidate;
+      && readerFileDestinations([candidate]).length > 0) resultCard = candidate;
   }
-  return null;
+  return resultCard;
 }
 
 function restoreSafeSearchResultCards(): void {
-  for (const [card, previous] of hiddenSafeSearchResultCards) {
-    if (card.style.getPropertyValue("display") === "none" && card.style.getPropertyPriority("display") === "important") {
-      if (previous.display) card.style.setProperty("display", previous.display, previous.priority);
-      else card.style.removeProperty("display");
+  for (const [element, previous] of hiddenSafeSearchElements) {
+    if (element.style.getPropertyValue("display") === "none" && element.style.getPropertyPriority("display") === "important") {
+      if (previous.display) element.style.setProperty("display", previous.display, previous.priority);
+      else element.style.removeProperty("display");
     }
   }
-  hiddenSafeSearchResultCards.clear();
+  hiddenSafeSearchElements.clear();
 }
 
 function hideGoogleResultsWithSharedFileLinks(): void {
@@ -245,35 +259,48 @@ function hideGoogleResultsWithSharedFileLinks(): void {
     restoreSafeSearchResultCards();
     return;
   }
+  const body = document.body;
+  if (!body) return;
   const results = document.querySelector("#rso");
-  if (!results) return;
-  const matchingCards = new Set<HTMLElement>();
-  for (const heading of results.querySelectorAll("h3")) {
-    const card = googleResultCardWithSharedFileLinks(heading);
-    if (card) matchingCards.add(card);
+  const matchingElements = new Set<HTMLElement>();
+  if (results) {
+    for (const heading of results.querySelectorAll("h3")) {
+      const card = googleResultCardWithSharedFileLinks(heading);
+      if (card) matchingElements.add(card);
+    }
   }
-  for (const card of matchingCards) {
-    if (!hiddenSafeSearchResultCards.has(card)) {
-      hiddenSafeSearchResultCards.set(card, {
-        display: card.style.getPropertyValue("display"),
-        priority: card.style.getPropertyPriority("display")
+  for (const anchor of document.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    if (elementExposesSharedFileLink(anchor)) matchingElements.add(anchor);
+  }
+  const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const parent = node.parentElement;
+    if (!parent || parent.closest("a[href], script, style, noscript, [hidden], [aria-hidden='true']")) continue;
+    if (sharedFileUrlsInText(node.textContent || "").length > 0) matchingElements.add(parent);
+  }
+  for (const element of matchingElements) {
+    if (!hiddenSafeSearchElements.has(element)) {
+      hiddenSafeSearchElements.set(element, {
+        display: element.style.getPropertyValue("display"),
+        priority: element.style.getPropertyPriority("display")
       });
     }
-    card.style.setProperty("display", "none", "important");
+    element.style.setProperty("display", "none", "important");
   }
-  for (const card of [...hiddenSafeSearchResultCards.keys()]) {
-    if (matchingCards.has(card)) continue;
-    const previous = hiddenSafeSearchResultCards.get(card);
-    if (previous && card.style.getPropertyValue("display") === "none" && card.style.getPropertyPriority("display") === "important") {
-      if (previous.display) card.style.setProperty("display", previous.display, previous.priority);
-      else card.style.removeProperty("display");
+  for (const element of [...hiddenSafeSearchElements.keys()]) {
+    if (matchingElements.has(element)) continue;
+    const previous = hiddenSafeSearchElements.get(element);
+    if (previous && element.style.getPropertyValue("display") === "none" && element.style.getPropertyPriority("display") === "important") {
+      if (previous.display) element.style.setProperty("display", previous.display, previous.priority);
+      else element.style.removeProperty("display");
     }
-    hiddenSafeSearchResultCards.delete(card);
+    hiddenSafeSearchElements.delete(element);
   }
 }
 
 function googleResultContainsSharedFileLink(anchor: HTMLAnchorElement): boolean {
-  return hasCurrentSafeSearchLock() && Boolean(googleResultCardWithSharedFileLinks(anchor));
+  return hasCurrentSafeSearchLock()
+    && (elementExposesSharedFileLink(anchor) || Boolean(googleResultCardWithSharedFileLinks(anchor)));
 }
 
 function contextualLinkIsBlocked(anchor: HTMLAnchorElement): boolean {
