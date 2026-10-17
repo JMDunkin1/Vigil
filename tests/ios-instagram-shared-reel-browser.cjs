@@ -123,8 +123,8 @@ async function main() {
       'the same shared reel can be reopened');
   }
   // Inline Direct Reel previews must not activate full-screen containment,
-  // hide chat rows, or block scrolling. Opening a real full-screen viewer
-  // inside the same thread should activate it, then release the chat on close.
+  // hide chat rows, or block scrolling. An explicitly opened viewer should
+  // contain gestures and route changes without touching the player or chat.
   await win.loadURL('https://www.instagram.com/direct/t/123/');
   await run(guard);
   await run(`document.body.innerHTML = ${JSON.stringify(`
@@ -141,13 +141,37 @@ async function main() {
       document.getElementById('thread').dispatchEvent(e); return e.defaultPrevented; })() })`),
     { pinned: false, before: 'visible', after: 'visible', wheelBlocked: false },
     'inline Reel previews in a Direct thread remain visible and scrollable');
+  await run(`(() => { const link=document.getElementById('message-before').querySelector('a');
+    link.addEventListener('click',event=>event.preventDefault(),{once:true});
+    link.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window})); })()`);
   await run(`const portal = document.createElement('div'); portal.id='portal'; portal.innerHTML =
-    '<div role="dialog" aria-modal="true" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article></div>';
+    '<div role="dialog" aria-modal="true" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article><button id="next" aria-label="Next reel">Next</button></div>';
     document.getElementById('thread').append(portal);`);
   assert.equal(await run(`(() => { const e = new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:10});
     document.dispatchEvent(e); return [document.documentElement.hasAttribute('data-vigil-single-reel'), e.defaultPrevented]; })()`)
-    .then(value => JSON.stringify(value)), JSON.stringify([false, false]),
-    'a full-screen shared Reel stays under Instagram native playback and scrolling');
+    .then(value => JSON.stringify(value)), JSON.stringify([true, true]),
+    'an explicitly opened full-screen Reel blocks viewer scrolling');
+  assert.deepEqual(await run(`(() => { let nextClicks=0; const next=document.getElementById('next');
+    next.addEventListener('click',()=>nextClicks++);
+    const e=new MouseEvent('click',{bubbles:true,cancelable:true,view:window}); next.dispatchEvent(e);
+    history.pushState({}, '', '/reel/Other456/');
+    return { nextBlocked:e.defaultPrevented, nextClicks, path:location.pathname }; })()`),
+    { nextBlocked:true, nextClicks:0, path:'/direct/t/123/' },
+    'Next Reel controls and recommendations cannot leave the selected shared Reel');
+  assert.deepEqual(await run(`(() => { const video = document.getElementById('opened');
+    let taps = 0; video.addEventListener('click',() => taps++);
+    const down = new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:600});
+    const move = new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:200});
+    const up = new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:200});
+    video.dispatchEvent(down); video.dispatchEvent(move); video.dispatchEvent(up);
+    video.closest('a').addEventListener('click',event=>event.preventDefault(),{once:true});
+    const tap = new MouseEvent('click',{bubbles:true,cancelable:true,view:window}); video.dispatchEvent(tap);
+    video.src='/recycled-player.mp4';
+    return { swipeBlocked:move.defaultPrevented, tapReachedPlayer:taps===1,
+      visible:getComputedStyle(video).visibility, source:video.getAttribute('src'),
+      chat:getComputedStyle(document.getElementById('message-before')).visibility }; })()`),
+    { swipeBlocked:true, tapReachedPlayer:true, visible:'visible', source:'/recycled-player.mp4', chat:'visible' },
+    'Reel swipes stay contained while player taps, recycling, and chat visibility remain intact');
   await run(`history.pushState({}, '', '/reel/Shared123/');
     document.getElementById('portal').style.opacity = '0';
     history.pushState({}, '', '/direct/t/123/');
@@ -167,8 +191,11 @@ async function main() {
     { pinned: false, before: 'visible', after: 'visible', blocked: 0 },
     'closing a nested Reel viewer releases all Direct message attachments');
   await run(`document.getElementById('portal').style.display = ''; document.getElementById('portal').style.opacity = '1';`);
-  assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), false,
-    'reopening a shared Reel does not reactivate media or scroll interception');
+  await run(`(() => { const link=document.getElementById('message-before').querySelector('a');
+    link.addEventListener('click',event=>event.preventDefault(),{once:true});
+    link.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window})); })()`);
+  assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), true,
+    'reopening a shared Reel reactivates only gesture and route containment');
   await win.loadURL('https://www.instagram.com/reel/Shared123/');
   await run(guard);
   await run(`document.body.innerHTML = '<style>video,img{width:390px;height:700px}</style><main><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></article><article><video src="/suggested.mp4"></video></article></main>'`);
@@ -188,8 +215,8 @@ async function main() {
       source:video.getAttribute('src'), visible:getComputedStyle(video).visibility,
       scrollTop:stack.scrollTop, wheelBlocked:wheel.defaultPrevented,
       scrollLock:stack.hasAttribute('data-vigil-single-reel-scroll') }; })()`),
-    { pinned:false, source:'/recycled-player.mp4', visible:'visible', scrollTop:80, wheelBlocked:false, scrollLock:false },
-    'the selected Reel player and viewer scroll remain fully native');
+    { pinned:true, source:'/recycled-player.mp4', visible:'visible', scrollTop:80, wheelBlocked:true, scrollLock:false },
+    'the selected Reel remains visible while wheel movement is contained without locking its scroll ancestors');
   await run(`document.getElementById('poster').src='/poster-hydrated.svg'`);
   assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
     'poster source replacement keeps the anonymous shared reel visible');

@@ -1975,21 +1975,13 @@ enum DOMAdapters {
       };
       const syncRoute = () => {
         const route = mediaRoute(location.href);
-        // Instagram owns shared Reel playback and the Direct viewer lifecycle.
-        // The containment guard's gesture and scroll hooks break its recycled
-        // player and can hide the retained chat, so leave Reel routes native.
-        if (route?.kind === 'reel') {
-          if (pinnedID) reset();
-          return false;
-        }
         if (route && !modalContext) modalContext = foregroundModal();
         const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
           || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
             && Date.now() >= sharedStory.at && Date.now() - sharedStory.at < 30 * 60 * 1000));
-        // Shared videos can open as /p/{id}, or in a modal while Direct keeps
-        // its URL. Both must have the same single-item containment as /reel.
+        // Explicitly opened Direct shares may keep the thread URL. Bind only
+        // the clicked item once its own fullscreen viewer is present.
         if (!route && location.pathname.startsWith('/direct/') && sharedIntent
-            && sharedIntent.route.kind !== 'reel'
             && sharedIntent.source === location.pathname && Date.now() - sharedIntent.at < 10000) {
           modalContext = foregroundModal();
           if (modalContext) {
@@ -2099,20 +2091,6 @@ enum DOMAdapters {
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (node.scrollTop !== position) node.scrollTop = position;
       });
-      const lockViewerScroll = () => {
-        const root = modalContext || document;
-        const media = pinnedVideo?.isConnected ? pinnedVideo
-          : [...root.querySelectorAll('video, img')].find(fullScreenMedia);
-        if (!media) return;
-        for (let node = media; node; node = node.parentElement) {
-          if (inSheet(node)) continue;
-          if (!lockedScroll.has(node)) {
-            lockedScroll.set(node, node.scrollTop);
-            node.setAttribute('data-vigil-single-reel-scroll', 'true');
-          }
-        }
-        restoreScroll();
-      };
       const reelAdvanceControl = target => {
         const control = target?.closest?.('button, [role="button"], a[href]') || target;
         const labels = [control, ...control?.querySelectorAll?.('[aria-label]') || []];
@@ -2127,6 +2105,9 @@ enum DOMAdapters {
       };
       const containPress = event => {
         if (!syncRoute() || inSheet(event.target)) return false;
+        // Keep Instagram's player taps and ordinary Reel controls intact.
+        // Only cancel the subsequent gesture when it actually tries to move.
+        if (pinnedKind === 'reel') return false;
         if (reelAdvanceControl(event.target)) { cancel(event); return true; }
         const control = event.target?.closest?.('button, a[href], [role="button"]');
         if (control && !control.querySelector('video, img') && !mediaRoute(control.href)) return false;
@@ -2227,8 +2208,10 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         if (!syncRoute()) return;
-        // Reels return from syncRoute above; photo posts still use per-media
-        // source protection and their own carousel containment.
+        // Instagram recycles its active Reel video element as recommendations
+        // load. Leave its player, posters, and retained Direct chat untouched;
+        // gesture and route handlers below still contain movement/navigation.
+        if (pinnedKind === 'reel') return;
         const videos = [...(modalContext || document).querySelectorAll('video')];
         if (pinnedVideo && !pinnedVideo.isConnected && pinnedSource) {
           // A harmless React remount may replace the node, but only the exact
