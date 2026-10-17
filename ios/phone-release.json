@@ -1,36 +1,36 @@
 {
   "schemaVersion": 3,
-  "version": "0.3.203",
-  "build": 206,
+  "version": "0.3.204",
+  "build": 207,
   "sourceFingerprints": {
-    "personal": "f9f6814ce360fa2c4e9c5799e751e99e7a1af7367d59cf7549e9786ec0bf20e7",
+    "personal": "9d1a11efb1ddc6604a0d17cb01f2a7caddd0d7961afa8a8687daae126a5359de",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-10-17T22:19:00.001Z",
+  "releasedAt": "2026-10-17T22:25:52.201Z",
   "apps": {
     "instagram": {
-      "version": "0.3.184",
-      "build": 187,
-      "sourceFingerprint": "0ecf853ff59e31499cc7c77ca39b35004f1fdba7b0b3e2004f606e5902dab9af",
-      "releasedAt": "2026-10-17T22:19:00.001Z"
+      "version": "0.3.185",
+      "build": 188,
+      "sourceFingerprint": "6be775e88c3974df77f4737a94fe25983dffb715bceaf0287f9fe3b74926072e",
+      "releasedAt": "2026-10-17T22:25:52.201Z"
     },
     "youtube": {
-      "version": "0.3.182",
-      "build": 185,
-      "sourceFingerprint": "27e7d8194eca7479ac036dd29b4646f1b5639fa56f5b7cdd8699f571a5f59fbc",
-      "releasedAt": "2026-10-17T22:19:00.001Z"
+      "version": "0.3.183",
+      "build": 186,
+      "sourceFingerprint": "ba33fc00e506606b20dffe4d85c2b24bfcf1ba881440c517b927f1d56cf821b0",
+      "releasedAt": "2026-10-17T22:25:52.201Z"
     },
     "snapchat": {
-      "version": "0.1.111",
-      "build": 112,
-      "sourceFingerprint": "a3653fd7cc7d2f3470d175fd17191c3778db284e4ac9e7e887e6392c80eee386",
-      "releasedAt": "2026-10-17T22:19:00.001Z"
+      "version": "0.1.112",
+      "build": 113,
+      "sourceFingerprint": "3aa8caccc324814814f8d13e15942257041ffcfd167ee2528445bc00610e7428",
+      "releasedAt": "2026-10-17T22:25:52.201Z"
     },
     "linkedin": {
-      "version": "0.1.102",
-      "build": 103,
-      "sourceFingerprint": "d17e182c97e1d9d0201989d7091597a41c2e58c07857e0065a29d4298d0ef589",
-      "releasedAt": "2026-10-17T22:19:00.001Z"
+      "version": "0.1.103",
+      "build": 104,
+      "sourceFingerprint": "6a63786165d6c040b7fb445ff29f3e6880d5a4618ecc2d7b77e5274ea13fb393",
+      "releasedAt": "2026-10-17T22:25:52.201Z"
     }
   }
 }
