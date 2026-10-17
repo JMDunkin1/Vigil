@@ -1916,6 +1916,10 @@ enum DOMAdapters {
       const lockedScroll = new Map();
       const style = document.createElement('style');
       style.textContent = `
+        html[data-vigil-single-reel-kind="reel"]:not(:has([data-vigil-instagram-comments-sheet="true"])) {
+          touch-action: pinch-zoom !important;
+          overscroll-behavior: none !important;
+        }
         html[data-vigil-single-reel-kind="p"] video:not([data-vigil-single-reel-media="allowed"]) {
           visibility: hidden !important;
         }

@@ -151,6 +151,15 @@ async function main() {
     document.dispatchEvent(e); return [document.documentElement.hasAttribute('data-vigil-single-reel'), e.defaultPrevented]; })()`)
     .then(value => JSON.stringify(value)), JSON.stringify([true, true]),
     'an explicitly opened full-screen Reel blocks viewer scrolling');
+  assert.equal(await run(`getComputedStyle(document.documentElement).touchAction`), 'pinch-zoom',
+    'an open Reel disables native touch panning while preserving pinch zoom');
+  assert.equal(await run(`(() => { const sheet=document.createElement('div');
+    sheet.setAttribute('data-vigil-instagram-comments-sheet','true'); document.body.append(sheet);
+    return getComputedStyle(document.documentElement).touchAction; })()`), 'auto',
+    'the native pan lock yields while an Instagram comments sheet is open');
+  assert.equal(await run(`document.querySelector('[data-vigil-instagram-comments-sheet]').remove();
+    getComputedStyle(document.documentElement).touchAction`), 'pinch-zoom',
+    'closing the comments sheet restores the Reel pan lock');
   assert.deepEqual(await run(`(() => { let nextClicks=0; const next=document.getElementById('next');
     next.addEventListener('click',()=>nextClicks++);
     const e=new MouseEvent('click',{bubbles:true,cancelable:true,view:window}); next.dispatchEvent(e);
@@ -190,9 +199,10 @@ async function main() {
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
     before: getComputedStyle(document.getElementById('message-before')).visibility,
     after: getComputedStyle(document.getElementById('message-after')).visibility,
+    touchAction: getComputedStyle(document.documentElement).touchAction,
     wheelBlocked: (() => { const e = new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
       document.getElementById('thread').dispatchEvent(e); return e.defaultPrevented; })() })`),
-    { pinned: false, before: 'visible', after: 'visible', wheelBlocked: false },
+    { pinned: false, before: 'visible', after: 'visible', touchAction: 'auto', wheelBlocked: false },
     'returning from a closed Reel route must release a retained transparent viewer and restore chat scrolling');
   await run(`document.getElementById('portal').style.display = 'none';`);
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
