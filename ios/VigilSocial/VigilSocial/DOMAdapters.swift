@@ -1975,6 +1975,13 @@ enum DOMAdapters {
       };
       const syncRoute = () => {
         const route = mediaRoute(location.href);
+        // Instagram owns shared Reel playback and the Direct viewer lifecycle.
+        // The containment guard's gesture and scroll hooks break its recycled
+        // player and can hide the retained chat, so leave Reel routes native.
+        if (route?.kind === 'reel') {
+          if (pinnedID) reset();
+          return false;
+        }
         if (route && !modalContext) modalContext = foregroundModal();
         const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
           || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
@@ -1982,28 +1989,13 @@ enum DOMAdapters {
         // Shared videos can open as /p/{id}, or in a modal while Direct keeps
         // its URL. Both must have the same single-item containment as /reel.
         if (!route && location.pathname.startsWith('/direct/') && sharedIntent
+            && sharedIntent.route.kind !== 'reel'
             && sharedIntent.source === location.pathname && Date.now() - sharedIntent.at < 10000) {
           modalContext = foregroundModal();
           if (modalContext) {
             pinnedID = sharedIntent.route.id;
             pinnedKind = sharedIntent.route.kind;
             sharedIntent = null;
-          }
-        }
-        if (!route && !pinnedID && location.pathname.startsWith('/direct/')) {
-          // Direct contains inline shared-media previews. They are not a
-          // viewer: only a full-screen video can activate containment here.
-          const modal = foregroundModal();
-          const video = modal && [...modal.querySelectorAll('video')].find((media) => {
-            return fullScreenMedia(media);
-          });
-          if (video) {
-            const link = [...modal.querySelectorAll('a[href]')].map(node => mediaRoute(node.href))
-              .find(candidate => candidate);
-            modalContext = modal;
-            pinnedVideo = video instanceof HTMLVideoElement ? video : null;
-            pinnedID = link?.id || 'direct-modal';
-            pinnedKind = link?.kind || (video instanceof HTMLVideoElement ? 'reel' : 'p');
           }
         }
         const viewerStillOpen = modalContext && activeModal(modalContext)
@@ -2235,12 +2227,8 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         if (!syncRoute()) return;
-        // Instagram recycles its active Reel video element as recommendations
-        // load. Freezing that node's original src pauses or hides the live
-        // player for a frame and makes playback flicker. Keep scroll and
-        // route/control containment, but never rewrite, pause, or classify
-        // Reel videos. Photo posts still use per-media source protection.
-        if (pinnedKind === 'reel') { lockViewerScroll(); return; }
+        // Reels return from syncRoute above; photo posts still use per-media
+        // source protection and their own carousel containment.
         const videos = [...(modalContext || document).querySelectorAll('video')];
         if (pinnedVideo && !pinnedVideo.isConnected && pinnedSource) {
           // A harmless React remount may replace the node, but only the exact

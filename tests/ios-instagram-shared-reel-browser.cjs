@@ -20,13 +20,13 @@ async function main() {
     await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 0))');
     return result;
   };
-  for (const path of ['/reel/Shared123/', '/p/Shared123/', '/direct/t/123/']) {
+  for (const path of ['/p/Shared123/']) {
     await win.loadURL(`https://www.instagram.com${path}`);
     await run(guard);
     await run(`document.body.innerHTML = ${JSON.stringify(`
       <style>body{margin:0} main{height:812px;overflow-y:auto} article,video{display:block;width:390px;height:700px}</style>
-      <main id="stack" ${path.startsWith('/direct/') ? 'role="dialog"' : ''}>
-        <article id="shared-card"><a href="${path.startsWith('/p/') ? path : '/reel/Shared123/'}"><video id="shared" src="/original.mp4"></video></a>${path.startsWith('/p/') ? '<img id="poster" src="/poster.svg" style="position:absolute;top:0;width:390px;height:600px">' : ''}</article>
+      <main id="stack">
+        <article id="shared-card"><a href="${path}"><video id="shared" src="/original.mp4"></video></a><img id="poster" src="/poster.svg" style="position:absolute;top:0;width:390px;height:600px"></article>
         <article><video id="suggested" src="/suggested.mp4"></video></article>
         <button id="next" aria-label="Next reel">Next</button>
         <button id="like">Like</button><button id="back">Back</button>
@@ -85,7 +85,7 @@ async function main() {
     })()`);
     assert.deepEqual(state, {
       starts:0, releases:0, clicks:1, menuBlocked:true, swipeBlocked:true, controls:3, nextBlocked:true,
-      path, source:'/original.mp4', visible:'visible', suggested:path.startsWith('/p/') ? 'hidden' : 'visible', scrollLocked:true
+      path, source:'/original.mp4', visible:'visible', suggested:'hidden', scrollLocked:true
     }, path);
     assert.deepEqual(await run(`(() => {
       const media = document.getElementById('shared');
@@ -98,10 +98,8 @@ async function main() {
         visible: getComputedStyle(media).visibility,
         card: document.getElementById('shared-card').dataset.vigilSingleReelCard,
         pauseCalls };
-    })()`), path.startsWith('/p/')
-      ? { allowed: 'blocked', visible: 'hidden', card: 'blocked', pauseCalls: 1 }
-      : { allowed: undefined, visible: 'visible', card: undefined, pauseCalls: 0 },
-    `${path}: Reel playback survives Instagram recycling its active video source`);
+    })()`), { allowed: 'blocked', visible: 'hidden', card: 'blocked', pauseCalls: 1 },
+    `${path}: photo-post protection freezes unrelated media`);
   }
   // Direct keeps its thread mounted under the viewer and may hide a portal
   // ancestor before removing the dialog. Neither transition may hide messages.
@@ -146,9 +144,10 @@ async function main() {
   await run(`const portal = document.createElement('div'); portal.id='portal'; portal.innerHTML =
     '<div role="dialog" aria-modal="true" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article></div>';
     document.getElementById('thread').append(portal);`);
-  assert.equal(await run(`(() => { document.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:10}));
-    return document.documentElement.hasAttribute('data-vigil-single-reel'); })()`), true,
-    'a full-screen shared Reel viewer is contained while open');
+  assert.equal(await run(`(() => { const e = new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:10});
+    document.dispatchEvent(e); return [document.documentElement.hasAttribute('data-vigil-single-reel'), e.defaultPrevented]; })()`)
+    .then(value => JSON.stringify(value)), JSON.stringify([false, false]),
+    'a full-screen shared Reel stays under Instagram native playback and scrolling');
   await run(`history.pushState({}, '', '/reel/Shared123/');
     document.getElementById('portal').style.opacity = '0';
     history.pushState({}, '', '/direct/t/123/');
@@ -168,8 +167,8 @@ async function main() {
     { pinned: false, before: 'visible', after: 'visible', blocked: 0 },
     'closing a nested Reel viewer releases all Direct message attachments');
   await run(`document.getElementById('portal').style.display = ''; document.getElementById('portal').style.opacity = '1';`);
-  assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), true,
-    'the shared Reel can be reopened inside a dialog-backed Direct thread');
+  assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), false,
+    'reopening a shared Reel does not reactivate media or scroll interception');
   await win.loadURL('https://www.instagram.com/reel/Shared123/');
   await run(guard);
   await run(`document.body.innerHTML = '<style>video,img{width:390px;height:700px}</style><main><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></article><article><video src="/suggested.mp4"></video></article></main>'`);
@@ -180,6 +179,17 @@ async function main() {
     suggestion:getComputedStyle(document.getElementById('suggestion')).visibility})`),
     { selected: 'visible', media: '', card: '', suggestion: 'visible' },
     'Reel playback remains visible while Instagram recycles the active player and poster');
+  assert.deepEqual(await run(`(() => { const video = document.getElementById('opened');
+    const stack = document.querySelector('main'); stack.style.height='500px'; stack.style.overflowY='auto';
+    stack.scrollTop=80; stack.dispatchEvent(new Event('scroll',{bubbles:true}));
+    const wheel = new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:50}); stack.dispatchEvent(wheel);
+    video.src='/recycled-player.mp4';
+    return { pinned:document.documentElement.hasAttribute('data-vigil-single-reel'),
+      source:video.getAttribute('src'), visible:getComputedStyle(video).visibility,
+      scrollTop:stack.scrollTop, wheelBlocked:wheel.defaultPrevented,
+      scrollLock:stack.hasAttribute('data-vigil-single-reel-scroll') }; })()`),
+    { pinned:false, source:'/recycled-player.mp4', visible:'visible', scrollTop:80, wheelBlocked:false, scrollLock:false },
+    'the selected Reel player and viewer scroll remain fully native');
   await run(`document.getElementById('poster').src='/poster-hydrated.svg'`);
   assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
     'poster source replacement keeps the anonymous shared reel visible');
