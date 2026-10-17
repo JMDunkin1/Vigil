@@ -2105,10 +2105,14 @@ enum DOMAdapters {
       };
       const containPress = event => {
         if (!syncRoute() || inSheet(event.target)) return false;
-        // Keep Instagram's player taps and ordinary Reel controls intact.
-        // Only cancel the subsequent gesture when it actually tries to move.
-        if (pinnedKind === 'reel') return false;
         if (reelAdvanceControl(event.target)) { cancel(event); return true; }
+        if (pinnedKind === 'reel') {
+          // Instagram arms its recommendation rail on press-and-hold. Stop the
+          // press path before that timer starts; the ordinary click still
+          // reaches the player and controls for taps.
+          event.stopImmediatePropagation();
+          return true;
+        }
         const control = event.target?.closest?.('button, a[href], [role="button"]');
         if (control && !control.querySelector('video, img') && !mediaRoute(control.href)) return false;
         // A hold can arm Instagram's recommendation viewer before any move

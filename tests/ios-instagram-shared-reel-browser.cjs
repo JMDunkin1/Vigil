@@ -159,19 +159,30 @@ async function main() {
     { nextBlocked:true, nextClicks:0, path:'/direct/t/123/' },
     'Next Reel controls and recommendations cannot leave the selected shared Reel');
   assert.deepEqual(await run(`(() => { const video = document.getElementById('opened');
-    let taps = 0; video.addEventListener('click',() => taps++);
+    let taps = 0; const presses=[]; video.addEventListener('click',() => taps++);
+    for (const type of ['pointerdown','pointerup','touchstart','touchend','mousedown','mouseup']) {
+      video.addEventListener(type,()=>presses.push(type));
+    }
     const down = new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:600});
     const move = new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:200});
     const up = new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'touch',clientX:100,clientY:200});
     video.dispatchEvent(down); video.dispatchEvent(move); video.dispatchEvent(up);
+    const touchStart=new Event('touchstart',{bubbles:true,cancelable:true});
+    Object.defineProperty(touchStart,'touches',{value:[{clientX:100,clientY:600}]}); video.dispatchEvent(touchStart);
+    const touchEnd=new Event('touchend',{bubbles:true,cancelable:true});
+    Object.defineProperty(touchEnd,'touches',{value:[]}); video.dispatchEvent(touchEnd);
+    video.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,cancelable:true,view:window}));
+    video.dispatchEvent(new MouseEvent('mouseup',{bubbles:true,cancelable:true,view:window}));
     video.closest('a').addEventListener('click',event=>event.preventDefault(),{once:true});
     const tap = new MouseEvent('click',{bubbles:true,cancelable:true,view:window}); video.dispatchEvent(tap);
     video.src='/recycled-player.mp4';
-    return { swipeBlocked:move.defaultPrevented, tapReachedPlayer:taps===1,
+    return { swipeBlocked:move.defaultPrevented, pressEventsReachedPlayer:presses.length,
+      tapReachedPlayer:taps===1,
       visible:getComputedStyle(video).visibility, source:video.getAttribute('src'),
       chat:getComputedStyle(document.getElementById('message-before')).visibility }; })()`),
-    { swipeBlocked:true, tapReachedPlayer:true, visible:'visible', source:'/recycled-player.mp4', chat:'visible' },
-    'Reel swipes stay contained while player taps, recycling, and chat visibility remain intact');
+    { swipeBlocked:true, pressEventsReachedPlayer:0, tapReachedPlayer:true,
+      visible:'visible', source:'/recycled-player.mp4', chat:'visible' },
+    'Reel swipes and hold-start events are contained while taps, recycling, and chat visibility remain intact');
   await run(`history.pushState({}, '', '/reel/Shared123/');
     document.getElementById('portal').style.opacity = '0';
     history.pushState({}, '', '/direct/t/123/');
