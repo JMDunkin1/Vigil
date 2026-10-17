@@ -1989,12 +1989,11 @@ enum DOMAdapters {
           }
         }
         if (!route && !pinnedID && location.pathname.startsWith('/direct/')) {
-          // Direct also opens video previews from buttons with no permalink.
-          // The foreground video modal is still a single shared item.
+          // Direct contains inline shared-media previews. They are not a
+          // viewer: only a full-screen video can activate containment here.
           const modal = foregroundModal();
-          const video = modal && [...modal.querySelectorAll('video, img')].find((media) => {
-            const rect = media.getBoundingClientRect();
-            return rect.width >= 220 && rect.height >= 280 && rect.bottom > 0 && rect.top < innerHeight;
+          const video = modal && [...modal.querySelectorAll('video')].find((media) => {
+            return fullScreenMedia(media);
           });
           if (video) {
             const link = [...modal.querySelectorAll('a[href]')].map(node => mediaRoute(node.href))
@@ -2026,10 +2025,19 @@ enum DOMAdapters {
         document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
         return true;
       };
+      const fullScreenMedia = media => {
+        const rect = media.getBoundingClientRect();
+        return activeModal(media)
+          && rect.width >= innerWidth * 0.72
+          && rect.height >= innerHeight * 0.72
+          && rect.bottom > innerHeight * 0.12
+          && rect.top < innerHeight * 0.88;
+      };
       const foregroundModal = () => {
         const dialogs = [...document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
-        )].filter(modal => activeModal(modal) && !inSheet(modal));
+        )].filter(modal => activeModal(modal) && !inSheet(modal)
+          && [...modal.querySelectorAll('video, img')].some(fullScreenMedia));
         // Direct itself may be exposed as a dialog and contain every message
         // attachment. Pin the innermost active media dialog so closing its
         // viewer releases the retained chat instead of keeping the whole
@@ -2044,9 +2052,7 @@ enum DOMAdapters {
         // Recent Direct viewers use an anonymous fixed portal, without dialog
         // semantics. The message thread itself must remain scrollable.
         for (const media of document.querySelectorAll('video, img')) {
-          const rect = media.getBoundingClientRect();
-          if (!activeModal(media) || rect.width < 220 || rect.height < 280
-              || rect.bottom <= 0 || rect.top >= innerHeight) continue;
+          if (!fullScreenMedia(media)) continue;
           for (let node = media.parentElement; node && node !== document.body; node = node.parentElement) {
             if (getComputedStyle(node).position === 'fixed' && !inSheet(node)) return node;
           }

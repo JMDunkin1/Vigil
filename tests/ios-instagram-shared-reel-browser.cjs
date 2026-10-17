@@ -114,25 +114,31 @@ async function main() {
     assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
       'the same shared reel can be reopened');
   }
-  // A Direct thread can itself be exposed as a dialog while a nested Reel
-  // viewer is open. Selecting the outer dialog causes its message attachments
-  // to be classified as unrelated media and stay hidden after the viewer closes.
+  // Inline Direct Reel previews must not activate full-screen containment,
+  // hide chat rows, or block scrolling. Opening a real full-screen viewer
+  // inside the same thread should activate it, then release the chat on close.
   await win.loadURL('https://www.instagram.com/direct/t/123/');
   await run(guard);
   await run(`document.body.innerHTML = ${JSON.stringify(`
-    <style>body{margin:0} img,video{display:block;width:300px;height:500px}</style>
+    <style>body{margin:0} img,video{display:block;width:300px;height:500px}#opened{width:390px;height:780px}#portal{position:fixed;inset:0}</style>
     <main id="thread" role="dialog" aria-modal="true">
       <article id="message-before"><span>Language barrier be damned</span><a href="/reel/Shared123/"><img src="/poster-before.svg"></a></article>
-      <div id="portal"><div role="dialog" aria-modal="true" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article></div></div>
       <article id="message-after"><a href="/reel/Other456/"><img src="/poster-after.svg"></a><span>Another message</span></article>
     </main>
   `)}; history.pushState({}, '', '/direct/t/123/');`);
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
-    thread: document.getElementById('thread').dataset.vigilSingleReelCard || '',
     before: getComputedStyle(document.getElementById('message-before')).visibility,
-    after: getComputedStyle(document.getElementById('message-after')).visibility })`),
-    { pinned: true, thread: '', before: 'visible', after: 'visible' },
-    'a nested Reel viewer must not pin its Direct thread or hide other shared messages');
+    after: getComputedStyle(document.getElementById('message-after')).visibility,
+    wheelBlocked: (() => { const e = new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+      document.getElementById('thread').dispatchEvent(e); return e.defaultPrevented; })() })`),
+    { pinned: false, before: 'visible', after: 'visible', wheelBlocked: false },
+    'inline Reel previews in a Direct thread remain visible and scrollable');
+  await run(`const portal = document.createElement('div'); portal.id='portal'; portal.innerHTML =
+    '<div role="dialog" aria-modal="true" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article></div>';
+    document.getElementById('thread').append(portal);`);
+  assert.equal(await run(`(() => { document.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:10}));
+    return document.documentElement.hasAttribute('data-vigil-single-reel'); })()`), true,
+    'a full-screen shared Reel viewer is contained while open');
   await run(`document.getElementById('portal').style.display = 'none';`);
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
     before: getComputedStyle(document.getElementById('message-before')).visibility,
