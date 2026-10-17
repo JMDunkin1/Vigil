@@ -1916,11 +1916,11 @@ enum DOMAdapters {
       const lockedScroll = new Map();
       const style = document.createElement('style');
       style.textContent = `
-        html[data-vigil-single-reel] video:not([data-vigil-single-reel-media="allowed"]) {
+        html[data-vigil-single-reel-kind="p"] video:not([data-vigil-single-reel-media="allowed"]) {
           visibility: hidden !important;
         }
-        html[data-vigil-single-reel] [data-vigil-single-reel-card="blocked"],
-        html[data-vigil-single-reel] [data-vigil-single-reel-card="blocked"] * {
+        html[data-vigil-single-reel-kind="p"] [data-vigil-single-reel-card="blocked"],
+        html[data-vigil-single-reel-kind="p"] [data-vigil-single-reel-card="blocked"] * {
           visibility: hidden !important;
           pointer-events: none !important;
         }
@@ -2107,6 +2107,20 @@ enum DOMAdapters {
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (node.scrollTop !== position) node.scrollTop = position;
       });
+      const lockViewerScroll = () => {
+        const root = modalContext || document;
+        const media = pinnedVideo?.isConnected ? pinnedVideo
+          : [...root.querySelectorAll('video, img')].find(fullScreenMedia);
+        if (!media) return;
+        for (let node = media; node; node = node.parentElement) {
+          if (inSheet(node)) continue;
+          if (!lockedScroll.has(node)) {
+            lockedScroll.set(node, node.scrollTop);
+            node.setAttribute('data-vigil-single-reel-scroll', 'true');
+          }
+        }
+        restoreScroll();
+      };
       const reelAdvanceControl = target => {
         const control = target?.closest?.('button, [role="button"], a[href]') || target;
         const labels = [control, ...control?.querySelectorAll?.('[aria-label]') || []];
@@ -2221,6 +2235,12 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         if (!syncRoute()) return;
+        // Instagram recycles its active Reel video element as recommendations
+        // load. Freezing that node's original src pauses or hides the live
+        // player for a frame and makes playback flicker. Keep scroll and
+        // route/control containment, but never rewrite, pause, or classify
+        // Reel videos. Photo posts still use per-media source protection.
+        if (pinnedKind === 'reel') { lockViewerScroll(); return; }
         const videos = [...(modalContext || document).querySelectorAll('video')];
         if (pinnedVideo && !pinnedVideo.isConnected && pinnedSource) {
           // A harmless React remount may replace the node, but only the exact
