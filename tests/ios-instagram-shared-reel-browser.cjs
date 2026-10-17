@@ -139,6 +139,17 @@ async function main() {
   assert.equal(await run(`(() => { document.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:10}));
     return document.documentElement.hasAttribute('data-vigil-single-reel'); })()`), true,
     'a full-screen shared Reel viewer is contained while open');
+  await run(`history.pushState({}, '', '/reel/Shared123/');
+    document.getElementById('portal').style.opacity = '0';
+    history.pushState({}, '', '/direct/t/123/');
+    document.dispatchEvent(new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100}));`);
+  assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
+    before: getComputedStyle(document.getElementById('message-before')).visibility,
+    after: getComputedStyle(document.getElementById('message-after')).visibility,
+    wheelBlocked: (() => { const e = new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+      document.getElementById('thread').dispatchEvent(e); return e.defaultPrevented; })() })`),
+    { pinned: false, before: 'visible', after: 'visible', wheelBlocked: false },
+    'returning from a closed Reel route must release a retained transparent viewer and restore chat scrolling');
   await run(`document.getElementById('portal').style.display = 'none';`);
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
     before: getComputedStyle(document.getElementById('message-before')).visibility,
@@ -146,7 +157,7 @@ async function main() {
     blocked: document.querySelectorAll('[data-vigil-single-reel-card="blocked"]').length })`),
     { pinned: false, before: 'visible', after: 'visible', blocked: 0 },
     'closing a nested Reel viewer releases all Direct message attachments');
-  await run(`document.getElementById('portal').style.display = '';`);
+  await run(`document.getElementById('portal').style.display = ''; document.getElementById('portal').style.opacity = '1';`);
   assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), true,
     'the shared Reel can be reopened inside a dialog-backed Direct thread');
   await win.loadURL('https://www.instagram.com/reel/Shared123/');

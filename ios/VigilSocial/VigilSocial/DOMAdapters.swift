@@ -1967,7 +1967,9 @@ enum DOMAdapters {
         // A retained viewer must not keep the Direct thread pinned or hidden.
         for (let ancestor = node; ancestor; ancestor = ancestor.parentElement) {
           if (ancestor.hidden || ancestor.getAttribute('aria-hidden') === 'true'
-              || getComputedStyle(ancestor).display === 'none') return false;
+              || getComputedStyle(ancestor).display === 'none'
+              || getComputedStyle(ancestor).visibility === 'hidden'
+              || Number(getComputedStyle(ancestor).opacity) <= 0.02) return false;
         }
         return true;
       };
@@ -2004,7 +2006,9 @@ enum DOMAdapters {
             pinnedKind = link?.kind || (video instanceof HTMLVideoElement ? 'reel' : 'p');
           }
         }
-        if (!route && activeModal(modalContext) && location.pathname.startsWith('/direct/')) {
+        const viewerStillOpen = modalContext && activeModal(modalContext)
+          && [...modalContext.querySelectorAll('video, img')].some(fullScreenMedia);
+        if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
           return true;
@@ -2030,6 +2034,8 @@ enum DOMAdapters {
         return activeModal(media)
           && rect.width >= innerWidth * 0.72
           && rect.height >= innerHeight * 0.72
+          && rect.right > innerWidth * 0.12
+          && rect.left < innerWidth * 0.88
           && rect.bottom > innerHeight * 0.12
           && rect.top < innerHeight * 0.88;
       };
