@@ -114,6 +114,35 @@ async function main() {
     assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
       'the same shared reel can be reopened');
   }
+  // A Direct thread can itself be exposed as a dialog while a nested Reel
+  // viewer is open. Selecting the outer dialog causes its message attachments
+  // to be classified as unrelated media and stay hidden after the viewer closes.
+  await win.loadURL('https://www.instagram.com/direct/t/123/');
+  await run(guard);
+  await run(`document.body.innerHTML = ${JSON.stringify(`
+    <style>body{margin:0} img,video{display:block;width:300px;height:500px}</style>
+    <main id="thread" role="dialog" aria-modal="true">
+      <article id="message-before"><span>Language barrier be damned</span><a href="/reel/Shared123/"><img src="/poster-before.svg"></a></article>
+      <div id="portal"><div role="dialog" aria-modal="true" id="viewer"><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a></article></div></div>
+      <article id="message-after"><a href="/reel/Other456/"><img src="/poster-after.svg"></a><span>Another message</span></article>
+    </main>
+  `)}; history.pushState({}, '', '/direct/t/123/');`);
+  assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
+    thread: document.getElementById('thread').dataset.vigilSingleReelCard || '',
+    before: getComputedStyle(document.getElementById('message-before')).visibility,
+    after: getComputedStyle(document.getElementById('message-after')).visibility })`),
+    { pinned: true, thread: '', before: 'visible', after: 'visible' },
+    'a nested Reel viewer must not pin its Direct thread or hide other shared messages');
+  await run(`document.getElementById('portal').style.display = 'none';`);
+  assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
+    before: getComputedStyle(document.getElementById('message-before')).visibility,
+    after: getComputedStyle(document.getElementById('message-after')).visibility,
+    blocked: document.querySelectorAll('[data-vigil-single-reel-card="blocked"]').length })`),
+    { pinned: false, before: 'visible', after: 'visible', blocked: 0 },
+    'closing a nested Reel viewer releases all Direct message attachments');
+  await run(`document.getElementById('portal').style.display = '';`);
+  assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), true,
+    'the shared Reel can be reopened inside a dialog-backed Direct thread');
   await win.loadURL('https://www.instagram.com/reel/Shared123/');
   await run(guard);
   await run(`document.body.innerHTML = '<style>video,img{width:390px;height:700px}</style><main><article id="selected"><a href="/reel/Shared123/"><video id="opened" src="/original.mp4"></video></a><img id="poster" src="/poster.svg"></article><article><video src="/suggested.mp4"></video></article></main>'`);

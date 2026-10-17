@@ -2027,10 +2027,20 @@ enum DOMAdapters {
         return true;
       };
       const foregroundModal = () => {
-        const modal = [...document.querySelectorAll(
+        const dialogs = [...document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
-        )].find(activeModal);
-        if (modal && !inSheet(modal)) return modal;
+        )].filter(modal => activeModal(modal) && !inSheet(modal));
+        // Direct itself may be exposed as a dialog and contain every message
+        // attachment. Pin the innermost active media dialog so closing its
+        // viewer releases the retained chat instead of keeping the whole
+        // conversation classified as the selected Reel.
+        const depth = node => {
+          let value = 0;
+          for (; node; node = node.parentElement) value++;
+          return value;
+        };
+        dialogs.sort((a, b) => depth(b) - depth(a));
+        if (dialogs.length) return dialogs[0];
         // Recent Direct viewers use an anonymous fixed portal, without dialog
         // semantics. The message thread itself must remain scrollable.
         for (const media of document.querySelectorAll('video, img')) {
