@@ -592,6 +592,15 @@ function isSafeSearchLimitedNotice(value) {
     const tail = text.slice(notice[0].length).replace(/^[\s.!:;\u2013\u2014-]+/u, "");
     return !tail || /^(?:learn more|(?:change|manage|view|open) (?:your )?(?:safe\s?search )?settings)\b/iu.test(tail);
 }
+// Google's locked-state banner is not a claim that results were filtered.
+// Keep it separate from limited-result evidence; it only activates the
+// file-sharing destination rule on the current Google results page.
+function isSafeSearchLockedNotice(value) {
+    const text = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+    if (text.length > 300)
+        return false;
+    return /^safe\s?search is locked to filter by safety settings applied to this browser\.?\s*(?:learn more\.?\s*)?$/iu.test(text);
+}
 // These already-ambiguous media, exposure and search markers do not become
 // standalone bans. A real limited-results notice supplies the missing context.
 const SAFE_SEARCH_CONTRIBUTORS = /^(?:photos?|pics?|pictures?|images?|videos?|vids?|movies?|films?|clips?|gifs?|wallpapers?|footage|streams?|livestreams?|webcams?|documentar(?:y|ies)|compilations?|animations?|illustrations?|comics?|manga|audios?|albums?|galler(?:y|ies)|collections?|links?|downloads?|folders?|files?|packs?|mirrors?|adults?|mature|steamy|spicy|uncensored|unfiltered|uncut|nud|nuds|nude|nudes|nued|nudity|naked|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|frontal|erotic|erotica|lewd|horny|sensual|seductive|sexualized|sexualised|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage|sex|sexual|sexually|sexy|hot|explicit|sensitive|intimate|revealing|suggestive|provocative|teasing|tease|thirst|thirsttraps?|nsfl|leak|leaks|leaked|leakd|lek|leks|creampies?|blowjobs?|handjobs?|cumshots?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting|boobs?|boobies|tits?|titties|breasts?|nipples?|butts?|buttocks|asses|ass|booty|cleavage|crotch|genitals?|vulvas?|vaginas?|penis|penises|dicks?|cocks?|pussy|pussies|feet|soles|thighs?|girls?|women|woman|ladies|lady|females?|boys?|men|man|males?|guys?|babes?|models?|celebrity|celebrities|celebs?|actress|actresses|actors?|girlfriends?|boyfriends?|wives|wife|husbands?|couples?|milfs?|dilfs?|waifus?|stepmoms?|stepmothers?|stepsisters?|stepbrothers?|stepdaughters?|amateurs?|cosplayers?|cosplay|furry|furries|doujinshi|lingerie|underwear|bikinis?|swimsuits?|stockings|pantyhose|upskirt|downblouse|x+|18|18g|r18g?|unreviewed|成人|成人向|成人向け|mega|gofile|pixl|cyberdrop|bunkr)$/u;
@@ -643,6 +652,8 @@ function sharedFileDestination(value, baseUrl) {
         return url.href;
     if (["pixl.li", "cyberdrop.me", "cyberdrop.to", "bunkr.is", "bunkr.si", "bunkr.ru", "erome.com"].some(onHost)
         && /^\/(?:a|album|f|v)\//u.test(url.pathname))
+        return url.href;
+    if (["t.me", "telegram.me", "telegram.dog"].includes(host) && /^\/[^/]/u.test(url.pathname))
         return url.href;
     return null;
 }
@@ -906,6 +917,7 @@ const safeSearchSubjects = new Map();
 const permanentBlockedDomains = new Set(browserPermanentBlockedDomains());
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
+let safeSearchLockObservedUrl = "";
 let embeddedPolicyGeneration = 0;
 let embeddedPolicyCheckedAt = 0;
 let embeddedPolicyPendingUrl = "";
@@ -965,6 +977,9 @@ function hasCurrentSafeSearchEvidence() {
     const now = Date.now();
     return safeSearchEvidenceUrl === location.href && safeSearchEvidenceAt > now - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
         && safeSearchEvidenceAt <= now;
+}
+function hasCurrentSafeSearchLock() {
+    return Boolean(currentGoogleSearchQuery()) && safeSearchLockObservedUrl === location.href;
 }
 function sameSafeSearchQuery(first, second) {
     const normalize = (value) => decodeNestedSearchValue(value).normalize("NFKC")
@@ -1039,6 +1054,10 @@ function observeSafeSearchNotice() {
             rememberSafeSearchSubject(query);
             return;
         }
+        if (isSafeSearchLockedNotice(notice)) {
+            safeSearchLockObservedUrl = location.href;
+            return;
+        }
     }
 }
 function readerContextRoots() {
@@ -1078,10 +1097,23 @@ function readerFileDestinations(roots) {
     }
     return [...files];
 }
+function googleResultContainsSharedFileLink(anchor) {
+    if (!hasCurrentSafeSearchLock())
+        return false;
+    for (let candidate = anchor, depth = 0; candidate && depth < 10; candidate = candidate.parentElement, depth += 1) {
+        if (candidate.id === "rso")
+            break;
+        if (candidate.querySelectorAll("h3").length === 1 && readerFileDestinations([candidate]).length > 0)
+            return true;
+    }
+    return false;
+}
 function contextualLinkIsBlocked(anchor) {
     const query = currentGoogleSearchQuery();
     const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
     const file = sharedFileDestination(anchor.href, location.href);
+    if (query && hasCurrentSafeSearchLock() && (file || googleResultContainsSharedFileLink(anchor)))
+        return true;
     if (query && hasCurrentSafeSearchEvidence() && (hasSafeSearchContributor(label) || file))
         return true;
     if (hasOrdinarySafeSearchContext(label) || (!query && hasOrdinarySafeSearchContext(document.title)))

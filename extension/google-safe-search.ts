@@ -1,6 +1,6 @@
 import { checkSearchBreakBeforeNavigation } from "./search-break.js";
 import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
-import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
+import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
 import { searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
 import { containsExplicitSearchKeyword, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
 import { browserPermanentBlockedDomains } from "../src/browserStaticProtection.js";
@@ -49,6 +49,7 @@ const safeSearchSubjects = new Map<string, number>();
 const permanentBlockedDomains = new Set(browserPermanentBlockedDomains());
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
+let safeSearchLockObservedUrl = "";
 let embeddedPolicyGeneration = 0;
 let embeddedPolicyCheckedAt = 0;
 let embeddedPolicyPendingUrl = "";
@@ -104,6 +105,10 @@ function hasCurrentSafeSearchEvidence(): boolean {
   const now = Date.now();
   return safeSearchEvidenceUrl === location.href && safeSearchEvidenceAt > now - SAFE_SEARCH_EVIDENCE_LIFETIME_MS
     && safeSearchEvidenceAt <= now;
+}
+
+function hasCurrentSafeSearchLock(): boolean {
+  return Boolean(currentGoogleSearchQuery()) && safeSearchLockObservedUrl === location.href;
 }
 
 function sameSafeSearchQuery(first: string, second: string): boolean {
@@ -171,6 +176,10 @@ function observeSafeSearchNotice(): void {
       rememberSafeSearchSubject(query);
       return;
     }
+    if (isSafeSearchLockedNotice(notice)) {
+      safeSearchLockObservedUrl = location.href;
+      return;
+    }
   }
 }
 
@@ -209,10 +218,20 @@ function readerFileDestinations(roots: Element[]): string[] {
   return [...files];
 }
 
+function googleResultContainsSharedFileLink(anchor: HTMLAnchorElement): boolean {
+  if (!hasCurrentSafeSearchLock()) return false;
+  for (let candidate: Element | null = anchor, depth = 0; candidate && depth < 10; candidate = candidate.parentElement, depth += 1) {
+    if (candidate.id === "rso") break;
+    if (candidate.querySelectorAll("h3").length === 1 && readerFileDestinations([candidate]).length > 0) return true;
+  }
+  return false;
+}
+
 function contextualLinkIsBlocked(anchor: HTMLAnchorElement): boolean {
   const query = currentGoogleSearchQuery();
   const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
   const file = sharedFileDestination(anchor.href, location.href);
+  if (query && hasCurrentSafeSearchLock() && (file || googleResultContainsSharedFileLink(anchor))) return true;
   if (query && hasCurrentSafeSearchEvidence() && (hasSafeSearchContributor(label) || file)) return true;
   if (hasOrdinarySafeSearchContext(label) || (!query && hasOrdinarySafeSearchContext(document.title))) return false;
   if (query && hasSavedSafeSearchSubject(query) && (hasSafeSearchContributor(label) || file)) return true;
