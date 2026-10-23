@@ -499,6 +499,7 @@ export function protectedStateSnapshot(state: UnknownRecord = {}): ProtectedSnap
     ...(state.sketchySites ? { sketchySites: state.sketchySites } : {}),
     adultBlocklist: protectedAdultBlocklist(state.adultBlocklist || {}),
     intentionalUse: protectedIntentionalUse(state.intentionalUse || {}),
+    ...(state.youtubeSharedAuthority ? { youtubeSharedAuthority: state.youtubeSharedAuthority } : {}),
     ...(state.youtubeLimits ? { youtubeLimits: state.youtubeLimits } : {}),
     ...(state.searchBreak ? { searchBreak: state.searchBreak } : {}),
     extension: protectedExtension(state.extension || {}),

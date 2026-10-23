@@ -9,11 +9,13 @@
   const accountFetch = typeof fetch === 'function' ? fetch.bind(window) : null;
   const pending = new Map();
   const client = crypto.randomUUID();
+  const verifiedWatchPages = new Set();
   let state = window.webkit?.messageHandlers?.vigilYouTube && window.__vigilYouTubeInitialStatus?.ok
     && Math.abs(Date.now() - window.__vigilYouTubeInitialStatus.serverTime) < 6500
     ? window.__vigilYouTubeInitialStatus : null;
   delete window.__vigilYouTubeInitialStatus;
   let panel, message, statusLine, notice;
+  let finishedScreen, finishedSignature = "";
   let lease = null, playing = null, played = 0, lastTick = 0, lastPosition = 0;
   let renewal = null;
   let resumeMedia = null, retryInterruptedPlay = false, queuedStart = false;
@@ -82,12 +84,18 @@
     const response = await transport(body);
     if (response?.day) {
       if (state && response.day !== state.day) { intent = ''; }
+      if (body.action === 'check') {
+        const key = `${response.day}:${body.videoId}`;
+        if (response.ok) verifiedWatchPages.add(key); else verifiedWatchPages.delete(key);
+      }
+      if (body.action === 'remove') verifiedWatchPages.delete(`${response.day}:${body.videoId}`);
       state = response; render();
     }
     if (!response?.ok) throw new Error(response?.message || 'Your allowance could not be checked. Reopen YouTube to retry.');
     return response;
   };
   function render() {
+    updateFinishedScreen();
     if (!statusLine || !state) return;
     const remaining = Math.max(0, 7200000 - state.usedMs);
     const text = state.grace.status === 'active'
@@ -470,7 +478,7 @@
       .some(key => content[key])) return null;
     return videoCards(content).cards[0] || null;
   }
-  let feedSync = false, feedSignature = '', feedEnd;
+  let feedEnd;
   const nativeCache = new Map();
   function nativeFeedData(data, append = false) {
     const name = feedName();
@@ -482,18 +490,9 @@
         || data.contents?.singleColumnWatchNextResultsRenderer
         || data.contents?.twoColumnWatchNextResults
         || data.contents?.twoColumnWatchNextResultsRenderer) return data;
-    const day = state?.day || new Intl.DateTimeFormat('en-CA').format(new Date());
-    const key = `vigil-native-feed:${name}`;
-    let cached = nativeCache.get(name);
-    if (!cached) { try { cached = JSON.parse(localStorage.getItem(key) || 'null'); } catch { /* No UI cache yet. */ } }
-    if (!cached || cached.day !== day || cached.schemaVersion !== 2) cached = { schemaVersion: 2, day, items: [] };
-    cached.items = (Array.isArray(cached.items) ? cached.items : [])
-      .filter(entry => entry?.card && standardFeedItem(entry.item)?.videoId === entry.card.videoId).slice(0, 20);
-    // The UI cache cannot choose a new twenty after the protected daily feed
-    // has filled. Otherwise only its intersection with the ledger is visible.
-    const selected = state?.feeds?.[name] || [];
-    const selectedIDs = new Set(selected.map(card => card.videoId));
-    if (selected.length === 20) cached.items = cached.items.filter(entry => selectedIDs.has(entry.card.videoId));
+    // Recommendation selection lasts for this document only, on every surface.
+    // Reloading lets YouTube choose again without touching the daily saves.
+    const cached = nativeCache.get(name) || { items: [] };
     const lists = [];
     const scan = value => {
       if (!value || typeof value !== 'object') return;
@@ -509,13 +508,9 @@
     if (!lists.length) return data;
     for (const list of lists) for (const item of list) {
       const card = standardFeedItem(item);
-      if (card && (selected.length < 20 || selectedIDs.has(card.videoId)) && cached.items.length < 20
+      if (card && cached.items.length < 20
           && !cached.items.some(old => old.card.videoId === card.videoId)) cached.items.push({ card, item });
     }
-    if (selected.length) cached.items.sort((a, b) => {
-      const rank = id => { const index = selected.findIndex(card => card.videoId === id); return index < 0 ? 20 : index; };
-      return rank(a.card.videoId) - rank(b.card.videoId);
-    });
     // Reuse YouTube's own renderer models. YouTube continues to render every
     // thumbnail, title, three-dot menu and Save action itself.
     let inserted = false;
@@ -526,70 +521,7 @@
       inserted = true;
     }
     nativeCache.set(name, cached);
-    try { localStorage.setItem(key, JSON.stringify(cached)); } catch { /* The protected ledger remains authoritative. */ }
     return data;
-  }
-  function findStandardFeedItem(data, videoId) {
-    if (!data || typeof data !== 'object') return null;
-    const card = standardFeedItem(data);
-    if (card?.videoId === videoId) return data;
-    // Search may also return Shorts and campaigns; never recover from them.
-    if (Object.keys(data).some(key => /(?:Shelf|reel|shorts|promoted|adSlot|brandVideo).*Renderer|shortsLockupViewModel|^richSectionRenderer$/i.test(key))) return null;
-    for (const child of Object.values(data)) if (child && typeof child === 'object') {
-      for (const value of Array.isArray(child) ? child : [child]) {
-        const item = findStandardFeedItem(value, videoId);
-        if (item) return item;
-      }
-    }
-    return null;
-  }
-  let feedRecovery = null;
-  const recoveredFeeds = new Set();
-  async function recoverNativeFeed(name) {
-    const selected = state?.feeds?.[name] || [];
-    const cached = nativeCache.get(name);
-    if (!accountFetch || !cached || selected.length !== 20 || feedRecovery) return;
-    const key = `${state.day}:${name}`;
-    if (recoveredFeeds.has(key)) return;
-    const missing = selected.filter(card => !cached.items.some(entry => entry.card.videoId === card.videoId));
-    if (!missing.length) return;
-    recoveredFeeds.add(key);
-    const day = state.day;
-    feedRecovery = (async () => {
-      let restored = 0;
-      // Retrieve original YouTube renderer models, including its menu commands,
-      // for the existing daily IDs. This never registers new search/play rights.
-      const worker = async () => {
-        while (missing.length) {
-          const card = missing.shift();
-          try {
-            let original = null;
-            for (const query of [card.videoId, card.title]) {
-              const response = await accountFetch(`/results?search_query=${encodeURIComponent(query)}`, {
-                credentials: 'include', signal: AbortSignal.timeout(10000)
-              });
-              if (!response.ok) continue;
-              const data = jsonAfter(await response.text(), /(?:var\s+)?ytInitialData\s*=\s*/);
-              original = findStandardFeedItem(data, card.videoId);
-              if (original) break;
-            }
-            if (!original || state?.day !== day) continue;
-            const item = original.richItemRenderer ? original : { richItemRenderer: { content: original } };
-            if (!cached.items.some(entry => entry.card.videoId === card.videoId)) {
-              cached.items.push({ card, item }); restored++;
-            }
-          } catch { /* Keep the existing selection and retry on the next load. */ }
-        }
-      };
-      await Promise.all([worker(), worker(), worker()]);
-      if (!restored || state?.day !== day) return;
-      cached.items.sort((a, b) => selected.findIndex(card => card.videoId === a.card.videoId) - selected.findIndex(card => card.videoId === b.card.videoId));
-      nativeCache.set(name, cached);
-      try { localStorage.setItem(`vigil-native-feed:${name}`, JSON.stringify(cached)); }
-      catch { return; }
-      if (feedName() === name) location.reload();
-    })();
-    try { await feedRecovery; } finally { feedRecovery = null; }
   }
   // Page-world optimizations must never prevent Safari's isolated controls
   // from starting. Its isolated APIs do not intercept YouTube's own requests.
@@ -661,28 +593,15 @@
     }
     lastFilteredFeed = name;
     document.documentElement.toggleAttribute('data-vigil-feed-pending', !state);
-    if (!state || feedSync) return;
-    if (!websiteFeed) {
-      if (!nativeCache.has(name)) nativeFeedData({ richGridRenderer: { contents: [] } });
-      void recoverNativeFeed(name);
-    }
+    if (!state) return;
     const models = websiteFeed ? [] : nativeCache.get(name)?.items.map(entry => entry.card) || [];
     const cards = [...models];
     for (const card of domCards()) if (!cards.some(old => old.videoId === card.videoId)) cards.push(card);
-    const signature = `${state.day}:${name}:${cards.map(card => card.videoId).join(',')}`;
-    if (!websiteFeed && cards.length && signature !== feedSignature) {
-      feedSync = true;
-      try { await request({ action: 'feed', mode: 'native', feed: name, cards }); feedSignature = signature; }
-      catch (error) { show(error.message); }
-      finally { feedSync = false; }
-    }
-    if (websiteFeed) {
-      const key = `${state.day}:${name}`;
-      const selected = websiteCards.get(key) || [];
-      for (const card of cards) if (selected.length < 20 && !selected.includes(card.videoId)) selected.push(card.videoId);
-      websiteCards.set(key, selected);
-    }
-    const allowed = new Set(websiteFeed ? websiteCards.get(`${state.day}:${name}`) || [] : (state.feeds[name] || []).map(card => card.videoId));
+    const key = `${state.day}:${name}`;
+    const selected = websiteCards.get(key) || [];
+    for (const card of cards) if (selected.length < 20 && !selected.includes(card.videoId)) selected.push(card.videoId);
+    websiteCards.set(key, selected);
+    const allowed = new Set(selected);
     const visible = new Set();
     let last;
     for (const card of document.querySelectorAll(nativeCardSelector)) {
@@ -696,9 +615,42 @@
     }
     document.documentElement.toggleAttribute('data-vigil-feed-complete', allowed.size === 20);
     if (allowed.size === 20 && last) {
-      if (!feedEnd) { feedEnd = document.createElement('p'); feedEnd.id = 'vigil-feed-end'; feedEnd.textContent = 'You’ve reached today’s feed.'; feedEnd.style.cssText = 'grid-column:1/-1;text-align:center;padding:24px 12px;font:14px Roboto,Arial,sans-serif;color:inherit'; }
+      if (!feedEnd) { feedEnd = document.createElement('p'); feedEnd.id = 'vigil-feed-end'; feedEnd.textContent = 'You’ve reached the end of these 20 videos.'; feedEnd.style.cssText = 'grid-column:1/-1;text-align:center;padding:24px 12px;font:14px Roboto,Arial,sans-serif;color:inherit'; }
       if (last.nextElementSibling !== feedEnd) last.after(feedEnd);
     }
+  }
+  function updateFinishedScreen() {
+    if (!topFrame || !document.body) return;
+    const full = Boolean(state?.slots?.filter(Boolean).length === 4);
+    const id = currentID();
+    const permittedWatch = Boolean(id && (state?.slots?.some(slot => slot?.videoId === id && !slot.removed)
+      || state?.external?.includes(id) || verifiedWatchPages.has(`${state?.day}:${id}`)));
+    const gated = full && !permittedWatch;
+    document.documentElement.toggleAttribute('data-vigil-saves-finished', gated);
+    document.documentElement.toggleAttribute('data-vigil-saves-full', full);
+    if (!gated) { if (finishedScreen) finishedScreen.hidden = true; return; }
+    if (!finishedScreen) {
+      finishedScreen = document.createElement('section'); finishedScreen.id = 'vigil-youtube-finished';
+      finishedScreen.setAttribute('aria-label', 'Daily YouTube saves complete');
+      const shadow = finishedScreen.attachShadow({ mode: 'closed' });
+      const style = document.createElement('style');
+      style.textContent = ':host{display:block;position:fixed;inset:0;z-index:2147483644;overflow:auto;box-sizing:border-box;padding:calc(env(safe-area-inset-top) + 80px) 24px calc(env(safe-area-inset-bottom) + 100px);background:#0f0f0f;color:#f1f1f1;font:16px/1.5 Roboto,Arial,sans-serif}:host([hidden]){display:none}main{max-width:560px;margin:0 auto}h1{font-size:28px;line-height:1.25}p{color:#aaa}a{display:block;padding:14px 0;color:#f1f1f1;text-decoration:none;border-bottom:1px solid #ffffff26}a:focus-visible{outline:2px solid #3ea6ff}';
+      shadow.append(style, document.createElement('main'));
+      finishedScreen._content = shadow.querySelector('main');
+    }
+    if (!finishedScreen.isConnected) document.body.append(finishedScreen);
+    finishedScreen.hidden = false;
+    const slots = state.slots.filter(slot => slot && !slot.removed);
+    const signature = JSON.stringify([state.day, slots]);
+    if (signature === finishedSignature) return;
+    finishedSignature = signature;
+    const heading = document.createElement('h1'); heading.textContent = 'You’ve saved all four videos today.';
+    const description = document.createElement('p'); description.textContent = 'Finish watching your saved videos, then you’re done with YouTube for today.';
+    const links = slots.map(slot => {
+      const link = document.createElement('a'); link.href = `/watch?v=${encodeURIComponent(slot.videoId)}`;
+      link.textContent = slot.title || 'Watch saved video'; return link;
+    });
+    finishedScreen._content.replaceChildren(heading, description, ...links);
   }
   function updateHeldPlayer() {
     // YouTube treats the interrupted autoplay attempt as buffering. Keep its
@@ -721,10 +673,15 @@
     updateHeldPlayer();
     document.documentElement.toggleAttribute('data-vigil-feed-pending', Boolean(feedName() && !state));
     mount();
+    updateFinishedScreen();
     void filterNativeFeed();
     if (!document.getElementById('vigil-limits-style')) {
       const style = document.createElement('style'); style.id = 'vigil-limits-style';
       style.textContent = `html[data-vigil-feed-pending] :is(${nativeCardSelector}){display:none!important}` + 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
+      // Remove the desktop backdrop reserved for the hidden topic row.
+      // Keep the native masthead controls and their normal 56px geometry.
+      style.textContent += 'html[data-vigil-standard-feed] ytd-masthead #background,html[data-vigil-standard-feed] ytd-app #frosted-glass{height:var(--ytd-masthead-height,56px)!important;min-height:0!important;overflow:hidden!important}html[data-vigil-standard-feed] ytd-rich-grid-renderer #header{display:none!important}';
+      style.textContent += 'html[data-vigil-saves-finished] body>:not(#vigil-youtube-finished):not(#vigil-youtube-limits):not(#vigil-youtube-notice):not(style):not(script){display:none!important}html[data-vigil-saves-full] :is(ytd-watch-flexy #secondary,ytd-watch-next-secondary-results-renderer,ytm-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,.ytp-pause-overlay,.ytp-suggestion-set){display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
       // The mobile topic bar is fixed, but its wrapper still reserves 50–62px

@@ -68,7 +68,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
   }
   const result = (ok = true, message = "", lease: Lease | null = null) => ({
     ok, message, day: day.day, slots: structuredClone(day.slots), usedMs: day.usedMs,
-    grace: { ...day.grace }, feeds: structuredClone(day.feeds), lease,
+    grace: { ...day.grace }, feeds: structuredClone(day.feeds), external: [...day.external], lease,
     serverTime: now.getTime()
   });
   const id = videoId(input.videoId);

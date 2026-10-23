@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { readYouTubeSharedConnection } from "../src/youtubeSharedConnection.js";
 import { youtubeConnectionPath } from "../src/youtubeConnection.js";
 
 // Bundle the same tested policy engine used by desktop. No server or credential
@@ -22,6 +23,7 @@ export async function youtubeBuildConfiguration(): Promise<string> {
   } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   await mkdir(join(folder, "youtube-local"), { recursive: true, mode: 0o700 });
   const path = join(folder, "youtube-local", "youtube-connection.json");
-  await writeFile(path, JSON.stringify({ mode: "local", engine: await youtubeLocalEngine(), seed }), { mode: 0o600 });
+  const shared = await readYouTubeSharedConnection();
+  await writeFile(path, JSON.stringify({ mode: "local", engine: await youtubeLocalEngine(), seed, ...(shared ? { shared } : {}) }), { mode: 0o600 });
   return path;
 }

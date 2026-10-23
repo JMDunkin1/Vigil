@@ -37,52 +37,17 @@ test('incoming watch documents are preserved when YouTube has not updated the fe
   }
 });
 
-test('a full protected feed cannot be replaced by a fresh UI cache that shares only two IDs', () => {
-  const selected = ids.slice(0, 20).map((videoId, i) => ({ videoId, title: `Full video title ${i}` }));
-  const freshIDs = [ids[0], ids[1], ...Array.from({ length: 18 }, (_, i) => `fresh${String(i).padStart(6, '0')}`)];
-  const fresh = freshIDs.map((videoId, i) => ({ card: { videoId }, item: renderer(videoId, i) }));
-  const { api, cache } = nativeFixture({ schemaVersion: 2, day: '2026-10-08', items: fresh }, selected);
-  const continuation = { continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: 'more' } } } };
-  const result = api.nativeFeedData({ richGridRenderer: { contents: [...fresh.map(entry => entry.item), continuation] } });
-  assert.deepEqual(Array.from(result.richGridRenderer.contents.slice(0, 2), (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice(0, 2));
-  assert.equal(result.richGridRenderer.contents[2], continuation);
-  const stored = JSON.parse(cache.get('vigil-native-feed:home')!);
-  assert.deepEqual(stored.items.map((entry: { card: { videoId: string } }) => entry.card.videoId), ids.slice(0, 2));
-  const recovered = api.nativeFeedData({ richGridRenderer: { contents: ids.slice(0, 20).reverse().map(renderer) } });
-  assert.deepEqual(Array.from(recovered.richGridRenderer.contents, (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice(0, 20));
-});
-
-test('feed recovery retrieves exact saved native models and preserves the twenty daily IDs', async () => {
-  const selected = ids.slice(0, 20).map((videoId, i) => ({ videoId, title: `Full video title ${i}` }));
-  const stored = new Map<string, string>();
-  const requests: string[] = [];
-  let reloads = 0;
-  const api = runInNewContext(`${helpers}\n${nativeHelpers}\n({nativeFeedData, recoverNativeFeed, findStandardFeedItem})`, {
-    state: { day: '2026-10-08', feeds: { home: selected } }, feedName: () => 'home',
-    document: { querySelectorAll: () => [] }, AbortSignal,
-    localStorage: { getItem: () => null, setItem: (key: string, value: string) => stored.set(key, value) },
-    location: { reload: () => reloads++ },
-    accountFetch: async (url: string) => {
-      requests.push(url);
-      const query = new URL(url, 'https://m.youtube.com').searchParams.get('search_query')!;
-      const id = selected.find(card => card.title === query)?.videoId || query;
-      // One saved video is searchable only by title; still require its exact ID.
-      const resultID = query === ids[2] ? 'wrong000001' : id;
-      return { ok: true, text: async () => `var ytInitialData = ${JSON.stringify({ sectionListRenderer: { contents: [{ itemSectionRenderer: { contents: [renderer('wrong000001', 0), renderer(resultID, 1)] } }] } })};` };
-    }
-  });
-  api.nativeFeedData({ richGridRenderer: { contents: ids.slice(0, 2).map(renderer) } });
-  await api.recoverNativeFeed('home');
-  assert.equal(requests.length, 19);
-  assert.equal(reloads, 1);
-  const cached = JSON.parse(stored.get('vigil-native-feed:home')!);
-  assert.deepEqual(cached.items.map((entry: { card: { videoId: string } }) => entry.card.videoId), ids.slice(0, 20));
-  assert.equal(cached.items[2].item.richItemRenderer.content.videoWithContextRenderer.videoId, ids[2]);
-  assert.equal(api.findStandardFeedItem({ reelShelfRenderer: { items: [renderer(ids[0], 0)] } }, ids[0]), null);
-  assert.equal(api.findStandardFeedItem({ brandVideoShelfRenderer: { items: [renderer(ids[0], 0)] } }, ids[0]), null);
-  assert.deepEqual(selected.map(card => card.videoId), ids.slice(0, 20));
-  await api.recoverNativeFeed('home');
-  assert.equal(reloads, 1);
+test('the app chooses a fresh twenty after reload and ignores both old UI caches and daily feed IDs', () => {
+  const selected = ids.slice(0, 20).map(videoId => ({ videoId, title: videoId }));
+  const old = { schemaVersion: 2, day: '2026-10-08', items: ids.slice(0, 20).map((videoId, i) => ({ card: { videoId }, item: renderer(videoId, i) })) };
+  const first = nativeFixture(old, selected);
+  const page = first.api.nativeFeedData({ richGridRenderer: { contents: ids.slice().reverse().map(renderer) } });
+  assert.deepEqual(Array.from(page.richGridRenderer.contents, (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice().reverse().slice(0, 20));
+  const reload = nativeFixture(old, selected);
+  const next = reload.api.nativeFeedData({ richGridRenderer: { contents: ids.map(renderer) } });
+  assert.equal(next.richGridRenderer.contents[0].videoWithContextRenderer.videoId, ids[0]);
+  assert.equal(selected.length, 20, 'presentation refresh does not reset the protected ledger');
+  assert.equal(first.cache.get('vigil-native-feed:home'), JSON.stringify(old), 'obsolete caches are never read or rewritten');
 });
 
 test('document-start status seed expires instead of carrying yesterday into a later reload', () => {
@@ -189,7 +154,7 @@ test('old UI caches cannot reintroduce a featured shelf into the standard feed',
   const { api, cache } = nativeFixture({ day: '2026-10-08', items: [{ card: { videoId: 'featured001' }, item }] });
   const result = api.nativeFeedData({ richGridRenderer: { contents: ids.map(renderer) } });
   assert.equal(result.richGridRenderer.contents[0].videoWithContextRenderer.videoId, ids[0]);
-  assert.equal(JSON.parse(cache.get('vigil-native-feed:home')!).schemaVersion, 2);
+  assert.equal(JSON.parse(cache.get('vigil-native-feed:home')!).items[0].card.videoId, 'featured001', 'obsolete cache is ignored entirely');
 });
 
 test('a missing allowance response holds the homepage feed instead of leaving it unrestricted', async () => {
@@ -204,14 +169,14 @@ test('a missing allowance response holds the homepage feed instead of leaving it
   assert.equal(attributes.get('data-vigil-feed-pending'), true);
 });
 
-test('websites cap native cards at twenty per page and can choose a fresh twenty after reload', async () => {
+test('all surfaces cap native cards at twenty per page and can choose a fresh twenty after reload', async () => {
   const begin = source.indexOf('  let lastFilteredFeed');
   const end = source.indexOf('  function clean()',begin);
   function page(offset: number) {
     const selected = new Map(); const attributes = new Map(); let moves=0;
     const cards = ids.map((_,i)=>({videoId:`fresh${String(i+offset).padStart(6,'0')}`,title:`Title ${i}`}));
     const nodes=cards.map(card=>({hidden:false,querySelector:()=>({href:`https://m.youtube.com/watch?v=${card.videoId}`}),toggleAttribute(_name:string,hidden:boolean){this.hidden=hidden;},nextElementSibling:null as unknown,after(node:unknown){this.nextElementSibling=node;moves++;}}));
-    const filter=runInNewContext(`let feedSync=false,feedSignature='',feedEnd;${source.slice(begin,end)};filterNativeFeed`,{
+    const filter=runInNewContext(`let feedEnd;${source.slice(begin,end)};filterNativeFeed`,{
       state:{day:'2026-09-14',feeds:{home:[{videoId:ids[0]}]}},feedName:()=> 'home',websiteFeed:true,websiteCards:selected,
       nativeCardSelector:'native',standardFeedCard:()=>true,domCards:()=>cards,idFrom:(url:string)=>new URL(url).searchParams.get('v'),
       request:()=>assert.fail('website cards must not replace the protected app feed'),

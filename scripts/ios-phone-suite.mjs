@@ -96,6 +96,7 @@ const PHONE_SOURCE_FILES = [
   "src/store.ts",
   "src/types.ts",
   "src/youtubeConnection.ts",
+  "src/youtubeSharedConnection.ts",
   "src/youtubeLimits.ts",
   "scripts/youtube-build-connection.mts"
 ];
@@ -293,13 +294,15 @@ export async function implementationFingerprint(edition = "personal") {
       }
     }
   }
+  const sharedConnectionPath = join(process.env.VIGIL_DATA_DIR || join(ROOT, "data"), "youtube-shared-connection.json");
+  if (await isFile(sharedConnectionPath)) files.push(sharedConnectionPath);
   const unique = [...new Set(files)].sort();
   const digest = createHash("sha256");
   digest.update(`edition:${edition}\n`);
   const entries = [];
   for (const path of unique) {
     const bytes = await readFile(path);
-    const name = path.startsWith(ROOT) ? relative(ROOT, path) : "runtime/adult-blocklist.sdi";
+    const name = path.startsWith(ROOT) ? relative(ROOT, path) : path === sharedConnectionPath ? "runtime/youtube-shared-connection.json" : "runtime/adult-blocklist.sdi";
     const hash = sha256(bytes);
     entries.push({ path: name, bytes: bytes.byteLength, sha256: hash });
     digest.update(name).update("\0").update(hash).update("\n");
@@ -313,8 +316,10 @@ export async function socialAppImplementationFingerprint(appId) {
   const files = await filesBelow(socialRoot, (path) => isSocialAppImplementationFile(path, appId));
   files.push(join(ROOT, "ios", "Shared", "PersonalTeam.entitlements"));
   if (appId === "youtube" || appId === "instagram") {
-    files.push(join(ROOT, "src/youtubeLimits.ts"), join(ROOT, "scripts/youtube-build-connection.mts"));
+    files.push(join(ROOT, "src/youtubeLimits.ts"), join(ROOT, "src/youtubeSharedConnection.ts"), join(ROOT, "scripts/youtube-build-connection.mts"));
   }
+  const sharedConnectionPath = join(process.env.VIGIL_DATA_DIR || join(ROOT, "data"), "youtube-shared-connection.json");
+  if (await isFile(sharedConnectionPath)) files.push(sharedConnectionPath);
   const unique = [...new Set(files)].sort();
   const digest = createHash("sha256");
   digest.update(`app:${appId}\n`);
@@ -1675,7 +1680,10 @@ async function verifyYouTubeLimitsResources(bundlePath, safari = false) {
   }
   const { youtubeLocalEngine } = await import(pathToFileURL(join(ROOT, "dist/runtime/scripts/youtube-build-connection.mjs")).href);
   const bundled = JSON.parse(await readFile(join(bundlePath, "youtube-connection.json"), "utf8"));
-  if (bundled.mode !== "local" || bundled.engine !== await youtubeLocalEngine()) {
+  const { readYouTubeSharedConnection } = await import(pathToFileURL(join(ROOT, "dist/runtime/src/youtubeSharedConnection.js")).href);
+  const expectedShared = await readYouTubeSharedConnection();
+  if (bundled.mode !== "local" || bundled.engine !== await youtubeLocalEngine()
+      || !isDeepStrictEqual(bundled.shared || null, expectedShared)) {
     throw new Error("Refusing to install a YouTube companion with a stale local policy engine.");
   }
 }

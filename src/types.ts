@@ -815,6 +815,7 @@ export interface DeviceControlsState {
 export interface VigilState {
   settingsCleanupVersion?: number;
   searchBreak?: import("./searchBreak.js").SearchBreakLedger;
+  youtubeSharedAuthority?: { endpoint: string };
   youtubeLimits?: import("./youtubeLimits.js").YouTubeDay;
   version: number;
   createdAt: string;

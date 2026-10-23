@@ -1,3 +1,4 @@
+import { readYouTubeSharedConnection, sendSharedYouTube } from "../youtubeSharedConnection.js";
 import { browserFilterHealthSummary, recordBrowserFilterHealth, recordBrowserNavigationProof } from "../browserProtection.js";
 import { youtubeTokenMatches } from "../youtubeConnection.js";
 import { youtubeAction } from "../youtubeLimits.js";
@@ -96,6 +97,21 @@ export async function handleExtensionApiRoute(
         context.schedulePolicyEnforcement?.("search-break");
       }
       if (JSON.stringify(state.searchBreak) !== before) await persistExtensionChanges(context, true, { state: true });
+      sendJson(response, 200, result, extensionResponseCorsHeaders(request));
+      return true;
+    }
+    // Configuration is opt-in. An invalid/unreachable configured authority
+    // cannot silently mint a fresh local allowance.
+    const shared = await readYouTubeSharedConnection();
+    if (state.youtubeSharedAuthority && state.youtubeSharedAuthority.endpoint !== shared?.endpoint) {
+      throw new Error("The established shared YouTube authority is missing or changed. Existing limits remain enforced.");
+    }
+    if (shared) {
+      if (!state.youtubeSharedAuthority) {
+        state.youtubeSharedAuthority = { endpoint: shared.endpoint };
+        await persistExtensionChanges(context, true, { state: true });
+      }
+      const result = await sendSharedYouTube(shared, body);
       sendJson(response, 200, result, extensionResponseCorsHeaders(request));
       return true;
     }
