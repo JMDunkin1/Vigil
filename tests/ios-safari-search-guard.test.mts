@@ -35,6 +35,10 @@ function page(url: string, runtimeAvailable = true) {
   return { redirects, listeners, location, tick: () => interval() };
 }
 for (const url of [
+  "https://www.semrush.com/website/toonily.me/competitors/",
+  "https://www.semrush.com/website/mangadna.com/overview/",
+  "https://reader.omegascans.org/ordinary-title",
+  ...["toonily alternatives", "Omega Scans", "Manga DNA", "manghaha", "manga for free", "smut manga", "19+ webtoon"].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),
   ...["x rated", "XX-rated documentary", "adult vids", "spicy clips", "cream pie videos", "xxxxx", "xxxxvids"].map(q => `https://catalog.example/search?q=${encodeURIComponent(q)}`),
   ...["r34", "R34", "r_34", "rule 34", "s3x", "s.3.x", "nud", "nuds", "nud3s", "s3xnud", "nudsex", "pornnudes", "p.o.r.n", "ｒ３４", "r​34", "%2572%2533%2534"].flatMap(q => ["www.reddit.com", "www.google.com"].map(host => `https://${host}/search?q=${encodeURIComponent(q)}`)),
   "https://example.org/search?q=porn",

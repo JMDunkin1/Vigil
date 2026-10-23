@@ -32,12 +32,19 @@ const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
     "pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos",
     "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes",
     "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate",
+    // Verified adult comic brands also occur in search/discovery pages and mirrors.
+    "toonily", "omegascans", "manhwabuddy", "mangadna", "manghaha", "mangaforfree", "manhwaclub", "webtoonscan", "pornhwa",
     "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls",
     "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"
 ];
 // Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
 // product IDs. Ordinary subjects retain their own accents and spellings.
 const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+    { pattern: /(?:^|[^\p{L}\p{N}])(?:omega[\s_.\p{Pd}]+scans)(?=$|[^\p{L}\p{N}])/giu.source, replacement: " omegascans " },
+    { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+dna(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangadna " },
+    { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+for[\s_.\p{Pd}]+free(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangaforfree " },
+    { pattern: /(?:^|[^\p{L}\p{N}])manhwa[\s_.\p{Pd}]+buddy(?=$|[^\p{L}\p{N}])/giu.source, replacement: " manhwabuddy " },
+    { pattern: /(?:^|[^\p{L}\p{N}])manhwa[\s_.\p{Pd}]+club(?=$|[^\p{L}\p{N}])/giu.source, replacement: " manhwaclub " },
     // Product labels also occur on ordinary marketplaces. Match the specific
     // adult product, never bare silicone, dolls, toys, or reborn collectibles.
     { pattern: /\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b/giu.source, replacement: "sexdoll" },

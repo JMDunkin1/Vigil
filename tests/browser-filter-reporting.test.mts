@@ -22,6 +22,7 @@ function contentHarness(rootReady = true, visible = true, topFrame = true, scanF
     } } : null as { append(): void } | null,
     visibilityState: visible ? 'visible' : 'hidden',
     hasFocus: () => false, // Safari's address bar owns focus after a private search.
+    querySelector: () => null,
     querySelectorAll: (selector: string) => {
       if (selector !== '*') return [];
       setup.scans += 1;

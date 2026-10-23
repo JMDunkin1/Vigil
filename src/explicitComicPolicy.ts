@@ -13,8 +13,8 @@ export interface ExplicitContextualRule {
 export const DEFAULT_EXPLICIT_CONTEXTUAL_RULES: readonly ExplicitContextualRule[] = [
   {
     id: "explicit-comics",
-    contexts: ["manhwa", "mawha", "manhua", "webtoon", "webtoons"],
-    markers: ["18", "18plus", "adult", "nsfw", "porn", "hentai", "lewd", "mature", "uncensored"]
+    contexts: ["comic", "comics", "manga", "manhwa", "mawha", "manhua", "webtoon", "webtoons", "doujin", "doujinshi"],
+    markers: ["18", "18plus", "r18", "adult", "nsfw", "porn", "hentai", "lewd", "mature", "uncensored", "smut", "ecchi", "erotic", "erotica", "explicit"]
   }
 ];
 

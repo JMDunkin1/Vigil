@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-23",
+  "reportedSurface": "Safari Private Browsing, https://www.semrush.com/website/toonily.me/competitors/",
+  "discoveryEvidence": "Read the current Safari accessibility tree: September 2026 chart contains toonily.me, omegascans.org, manhwabuddy.com, mangadna.com, manghaha.com, toonily.com, mangaforfree.com, manhwaclub.net. Public web retrieval returned an older comparison, so the live Safari page resolved truncated screenshot labels.",
+  "scope": "Permanent domain/subdomain HTTP and HTTPS blocks, static browser denies, supervised BuiltIn deny payloads, and independent explicit-brand search/meaningful URL/page-text classification. Existing bans retained.",
+  "newPriorityDomains": [
+    {
+      "domain": "omegascans.org",
+      "evidenceUrl": "https://omegascans.org/announcements/new-subscriptions-premium-ad-free",
+      "finding": "Operator announcement explicitly identifies Adult Content as the reason its payment processor changed."
+    },
+    {
+      "domain": "manhwabuddy.com",
+      "evidenceUrl": "https://manhwabuddy.com/manhwa/change-days-raw/",
+      "finding": "First-party catalog labels include Adult, Mature and Smut."
+    },
+    {
+      "domain": "mangadna.com",
+      "evidenceUrl": "https://mangadna.com/manga/adult-reading-club-raw",
+      "finding": "First-party catalog labels include Mature and Smut."
+    },
+    {
+      "domain": "manghaha.com",
+      "evidenceUrl": "https://manghaha.com/",
+      "finding": "First-party title advertises Korean 19+ comics; homepage includes sexual genre labels and an adult catalog."
+    },
+    {
+      "domain": "manhwaclub.net",
+      "evidenceUrl": "https://manhwaclub.net/manga/sex-stopwatch-170/",
+      "finding": "First-party title marks 18+, genre Adult, and an over-18 reader gate."
+    }
+  ],
+  "alreadyPriorityBlocked": [
+    "toonily.me",
+    "toonily.com",
+    "mangaforfree.com",
+    "webtoonscan.com",
+    "comicland.org",
+    "manhwaread.com",
+    "manga18fx.com"
+  ],
+  "safeSearchFindings": {
+    "providerDocumentation": "https://support.google.com/websearch/answer/510?hl=en",
+    "limitation": "Google SafeSearch applies to Google Search results, not pages visited directly or destinations listed inside other websites. No claim that this particular query was tested in Google's live results.",
+    "liveMacMappings": {
+      "google": 561,
+      "bing": 3,
+      "duckduckgo": 2,
+      "missingExpectedAddressMappings": 0
+    },
+    "diagnosticCaveat": "hostsStatus.safeSearchCurrent also becomes false for unrelated whole-hosts-policy drift. Inspect actual strict mapping addresses before interpreting this as SafeSearch being off.",
+    "otherLiveDriftBeforeUpdate": [
+      "Hosts deny policy stale",
+      "Chrome stable forced preference present; beta/dev/canary missing; installed profile manual/stale",
+      "Browser companion version reported stale"
+    ],
+    "liveSafariVerification": {
+      "browser": "Safari Private Browsing",
+      "test": "Ordinary weather search requested safe=off; resulting URL carried safe=active; Google settings displayed SafeSearch Filtering on."
+    }
+  },
+  "precision": "Known brand labels are bounded tokens; separated brand spellings normalize explicitly. Smut requires comic context so corn-smut and general comic/history queries remain allowed. URL metadata and authentication/return parameters are not discovery evidence.",
+  "phonePreflight": "Paired iPhone unreachable over USB or local network. No restore, enrollment, supervision mutation, or app-only phone installation attempted.",
+  "validation": {
+    "build": "passed",
+    "lint": "passed",
+    "targetedSuitesPassed": 12,
+    "nativeSwiftParity": "passed",
+    "supervisedPolicyCapacity": "passed; all existing priority denies retained",
+    "safariInstalled": true,
+    "safariManualChecks": [
+      "Reported Semrush comparison URL blocked in regular and Private Browsing",
+      "Newly added mangadna.com blocked"
+    ],
+    "macAppInstalled": false,
+    "macUpdateFailure": "Protected updater failed twice before replacement: ENOENT lstat /Applications/Vigil.app.vigil-next. Existing runtime remained alive; no recovery transaction pending. Partial staging artifacts retained by supervisor. No enforcement changes made to bypass the failure.",
+    "phoneInstalled": true,
+    "phoneUpdateFailure": null,
+    "phoneDeployment": {
+      "deployedAt": "2026-10-23T19:57:32.582Z",
+      "release": "0.3.207",
+      "policyFingerprint": "0894ef7cee99f44d229a19454b2d6a8c8a0dfa74a252d5dd21412c5182d74449",
+      "servicesVerified": [
+        "instagram",
+        "youtube",
+        "snapchat",
+        "linkedin"
+      ],
+      "removalDisallowed": true,
+      "BuiltInAutoFilter": true,
+      "restrictionsPayload": true,
+      "allEightComicDomainsHttpAndHttps": true,
+      "rebooted": false
+    }
+  }
+}

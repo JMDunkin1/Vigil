@@ -267,6 +267,12 @@ export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
   "manhwaread.org",
   "toontop.io",
   "toonily.me",
+  // Screenshot competitor audit: research/2026-10-23-comic-discovery-audit.json.
+  "omegascans.org",
+  "manhwabuddy.com",
+  "mangadna.com",
+  "manghaha.com",
+  "manhwaclub.net",
   "comizy.io",
   "mangabuddy.com",
   "mangabuddy1.co.uk",
@@ -389,6 +395,10 @@ export const DEFAULT_ADULT_PRODUCT_BLOCKED_SITES = [
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
   // User-requested whole-site ban; keep this mixed-use name out of prose terms.
   "artpal.com",
+  // User-requested permanent block for the reported porn link.
+  "3wo25f-amphtml.saporinostri.ch",
+  "flaru.com",
+  "cd32bre.spicytgirlszone.com",
   // User-reported redirect: enforce outside Safari's overridable content blockers.
   "go2offer-1.com",
   "r.go2offer-1.com",
