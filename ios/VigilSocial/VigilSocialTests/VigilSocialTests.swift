@@ -320,6 +320,49 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramReelViewerLocksNativeScrollingAndReleasesTheChat() {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
+        let webView = store.webView(for: .instagram)
+        XCTAssertTrue(webView.scrollView.isScrollEnabled)
+
+        store.setSurface(
+            SocialSurfaceState(route: "reels", refreshEligible: false, blocksRefresh: true),
+            for: .instagram
+        )
+        XCTAssertFalse(webView.scrollView.isScrollEnabled,
+                       "The native WebView pan must be disabled on a full-screen Reel route.")
+
+        store.setSurface(
+            SocialSurfaceState(route: "modal", refreshEligible: false, blocksRefresh: true),
+            for: .instagram
+        )
+        XCTAssertFalse(webView.scrollView.isScrollEnabled,
+                       "A Reel comments modal must not re-enable the recommendation rail.")
+
+        store.setSurface(
+            SocialSurfaceState(route: "directThread", refreshEligible: false, blocksRefresh: true),
+            for: .instagram
+        )
+        XCTAssertFalse(webView.scrollView.isScrollEnabled,
+                       "Direct surface refreshes must not unlock a shared Reel still open in the thread.")
+
+        store.setInstagramReelScrollLocked(false, in: webView)
+        XCTAssertTrue(webView.scrollView.isScrollEnabled,
+                      "The Reel guard's explicit close report restores native scrolling in the Direct thread.")
+
+        store.setSurface(
+            SocialSurfaceState(route: "reels", refreshEligible: false, blocksRefresh: true),
+            for: .instagram
+        )
+        store.setSurface(
+            SocialSurfaceState(route: "feed", refreshEligible: false, blocksRefresh: true),
+            for: .instagram
+        )
+        XCTAssertTrue(webView.scrollView.isScrollEnabled,
+                      "Navigating away from the Reel restores native scrolling.")
+    }
+
+    @MainActor
     func testCombinedContainerKeepsEightIndependentEnginesAndPages() throws {
         let suite = "VigilSocial.expanded-container.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

@@ -1914,6 +1914,18 @@ enum DOMAdapters {
       let gesture = null;
       let pointerGesture = null;
       const lockedScroll = new Map();
+      // `null` forces the first route sync to tell the native host the page's
+      // initial state, including an explicit unlock after a WebView reload.
+      let nativeScrollLocked = null;
+      const reportNativeScrollLock = locked => {
+        if (nativeScrollLocked === locked) return;
+        nativeScrollLocked = locked;
+        try {
+          window.webkit?.messageHandlers?.vigil?.postMessage({
+            type: 'reelScrollLock', locked, documentID: String(window.__vigilDocumentID || '')
+          });
+        } catch (_) {}
+      };
       const style = document.createElement('style');
       style.textContent = `
         html[data-vigil-single-reel-kind="reel"]:not(:has([data-vigil-instagram-comments-sheet="true"])) {
@@ -1964,6 +1976,7 @@ enum DOMAdapters {
         document.querySelectorAll('[data-vigil-single-reel-card]').forEach(node => node.removeAttribute('data-vigil-single-reel-card'));
         delete document.documentElement.dataset.vigilSingleReel;
         delete document.documentElement.dataset.vigilSingleReelKind;
+        reportNativeScrollLock(false);
       };
       const activeModal = node => {
         if (!node?.isConnected) return false;
@@ -1999,6 +2012,7 @@ enum DOMAdapters {
         if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
+          reportNativeScrollLock(pinnedKind === 'reel');
           return true;
         }
         if (route && pinnedID && (route.id !== pinnedID || route.kind !== pinnedKind) && pinnedURL) {
@@ -2015,6 +2029,7 @@ enum DOMAdapters {
         if (!pinnedURL) pinnedURL = location.href;
         document.documentElement.dataset.vigilSingleReel = pinnedID;
         document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
+        reportNativeScrollLock(pinnedKind === 'reel');
         return true;
       };
       const fullScreenMedia = media => {

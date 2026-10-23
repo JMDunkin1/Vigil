@@ -127,6 +127,10 @@ async function main() {
   // contain gestures and route changes without touching the player or chat.
   await win.loadURL('https://www.instagram.com/direct/t/123/');
   await run(guard);
+  await run(`window.__vigilDocumentID='direct-fixture'; window.__vigilNativeScrollLocks=[];
+    void Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{vigil:{
+      postMessage: payload => window.__vigilNativeScrollLocks.push(payload)
+    }}}});`);
   await run(`document.body.innerHTML = ${JSON.stringify(`
     <style>body{margin:0} img,video{display:block;width:300px;height:500px}#opened{width:390px;height:780px}#portal{position:fixed;inset:0}</style>
     <main id="thread" role="dialog" aria-modal="true">
@@ -151,6 +155,8 @@ async function main() {
     document.dispatchEvent(e); return [document.documentElement.hasAttribute('data-vigil-single-reel'), e.defaultPrevented]; })()`)
     .then(value => JSON.stringify(value)), JSON.stringify([true, true]),
     'an explicitly opened full-screen Reel blocks viewer scrolling');
+  assert.deepEqual(await run(`window.__vigilNativeScrollLocks.map(message => message.locked)`), [true],
+    'opening a shared Reel asks the native WKWebView to disable its scroll view');
   assert.equal(await run(`getComputedStyle(document.documentElement).touchAction`), 'pinch-zoom',
     'an open Reel disables native touch panning while preserving pinch zoom');
   assert.equal(await run(`(() => { const sheet=document.createElement('div');
@@ -204,6 +210,8 @@ async function main() {
       document.getElementById('thread').dispatchEvent(e); return e.defaultPrevented; })() })`),
     { pinned: false, before: 'visible', after: 'visible', touchAction: 'auto', wheelBlocked: false },
     'returning from a closed Reel route must release a retained transparent viewer and restore chat scrolling');
+  assert.deepEqual(await run(`window.__vigilNativeScrollLocks.map(message => message.locked)`), [true, false],
+    'closing a shared Reel restores native chat scrolling');
   await run(`document.getElementById('portal').style.display = 'none';`);
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
     before: getComputedStyle(document.getElementById('message-before')).visibility,

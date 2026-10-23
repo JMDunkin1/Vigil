@@ -1251,7 +1251,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let payload = message.body
         guard let body = payload as? [String: Any], let type = body["type"] as? String else { return }
         if !frame.isMainFrame && type != "mediaCandidate" && type != "pageText" { return }
-        if frame.isMainFrame, type == "health" || type == "surface" {
+        if frame.isMainFrame, ["health", "surface", "reelScrollLock"].contains(type) {
             guard Self.isCurrentMainDocumentMessage(
                 body["documentID"],
                 currentDocumentID: mainDocumentIDs[service]
@@ -1262,6 +1262,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard service == .youtube, frame.isMainFrame else { return }
             let allowed = body["allowed"] as? Bool == true
             if youtubeAllowsLandscape != allowed { youtubeAllowsLandscape = allowed }
+        case "reelScrollLock":
+            guard service == .instagram, frame.isMainFrame,
+                  let locked = body["locked"] as? Bool,
+                  let webView = message.webView else { return }
+            setInstagramReelScrollLocked(locked, in: webView)
         case "documentReady":
             guard frame.isMainFrame,
                   let documentID = body["documentID"] as? String,
@@ -1860,6 +1865,18 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if surfaceStates[service] != surface { surfaceStates[service] = surface }
         guard let webView = webViews[service] else { return }
         if service == .instagram {
+            switch surface.route {
+            case "reels":
+                setInstagramReelScrollLocked(true, in: webView)
+            case "modal", "directThread":
+                // A Reel's comments dialog is still inside its fixed viewer.
+                // The Direct adapter keeps reporting its underlying thread
+                // while a shared Reel is pinned there. Preserve the lock until
+                // the Reel guard explicitly reports that viewer closed.
+                break
+            default:
+                setInstagramReelScrollLocked(false, in: webView)
+            }
             // WebKit supplies the same interactive back/forward transition as
             // Safari. Route-gating it keeps center-screen carousels, Stories,
             // Reels, feed swipes, and modals entirely owned by Instagram.
@@ -1876,6 +1893,15 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if !allowsRefresh && !isRefreshing {
             scrollView.refreshControl?.endRefreshing()
         }
+    }
+
+    func setInstagramReelScrollLocked(_ locked: Bool, in webView: WKWebView) {
+        guard webViews[.instagram] === webView else { return }
+        // CSS touch-action does not reliably stop the WKWebView's native
+        // UIScrollView pan recognizer on iOS. Lock that recognizer at the host
+        // view while a shared Reel is pinned, and restore it when the viewer
+        // closes so the Direct thread keeps its normal scrolling.
+        webView.scrollView.isScrollEnabled = !locked
     }
 
     static func provisionalInstagramSurface(for url: URL) -> SocialSurfaceState {
