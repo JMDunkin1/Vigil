@@ -308,7 +308,7 @@ private struct SocialRoutineEditor: View {
 struct SocialHelpView: View {
     var body: some View {
         List {
-            faq("How do I return to the apps?", "Use Apps above a service, or double-tap with three fingers. VoiceOver offers a Return to apps action. Instagram keeps its existing full interface.")
+            faq("How do I return to the apps?", "Long-press Vigil on the Home Screen and choose Apps. VoiceOver also offers a Return to apps action inside a service.")
             faq("Which services are available?", "Instagram, YouTube, Snapchat, LinkedIn, Facebook, X, TikTok, and Reddit. Each service stays inside Vigil's filtered web session. Some native-app features are unavailable on the web.")
             faq("Can I post?", "Use a service's own posting controls wherever its web version supports them. Vigil's restrictions remain active while you create or upload content.")
             faq("What happens when I change accounts?", "Other services can keep separate signed-in accounts. Your original account is preserved, and all accounts share the same restrictions and usage limits. Instagram retains its current account.")

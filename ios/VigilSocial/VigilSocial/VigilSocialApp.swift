@@ -1,10 +1,12 @@
 import SwiftUI
 import SafariServices
+import Combine
 
 @main
 struct VigilSocialApp: App {
     @UIApplicationDelegateAdaptor(SocialAppDelegate.self) private var appDelegate
     @StateObject private var container = SocialContainerStore()
+    @ObservedObject private var launcherShortcut = SocialLauncherShortcut.shared
 
     var body: some Scene {
         WindowGroup {
@@ -38,6 +40,9 @@ struct VigilSocialApp: App {
                 #endif
                 }
             }
+                .onChange(of: launcherShortcut.pending, initial: true) { _, pending in
+                    if pending { launcherShortcut.consume(in: container) }
+                }
                 .task {
                     let store = container
                     SocialNotifications.shared.openService = { [weak store] service in store?.select(service) }
@@ -80,6 +85,23 @@ final class SocialAppDelegate: NSObject, UIApplicationDelegate {
     static var orientationMask: UIInterfaceOrientationMask = .portrait
 
     func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        if Bundle.main.object(forInfoDictionaryKey: "VigilService") as? String == "all" {
+            application.shortcutItems = [UIApplicationShortcutItem(
+                type: SocialLauncherShortcut.type, localizedTitle: "Apps",
+                localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "square.grid.2x2"))]
+        }
+        return true
+    }
+
+    func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = session.configuration
+        configuration.delegateClass = SocialShortcutSceneDelegate.self
+        return configuration
+    }
+
+    func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         Self.orientationMask
     }
@@ -100,5 +122,40 @@ final class SocialAppDelegate: NSObject, UIApplicationDelegate {
             // holds the phone. On leaving playback, bring browsing upright.
             if !allowed { scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait)) }
         }
+    }
+}
+
+// Forward quick actions without owning a window; SwiftUI keeps its scene and URL routing.
+@MainActor
+final class SocialShortcutSceneDelegate: NSObject, UIWindowSceneDelegate {
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+               options connectionOptions: UIScene.ConnectionOptions) {
+        if let shortcut = connectionOptions.shortcutItem { SocialLauncherShortcut.shared.handle(shortcut) }
+    }
+
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        completionHandler(SocialLauncherShortcut.shared.handle(shortcutItem))
+    }
+}
+
+// Retain a cold-launch request until the SwiftUI container subscribes.
+@MainActor
+final class SocialLauncherShortcut: ObservableObject {
+    static let shared = SocialLauncherShortcut()
+    static let type = "tech.caseline.vigil.apps"
+    @Published private(set) var pending = false
+
+    @discardableResult
+    func handle(_ shortcut: UIApplicationShortcutItem) -> Bool {
+        guard shortcut.type == Self.type else { return false }
+        pending = true
+        return true
+    }
+
+    func consume(in container: SocialContainerStore) {
+        guard pending, container.isCombined else { return }
+        container.showHome()
+        pending = false
     }
 }

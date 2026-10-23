@@ -52,22 +52,6 @@ struct SocialContainerView: View {
                 .background(Color(uiColor: .systemBackground).ignoresSafeArea())
             }
         }
-        .overlay {
-            if container.selectedService != nil && container.migrationReady {
-                // Only the button reaches into the status-area corner. Service
-                // content keeps its normal safe area and full-height viewport.
-                GeometryReader { geometry in
-                    let insets = geometry.safeAreaInsets
-                    if insets.top > 0 || insets.leading > 0 {
-                        SocialHomeButton(action: returnHome)
-                            .frame(width: insets.leading > 0 ? min(44, insets.leading) : 44,
-                                   height: insets.top > 0 ? min(44, insets.top) : 44)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .ignoresSafeArea(.container, edges: [.top, .leading])
-                    }
-                }
-            }
-        }
         .task {
             while !container.migrationReady && !Task.isCancelled {
                 container.refreshMigrationReadiness()
@@ -94,7 +78,6 @@ struct SocialContainerView: View {
                 try? await Task.sleep(for: .seconds(1))
             }
         }
-        .background(SocialHomeGesture(action: returnHome))
         .accessibilityAction(named: Text("Return to apps"), returnHome)
         .accessibilityAction(named: Text("Open settings")) { showingSettings = true }
         .accessibilityAction(named: Text("Open help")) { showingHelp = true }
@@ -112,72 +95,67 @@ struct SocialContainerView: View {
     }
 
     private var home: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Vigil").font(.largeTitle.bold())
-                        Text("Your services").foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button { showingHelp = true; preferences.selectionFeedback() } label: { Image(systemName: "questionmark.circle").font(.title2) }
-                        .accessibilityLabel("Help")
-                        .accessibilityIdentifier("social-help")
-                    Button { showingSettings = true; preferences.selectionFeedback() } label: { Image(systemName: "gearshape").font(.title2) }
-                        .accessibilityLabel("Settings")
-                        .accessibilityIdentifier("social-settings")
-                }
-                if let end = preferences.sleepRestriction(at: now)?.until {
-                    Label("Sleep Mode until \(end.formatted(date: .abbreviated, time: .shortened))", systemImage: "moon.fill")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                }
-                if let service = preferences.postingService, let end = preferences.postingUntil, end > now {
+        GeometryReader { geometry in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
                     HStack {
-                        Label("\(service.displayName) posting", systemImage: "square.and.pencil")
-                        Text(end, style: .timer).monospacedDigit()
+                        Text("Vigil").font(.largeTitle.bold())
                         Spacer()
-                        Button("End") { endPostingSession() }
-                    }.font(.subheadline)
-                }
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
-                    ForEach(SocialService.allCases) { service in
-                        let restriction = preferences.blockingReason(for: service, at: now)
-                        Button {
-                            container.select(service)
-                            preferences.selectionFeedback()
-                        } label: {
-                            VStack(spacing: 12) {
-                                if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
-                                   let icon = UIImage(contentsOfFile: path) {
-                                    Image(uiImage: icon).resizable().scaledToFit()
-                                        .frame(width: 58, height: 58)
-                                        .clipShape(RoundedRectangle(cornerRadius: 13))
-                                } else {
-                                    Image(systemName: service.systemImage).font(.largeTitle)
-                                        .frame(width: 58, height: 58)
-                                }
-                                Text(service.displayName).font(.headline)
-                                if let restriction {
-                                    Text(restriction.name).font(.caption).foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(maxWidth: .infinity).padding(.vertical, 24)
-                            .background(Color(uiColor: .secondarySystemGroupedBackground),
-                                        in: RoundedRectangle(cornerRadius: 24))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(restriction != nil)
-                        .accessibilityIdentifier("social-launch-\(service.rawValue)")
-                        .accessibilityHint(restriction?.message ?? "Open your filtered session")
+                        Button { showingHelp = true; preferences.selectionFeedback() } label: { Image(systemName: "questionmark.circle").font(.title2) }
+                            .accessibilityLabel("Help")
+                            .accessibilityIdentifier("social-help")
+                        Button { showingSettings = true; preferences.selectionFeedback() } label: { Image(systemName: "gearshape").font(.title2) }
+                            .accessibilityLabel("Settings")
+                            .accessibilityIdentifier("social-settings")
                     }
+                    if let end = preferences.sleepRestriction(at: now)?.until {
+                        Label("Sleep Mode until \(end.formatted(date: .abbreviated, time: .shortened))", systemImage: "moon.fill")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    if let service = preferences.postingService, let end = preferences.postingUntil, end > now {
+                        HStack {
+                            Label("\(service.displayName) posting", systemImage: "square.and.pencil")
+                            Text(end, style: .timer).monospacedDigit()
+                            Spacer()
+                            Button("End") { endPostingSession() }
+                        }.font(.subheadline)
+                    }
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 32), GridItem(.flexible())], spacing: 28) {
+                        ForEach(SocialService.allCases) { service in
+                            let restriction = preferences.blockingReason(for: service, at: now)
+                            Button {
+                                container.select(service)
+                                preferences.selectionFeedback()
+                            } label: {
+                                SocialServiceIcon(service: service)
+                                    .frame(width: 104, height: 104)
+                                    .opacity(restriction == nil ? 1 : 0.45)
+                                    .overlay(alignment: .bottomTrailing) {
+                                        if restriction != nil {
+                                            Image(systemName: "lock.fill")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.white)
+                                                .padding(8)
+                                                .background(.black.opacity(0.75), in: Circle())
+                                                .padding(6)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(restriction != nil)
+                            .accessibilityLabel(service.displayName)
+                            .accessibilityIdentifier("social-launch-\(service.rawValue)")
+                            .accessibilityHint(restriction?.message ?? "Open your filtered session")
+                        }
+                    }
+                    .frame(maxWidth: 288)
+                    .frame(maxWidth: .infinity)
+                    Button { showingOpenLink = true } label: { Label("Open a shared link", systemImage: "link") }
+                        .buttonStyle(.bordered)
                 }
-                Button { showingOpenLink = true } label: { Label("Open a shared link", systemImage: "link") }
-                    .buttonStyle(.bordered)
-                Text("Tap the empty top-left corner to return here. You can also double-tap with three fingers.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                .padding(24).frame(maxWidth: 650)
+                .frame(maxWidth: .infinity, minHeight: geometry.size.height, alignment: .center)
             }
-            .padding(24).frame(maxWidth: 650)
-            .frame(maxWidth: .infinity)
         }
         .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
     }
@@ -235,29 +213,25 @@ struct SocialContainerView: View {
     }
 }
 
-// A real hit target with no visible chrome. Keep its VoiceOver name and the
-// window gesture so returning Home remains discoverable and accessible.
-struct SocialHomeButton: UIViewRepresentable {
-    let action: () -> Void
+// The service artwork fills the entire square; names remain available to VoiceOver.
+struct SocialServiceIcon: View {
+    let service: SocialService
 
-    func makeUIView(context: Context) -> UIButton {
-        let button = UIButton(type: .custom)
-        button.accessibilityLabel = "Return to apps"
-        button.accessibilityIdentifier = "social-return-home"
-        button.addTarget(context.coordinator, action: #selector(Coordinator.returnHome), for: .touchUpInside)
-        return button
-    }
-
-    func updateUIView(_ uiView: UIButton, context: Context) { context.coordinator.action = action }
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIButton, context: Context) -> CGSize? {
-        CGSize(width: proposal.width ?? 44, height: proposal.height ?? 44)
-    }
-    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
-
-    final class Coordinator {
-        var action: () -> Void
-        init(action: @escaping () -> Void) { self.action = action }
-        @objc func returnHome() { action() }
+    var body: some View {
+        Group {
+            if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
+               let icon = UIImage(contentsOfFile: path) {
+                Image(uiImage: icon).resizable().scaledToFit()
+            } else {
+                Image(systemName: service.systemImage)
+                    .font(.system(size: 64))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(uiColor: .secondarySystemGroupedBackground))
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .accessibilityHidden(true)
     }
 }
 
@@ -398,48 +372,6 @@ private struct SocialServiceAccessView: View {
     }
 }
 
-// Install on the window rather than a transparent overlay: web controls keep
-// their normal hit testing, scrolling, and one/two-finger gestures.
-struct SocialHomeGesture: UIViewRepresentable {
-    let action: () -> Void
-
-    func makeUIView(context: Context) -> GestureAnchor {
-        let view = GestureAnchor()
-        view.action = action
-        return view
-    }
-    func updateUIView(_ uiView: GestureAnchor, context: Context) { uiView.action = action }
-    static func dismantleUIView(_ uiView: GestureAnchor, coordinator: ()) { uiView.detach() }
-
-    final class GestureAnchor: UIView, UIGestureRecognizerDelegate {
-        var action: (() -> Void)?
-        private weak var attachedWindow: UIWindow?
-        private(set) lazy var recognizer: UITapGestureRecognizer = {
-            let gesture = UITapGestureRecognizer(target: self, action: #selector(returnHome))
-            gesture.numberOfTouchesRequired = 3
-            gesture.numberOfTapsRequired = 2
-            gesture.cancelsTouchesInView = false
-            gesture.delaysTouchesBegan = false
-            gesture.delaysTouchesEnded = false
-            gesture.delegate = self
-            return gesture
-        }()
-        override func didMoveToWindow() {
-            super.didMoveToWindow()
-            detach()
-            attachedWindow = window
-            window?.addGestureRecognizer(recognizer)
-        }
-        func detach() {
-            attachedWindow?.removeGestureRecognizer(recognizer)
-            attachedWindow = nil
-        }
-        @objc private func returnHome() { if recognizer.state == .ended { action?() } }
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
-    }
-}
-
 struct RootView: View {
     @ObservedObject var store: SocialWebViewStore
     var isServiceVisible = true
@@ -484,7 +416,7 @@ struct RootView: View {
         // insets as short pages fit/unfit the
         // viewport. Retained hidden services can trigger that same resize loop.
         // Native backgrounds still fill the status/home-indicator areas, and
-        // the established safe area and home gesture remain unchanged.
+        // the established safe area remains unchanged.
         let webViewSafeAreaEdges: Edge.Set = []
         let surfaceColor = Self.surfaceColor(store: store, colorScheme: colorScheme)
         return ZStack {

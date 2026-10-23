@@ -16,7 +16,7 @@ final class FixtureSocialCommitmentStorage: SocialCommitmentStorage {
 
 final class VigilSocialTests: XCTestCase {
     @MainActor
-    func testCornerHomeButtonPreservesAllServiceCanvasesAndHitTargets() async throws {
+    func testServicesKeepTheirCanvasesWithoutHiddenCornerControls() async throws {
         let suite = "VigilCornerRegression.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -55,24 +55,11 @@ final class VigilSocialTests: XCTestCase {
             combined.view.layoutIfNeeded()
             let canvas = page.convert(page.bounds, to: window)
             XCTAssertEqual(canvas, originalCanvas, "\(service) must keep its full service viewport")
-            let button = try XCTUnwrap(homeButton(in: combined.view))
-            let corner = button.convert(button.bounds, to: window)
-            let insets = combined.view.safeAreaInsets
-            let expectedCorner = CGRect(x: 0, y: 0,
-                                        width: insets.left > 0 ? min(44, insets.left) : 44,
-                                        height: insets.top > 0 ? min(44, insets.top) : 44)
-            XCTAssertEqual(corner, expectedCorner, "\(service) must use only the empty screen corner")
-            XCTAssertFalse(corner.intersects(canvas), "\(service)'s page controls must not overlap the launcher target")
-            XCTAssertTrue(window.hitTest(CGPoint(x: corner.midX, y: corner.midY), with: nil) === button)
-            XCTAssertFalse(window.hitTest(CGPoint(x: 24, y: canvas.minY + 24), with: nil) === button)
-            XCTAssertNil(button.currentTitle)
-            XCTAssertNil(button.currentImage)
-            XCTAssertEqual(button.accessibilityLabel, "Return to apps")
+            XCTAssertNil(homeButton(in: combined.view), "There must be no target behind the status bar")
+            XCTAssertFalse(window.gestureRecognizers?.contains(where: {
+                ($0 as? UITapGestureRecognizer)?.numberOfTouchesRequired == 3
+            }) == true, "The removed three-finger gesture must not intercept service interaction")
 
-            button.sendActions(for: .touchUpInside)
-            XCTAssertNil(container.selectedService)
-            try await Task.sleep(for: .milliseconds(100))
-            XCTAssertNil(homeButton(in: combined.view), "The corner target must disappear on the launcher")
         }
     }
 
@@ -415,17 +402,34 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testHomeGestureUsesThreeFingersAndTwoTapsWithoutBlockingOrdinaryTouches() {
-        let anchor = SocialHomeGesture.GestureAnchor()
-        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
-        window.addSubview(anchor)
-        XCTAssertEqual(anchor.recognizer.numberOfTouchesRequired, 3)
-        XCTAssertEqual(anchor.recognizer.numberOfTapsRequired, 2)
-        XCTAssertFalse(anchor.recognizer.cancelsTouchesInView)
-        XCTAssertFalse(anchor.recognizer.delaysTouchesBegan)
-        XCTAssertTrue(window.gestureRecognizers?.contains(anchor.recognizer) == true)
-        anchor.removeFromSuperview()
-        XCTAssertFalse(window.gestureRecognizers?.contains(anchor.recognizer) == true)
+    func testAppsShortcutReturnsToLauncherAndPreservesServiceSessions() throws {
+        let suite = "VigilShortcutRegression.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false,
+                                             commitmentStorage: FixtureSocialCommitmentStorage())
+        let shortcut = SocialLauncherShortcut()
+        let apps = UIApplicationShortcutItem(type: SocialLauncherShortcut.type, localizedTitle: "Apps")
+        let unknown = UIApplicationShortcutItem(type: "unrelated", localizedTitle: "Unknown")
+        XCTAssertFalse(shortcut.handle(unknown))
+        XCTAssertFalse(shortcut.pending)
+        // A request received before a view exists must survive until it subscribes.
+        XCTAssertTrue(shortcut.handle(apps))
+        XCTAssertTrue(shortcut.pending)
+        shortcut.consume(in: container)
+        XCTAssertNil(container.selectedService)
+        XCTAssertFalse(shortcut.pending)
+        for service in SocialService.allCases {
+            container.select(service)
+            let store = container.store(for: service)
+            let page = store.webView(for: service)
+            XCTAssertTrue(shortcut.handle(apps))
+            shortcut.consume(in: container)
+            XCTAssertNil(container.selectedService)
+            XCTAssertFalse(shortcut.pending)
+            XCTAssertTrue(container.store(for: service) === store)
+            XCTAssertTrue(container.store(for: service).webView(for: service) === page)
+        }
     }
 
     @MainActor
