@@ -1915,6 +1915,7 @@ enum DOMAdapters {
       let viewerBackground = null;
       let gesture = null;
       let pointerGesture = null;
+      const touchPointers = new Set();
       const lockedScroll = new Map();
       // `null` forces the first route sync to tell the native host the page's
       // initial state, including an explicit unlock after a WebView reload.
@@ -1956,6 +1957,14 @@ enum DOMAdapters {
         html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] * {
           overscroll-behavior-y: contain !important;
         }
+        html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"],
+        html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] * {
+          touch-action: auto !important;
+        }
+        html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] {
+          overflow-y: auto !important;
+          overscroll-behavior: contain !important;
+        }
       `;
       document.documentElement.appendChild(style);
       const reset = () => {
@@ -1975,6 +1984,7 @@ enum DOMAdapters {
         sharedIntent = null;
         gesture = null;
         pointerGesture = null;
+        touchPointers.clear();
         lockedScroll.forEach((_, node) => node.removeAttribute('data-vigil-single-reel-scroll'));
         lockedScroll.clear();
         document.querySelectorAll('[data-vigil-single-reel-carousel]').forEach(node => node.removeAttribute('data-vigil-single-reel-carousel'));
@@ -2132,9 +2142,23 @@ enum DOMAdapters {
         if (event.cancelable) event.preventDefault();
         event.stopImmediatePropagation();
       };
-      const inSheet = target => target instanceof Element && Boolean(target.closest(
+      const recipientSearchSelector = 'input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"]';
+      const recipientSheet = target => {
+        const dialog = target?.closest?.('[role="dialog"], [aria-modal="true"]');
+        if (!dialog || dialog === modalContext || (pinnedCard && dialog.contains(pinnedCard))
+            || dialog.closest('[aria-hidden="true"], [hidden]')) return null;
+        const search = dialog.querySelector(recipientSearchSelector);
+        return search?.closest('[role="dialog"], [aria-modal="true"]') === dialog ? dialog : null;
+      };
+      const normalizeRecipientSheets = () => {
+        for (const dialog of document.querySelectorAll('[role="dialog"], [aria-modal="true"]')) {
+          if (recipientSheet(dialog)) dialog.dataset.vigilInstagramRecipientSheet = 'true';
+          else dialog.removeAttribute('data-vigil-instagram-recipient-sheet');
+        }
+      };
+      const inSheet = target => target instanceof Element && (Boolean(target.closest(
         '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
-      ));
+      )) || Boolean(recipientSheet(target)));
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (!node.isConnected) { lockedScroll.delete(node); return; }
         if (node.scrollTop !== position) node.scrollTop = position;
@@ -2269,6 +2293,7 @@ enum DOMAdapters {
         return remembered.source === null ? emptyMediaSource(source) : remembered.source === source;
       };
       const reconcile = () => {
+        normalizeRecipientSheets();
         if (!syncRoute()) return;
         // Reel playback may change CDN/blob sources and remount its player.
         // Contain input without granting permission to a particular video URL.
@@ -2440,6 +2465,12 @@ enum DOMAdapters {
         gesture = null;
       }, { capture: true, passive: false });
       window.addEventListener('pointerdown', event => {
+        if (event.pointerType === 'touch') touchPointers.add(event.pointerId);
+        if (touchPointers.size > 1) {
+          pointerGesture = null;
+          if (syncRoute() && !inSheet(event.target)) event.stopImmediatePropagation();
+          return;
+        }
         if (syncRoute() && !inSheet(event.target)) captureReelScroll(event.target);
         pointerGesture = syncRoute() && !inSheet(event.target) ? {
           x: event.clientX, y: event.clientY, blocked: false,
@@ -2460,6 +2491,7 @@ enum DOMAdapters {
         }
       }, true);
       for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
+        touchPointers.delete(event.pointerId);
         if (pointerGesture?.blocked) cancel(event);
         else if (pointerGesture?.contained) event.stopImmediatePropagation();
         pointerGesture = null;
@@ -7095,10 +7127,60 @@ enum DOMAdapters {
       document.addEventListener('touchstart', rememberCommentPlayback, { capture: true, passive: true });
       document.addEventListener('click', rememberCommentPlayback, true);
 
+      const dismissInstagramPhotoViewer = () => document.getElementById('vigil-instagram-profile-photo')?.remove();
+      document.addEventListener('click', (event) => {
+        if (instagramRoute() !== 'profile' || !(event.target instanceof Element)
+            || event.target.closest('nav, article, [role="article"], [role="dialog"], [aria-modal="true"]')) return;
+        const username = location.pathname.split('/').filter(Boolean)[0]?.toLowerCase();
+        const target = event.target;
+        const image = target.matches('img') ? target
+          : target.closest('button, [role="button"]')?.querySelector('img');
+        if (!(image instanceof HTMLImageElement) || !image.closest('main, [role="main"]')
+            || normalizedInstagramLabel(image.closest('button, [role="button"]')).match(/change|edit/)) return;
+        const owner = String(image.alt || '').match(/^([a-z0-9._]+)(?:'s|’s) profile picture$/i)?.[1];
+        if (owner?.toLowerCase() !== username || !image.currentSrc) return;
+        // Show only the avatar already rendered on this exact profile. Keep
+        // the surrounding Story ring/link available to Instagram's router.
+        if (!target.matches('img') && target.closest('a[href*="/stories/"]')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        dismissInstagramPhotoViewer();
+        const viewer = document.createElement('div');
+        viewer.id = 'vigil-instagram-profile-photo';
+        viewer.dataset.profilePath = location.pathname;
+        viewer.setAttribute('role', 'dialog');
+        viewer.setAttribute('aria-modal', 'true');
+        viewer.setAttribute('aria-label', 'Profile photo');
+        viewer.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:rgba(0,0,0,.92);padding:24px;box-sizing:border-box';
+        const photo = document.createElement('img');
+        photo.src = image.currentSrc;
+        photo.alt = image.alt;
+        photo.style.cssText = 'max-width:100%;max-height:85dvh;object-fit:contain;touch-action:pinch-zoom';
+        const close = document.createElement('button');
+        close.textContent = 'Close';
+        close.setAttribute('aria-label', 'Close profile photo');
+        close.style.cssText = 'position:absolute;top:12px;right:12px;min-width:60px;min-height:44px;border:0;border-radius:22px;background:#fff;color:#111;font:16px -apple-system,sans-serif';
+        const dismiss = () => {
+          dismissInstagramPhotoViewer();
+          image.closest('button, a[href], [role="button"]')?.focus();
+        };
+        close.addEventListener('click', dismiss);
+        viewer.addEventListener('click', (click) => { if (click.target === viewer) dismiss(); });
+        viewer.addEventListener('keydown', (key) => {
+          if (key.key === 'Escape') { key.preventDefault(); dismiss(); }
+          if (key.key === 'Tab') { key.preventDefault(); close.focus(); }
+        });
+        viewer.append(photo, close);
+        document.body.append(viewer);
+        close.focus({ preventScroll: true });
+      }, true);
+
       let redirectedURL = '';
       let lastURL = location.href;
       let sharedReelPath = '';
       const enforceRoute = () => {
+        const photoViewer = document.getElementById('vigil-instagram-profile-photo');
+        if (photoViewer && photoViewer.dataset.profilePath !== location.pathname) dismissInstagramPhotoViewer();
         lastURL = location.href;
         if (isReelsDestinationRoute()) {
           document.documentElement.dataset.vigilRoutePolicyBlocked = 'reels';
@@ -7245,6 +7327,7 @@ enum DOMAdapters {
         const activation = target.closest(directActivationSelector);
         if (!(activation instanceof HTMLElement)
             || activation.matches(':disabled, [aria-disabled="true"]')) return null;
+        if (activation.querySelector('input, textarea, select, [contenteditable="true"]')) return null;
         return activation;
       };
       let directTouch = null;
@@ -7663,51 +7746,116 @@ enum DOMAdapters {
         }
         return withInstagramLookupDeadline(() => operation.call(api, path, options));
       };
-      const instagramSearchUser = async (username) => {
-        const query = new URLSearchParams({
-          context: 'blended',
-          include_reel: 'true',
-          query: username,
-          search_surface: 'web_top_search'
-        });
-        const payload = await fetchInstagramJSON(`/api/v1/web/search/topsearch/?${query}`);
-        const entries = payload?.users || payload?.data?.users || [];
-        for (const entry of entries) {
+      const instagramModule = (name) => {
+        if (typeof window.require !== 'function') return null;
+        try {
+          const module = window.require(name);
+          return module?.default || module;
+        } catch (_) { return null; }
+      };
+      const exactInstagramUser = (entries, username) => {
+        for (const entry of entries || []) {
           const user = entry?.user || entry;
           if (normalizedUsername(user?.username) === username) return user;
         }
         throw new Error('Instagram search omitted the requested user');
       };
-      const instagramUserID = (user) => user?.id || user?.pk || user?.pk_id || '';
-      const currentMutualFriendship = async (username) => {
-        const user = await instagramSearchUser(username);
-        let mutual = relationshipFromUser(user);
-        const userID = instagramUserID(user);
-        if (mutual === null && userID) {
+      const instagramSearchUser = async (username) => {
+        // Current Instagram search is a Relay query. Reuse the loaded client's
+        // operation and authenticated environment rather than pinning a query
+        // ID or depending on the retired REST search working first.
+        const relay = instagramModule('CometRelay');
+        const environment = instagramModule('PolarisRelayEnvironment');
+        const query = instagramModule('PolarisSearchBoxRefetchableQuery.graphql');
+        if (relay?.fetchQuery && environment && query) {
           try {
-            const friendship = await fetchInstagramJSON(
-              `/api/v1/friendships/show/${encodeURIComponent(userID)}/`
-            );
-            mutual = relationshipFromUser(friendship);
-          } catch (error) {
-            // Instagram's own current web client uses PolarisInstapi for this
-            // batch POST. Keep it as a token-aware fallback when available.
-            if (!instagramRuntimeAPI()) throw error;
-            const payload = await fetchInstagramRuntimeJSON(
-              'POST',
-              '/api/v1/friendships/show_many/',
-              { body: { user_ids: String(userID) } }
-            );
-            const statuses = payload?.data?.friendship_statuses
-              || payload?.friendship_statuses
-              || {};
-            mutual = relationshipFromUser(statuses[String(userID)]);
-          }
+            const payload = await withInstagramLookupDeadline(() => relay.fetchQuery(environment, query, {
+              data: { context: 'blended', include_reel: 'true', query: username, search_surface: 'web_top_search' },
+              hasQuery: true
+            }, { fetchPolicy: 'network-only' }).toPromise());
+            return exactInstagramUser(payload?.xdt_api__v1__fbsearch__topsearch_connection?.users, username);
+          } catch (_) {}
         }
-        if (typeof mutual !== 'boolean') {
-          throw new Error('relationship lookup omitted mutual-follow fields');
-        }
+        const queryString = new URLSearchParams({
+          context: 'blended', include_reel: 'true', query: username, search_surface: 'web_top_search'
+        });
+        const payload = await fetchInstagramJSON(`/api/v1/web/search/topsearch/?${queryString}`);
+        return exactInstagramUser(payload?.users || payload?.data?.users, username);
+      };
+      // Relay's `id` can be an opaque node ID; friendship endpoints require pk.
+      const instagramUserID = (user) => user?.pk || user?.pk_id || user?.id || '';
+      const instagramFriendshipForUser = async (user) => {
+        const known = relationshipFromUser(user);
+        if (known !== null) return known;
+        const userID = instagramUserID(user);
+        if (!userID) throw new Error('Instagram omitted the user ID');
+        // The current client uses this token-aware batch POST. Try it even
+        // when search had no friendship fields or the old GET returns an
+        // incomplete (HTTP 200) response, not only when that GET throws.
+        try {
+          const payload = await fetchInstagramRuntimeJSON('POST', '/api/v1/friendships/show_many/', {
+            body: { user_ids: String(userID) }
+          });
+          const statuses = payload?.data?.friendship_statuses || payload?.friendship_statuses || {};
+          const mutual = relationshipFromUser(statuses[String(userID)]);
+          if (mutual !== null) return mutual;
+        } catch (_) {}
+        const payload = await fetchInstagramJSON(`/api/v1/friendships/show/${encodeURIComponent(userID)}/`);
+        const mutual = relationshipFromUser(payload?.data || payload);
+        if (mutual === null) throw new Error('relationship lookup omitted mutual-follow fields');
         return mutual;
+      };
+      const instagramProfileDocumentUser = async (username) => {
+        // A profile document is a last-resort identity source when legacy
+        // search/profile APIs have been retired or throttled. Parse only inert
+        // server JSON and require the exact username; never execute its scripts
+        // or infer friendship from a follow button, caption, or account name.
+        const controller = new AbortController();
+        try {
+          const html = await withInstagramLookupDeadline(async () => {
+            const response = await fetch(`/${encodeURIComponent(username)}/`, {
+              credentials: 'same-origin', signal: controller.signal
+            });
+            if (!response.ok) throw new Error('Instagram profile document unavailable');
+            return response.text();
+          });
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          let identity = null;
+          for (const script of doc.querySelectorAll('script[type="application/json"]')) {
+            let root;
+            try { root = JSON.parse(script.textContent); } catch (_) { continue; }
+            const pending = [root];
+            for (let inspected = 0; pending.length && inspected < 20000; inspected += 1) {
+              const value = pending.pop();
+              if (!value || typeof value !== 'object') continue;
+              if (normalizedUsername(value.username) === username) {
+                if (relationshipFromUser(value) !== null) return value;
+                if (instagramUserID(value)) identity = value;
+              }
+              for (const child of Object.values(value)) {
+                if (child && typeof child === 'object') pending.push(child);
+              }
+            }
+          }
+          if (identity) return identity;
+          throw new Error('Instagram profile omitted the requested user');
+        } finally { controller.abort(); }
+      };
+      const currentMutualFriendship = async (username) => {
+        const loaders = [
+          () => instagramSearchUser(username),
+          async () => {
+            const payload = await fetchInstagramJSON(
+              `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`
+            );
+            return exactInstagramUser([payload?.data?.user || payload?.user], username);
+          },
+          () => instagramProfileDocumentUser(username)
+        ];
+        for (const loadUser of loaders) {
+          try { return await instagramFriendshipForUser(await loadUser()); } catch (_) {}
+        }
+        throw new Error('Instagram could not verify the relationship');
       };
       const friendshipLookupQueue = [];
       const maxConcurrentFriendshipLookups = 3;
@@ -7734,24 +7882,7 @@ enum DOMAdapters {
         const check = withFriendshipLookupSlot(async () => {
           for (let attempt = 0; attempt < 2; attempt += 1) {
             try {
-              let mutual;
-              try {
-                mutual = await currentMutualFriendship(username);
-              } catch (_) {
-                const payload = await fetchInstagramJSON(
-                  `/api/v1/users/web_profile_info/?username=${encodeURIComponent(username)}`
-                );
-                const user = payload?.data?.user || payload?.user;
-                if (!user) throw new Error('relationship lookup omitted the user');
-                mutual = relationshipFromUser(user);
-                const userID = instagramUserID(user);
-                if (mutual === null && userID) {
-                  const friendship = await fetchInstagramJSON(
-                    `/api/v1/friendships/show/${encodeURIComponent(userID)}/`
-                  );
-                  mutual = relationshipFromUser(friendship);
-                }
-              }
+              const mutual = await currentMutualFriendship(username);
               if (typeof mutual !== 'boolean') {
                 throw new Error('relationship lookup omitted mutual-follow fields');
               }

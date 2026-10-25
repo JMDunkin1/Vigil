@@ -12120,3 +12120,245 @@ private final class RoutePolicyNavigationDelegate: NSObject, WKNavigationDelegat
         decisionHandler(.cancel)
     }
 }
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramPhotoZoomAndRecipientKeyboardConfiguration() {
+        let instagram = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false,
+                                          websiteDataStore: .nonPersistent())
+        let webView = instagram.webView(for: .instagram)
+        XCTAssertTrue(webView.configuration.ignoresViewportScaleLimits,
+                      "Instagram photos must support native pinch enlargement despite its viewport limits")
+        XCTAssertEqual(webView.scrollView.keyboardDismissMode, .none,
+                       "Recipient sheet layout changes must not interactively dismiss the search keyboard")
+        let youtube = SocialWebViewStore(fixedService: .youtube, loadInitialPages: false,
+                                        websiteDataStore: .nonPersistent())
+        XCTAssertFalse(youtube.webView(for: .youtube).configuration.ignoresViewportScaleLimits)
+        XCTAssertEqual(youtube.webView(for: .youtube).scrollView.keyboardDismissMode, .interactive)
+    }
+
+    @MainActor
+    func testInstagramCurrentRelayFriendshipPathDoesNotDependOnLegacySearch() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Current Instagram client fixture loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+            <html><head><script>
+            window.fixtureBatchIDs = [];
+            window.require = name => {
+              if (name === 'CometRelay') return { fetchQuery: (_environment, _query, variables) => ({toPromise: async () => ({
+                xdt_api__v1__fbsearch__topsearch_connection: { users: [{user:{
+                  username: variables.data.query, pk: 'pk-' + variables.data.query, id: 'opaque-relay-id'
+                }}] }
+              })}) };
+              if (name === 'PolarisRelayEnvironment' || name === 'PolarisSearchBoxRefetchableQuery.graphql') return {default:{}};
+              if (name === 'PolarisInstapi') return { apiPost: async (path, options) => {
+                const id = options.body.user_ids;
+                fixtureBatchIDs.push(id);
+                return {data:{friendship_statuses:{[id]:{following:true,followed_by:id==='pk-friend'}}}};
+              }};
+              throw new Error('Unknown module');
+            };
+            window.fetch = async () => { throw new Error('Legacy REST is unavailable'); };
+            </script></head><body>
+            <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+            <main><div role="list">
+              <a id="friend-story" href="/stories/friend/1/"><img alt="friend's profile picture"></a>
+              <a id="other-story" href="/stories/other/1/"><img alt="other's profile picture"></a>
+            </div>
+            <article id="friend-post"><a href="/friend/">friend</a></article>
+            <article id="other-post"><a href="/other/">other</a></article></main>
+            </body></html>
+            """#, baseURL: URL(string: "https://www.instagram.com/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        try await waitForJavaScriptCondition("document.getElementById('friend-post').dataset.vigilInstagramHomeRelationship === 'friend'", in: webView)
+        let state = try await webView.evaluateJavaScript(#"""
+            (() => [
+              getComputedStyle(document.getElementById('friend-post')).display !== 'none',
+              document.getElementById('friend-story').dataset.vigilInstagramStoryRelationship === 'friend',
+              getComputedStyle(document.getElementById('other-post')).display === 'none',
+              document.getElementById('other-story').dataset.vigilInstagramStoryRelationship === 'other',
+              fixtureBatchIDs.includes('pk-friend') && !fixtureBatchIDs.includes('opaque-relay-id')
+            ])()
+            """#) as? [Bool]
+        XCTAssertEqual(state, [true, true, true, true, true])
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramRecipientSearchWrapperKeepsNativeTouchAndFocus() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.controlsScript(for: .instagram),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let window = UIWindow(frame: webView.frame)
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(webView)
+        window.isHidden = false
+        defer { webView.removeFromSuperview(); window.isHidden = true }
+        let loaded = expectation(description: "Recipient search fixture loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+            <html><body><main><div role="dialog" id="viewer">
+            <article><a href="/reel/Shared123/"><video src="/original.mp4"></video></a></article>
+            <button aria-label="Next reel" id="next">Next</button>
+            <div role="dialog"><div role="button" id="search-wrap"><input placeholder="Search" id="search"></div>
+            <button id="recipient">Friend</button></div></div></main>
+            <script>window.fixturePresses=[];for(const id of ['search-wrap','recipient','next'])
+              document.getElementById(id).addEventListener('pointerdown',()=>fixturePresses.push(id));</script>
+            </body></html>
+            """#, baseURL: URL(string: "https://www.instagram.com/reel/Shared123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        let state = try await webView.evaluateJavaScript(#"""
+            (() => {
+              for (const id of ['search-wrap','recipient','next']) document.getElementById(id).dispatchEvent(
+                new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'touch',isPrimary:true}));
+              document.getElementById('search').focus();
+              document.getElementById('search').value='a distant friend';
+              return [fixturePresses.join(',')==='search-wrap,recipient', document.activeElement.id==='search',
+                getComputedStyle(document.getElementById('search-wrap')).touchAction==='auto',
+                getComputedStyle(document.getElementById('next')).touchAction==='pinch-zoom'];
+            })()
+            """#) as? [Bool]
+        XCTAssertEqual(state, [true, true, true, true])
+        _ = try await webView.evaluateJavaScript("history.pushState({}, '', '/reel/Other/');")
+        let route = try await webView.evaluateJavaScript("location.pathname") as? String
+        XCTAssertEqual(route, "/reel/Shared123/", "Recipient search must not release shared Reel containment")
+        webView.navigationDelegate = nil
+    }
+}
+
+extension VigilSocialTests {
+    @MainActor
+    private func instagramRepairFixture(_ html: String, path: String = "/") async throws -> WKWebView {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true
+        ))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Instagram repair fixture loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(html, baseURL: URL(string: "https://www.instagram.com\(path)")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        webView.navigationDelegate = nil
+        return webView
+    }
+
+    @MainActor
+    func testInstagramProfileDocumentFallbackVerifiesExactIdentity() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><script>
+            window.require = name => {
+              if(name !== 'PolarisInstapi') throw new Error('unavailable module');
+              return {apiPost:async (_path,options)=>{const id=options.body.user_ids;
+                return {data:{friendship_statuses:{[id]:{following:true,followed_by:id==='pk-friend'}}}};}};
+            };
+            window.fetch = async input => {
+              const path = new URL(input, location.href).pathname;
+              if(path==='/friend/' || path==='/other/') {
+                const username=path.split('/')[1];
+                const json={decoy:{username:'lookalike',pk:'wrong',friendship_status:{following:true,followed_by:true}},
+                  exact:{username,pk:'pk-'+username}};
+                return {ok:true,text:async()=>'<html><script type="application/json">'+JSON.stringify(json)+'</scr'+'ipt></html>'};
+              }
+              return {ok:false,status:429};
+            };
+            </script></head><body><nav><a href="/viewer/" aria-label="Profile">Profile</a></nav><main>
+            <div role="list"><a id="story" href="/stories/friend/1/"><img alt="friend's profile picture"></a></div>
+            <article id="friend"><a href="/friend/">Friend</a></article>
+            <article id="other"><a href="/other/">Other</a></article></main></body></html>
+            """#)
+        try await waitForJavaScriptCondition("document.getElementById('friend').dataset.vigilInstagramHomeRelationship === 'friend'", in: webView)
+        let state = try await webView.evaluateJavaScript("""
+            [document.getElementById('story').dataset.vigilInstagramStoryRelationship === 'friend',
+             document.getElementById('other').dataset.vigilInstagramHomeRelationship === 'other',
+             getComputedStyle(document.getElementById('other')).display === 'none']
+            """) as? [Bool]
+        XCTAssertEqual(state, [true, true, true])
+    }
+
+    @MainActor
+    func testInstagramUnavailableRelationshipCannotBorrowLookalikeOrCacheDenial() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><script>
+            window.fetch=async input=>{
+              if(String(input).includes('web_profile_info')) return {ok:true,json:async()=>({user:{
+                username:'lookalike',pk:'wrong',friendship_status:{following:true,followed_by:true}
+              }})};
+              return {ok:false,status:429};
+            };
+            </script></head><body><nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
+            <main><article id="post"><a href="/friend/">Friend</a></article></main></body></html>
+            """#)
+        try await waitForJavaScriptCondition("document.getElementById('post').dataset.vigilInstagramHomeRelationship === 'unavailable'", in: webView)
+        let state = try await webView.evaluateJavaScript("""
+            [getComputedStyle(document.getElementById('post')).display === 'none',
+             !sessionStorage.getItem('vigil.instagram.mutual-friendships.v1:session')]
+            """) as? [Bool]
+        XCTAssertEqual(state, [true, true], "Unknown remains hidden and must not be persisted as a nonfriend")
+    }
+
+    @MainActor
+    func testInstagramPostPinchKeepsSingleFingerSwipeContained() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><body><main><article><a href="/p/Shared123/">Post</a>
+            <img id="photo" style="width:300px;height:300px" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'/%3E">
+            </article></main></body></html>
+            """#, path: "/p/Shared123/")
+        let state = try await webView.evaluateJavaScript(#"""
+            (()=>{
+              const photo=document.getElementById('photo');
+              const fire=(type,id,x,y)=>{const event=new PointerEvent(type,{pointerId:id,pointerType:'touch',
+                bubbles:true,cancelable:true,clientX:x,clientY:y});photo.dispatchEvent(event);return event.defaultPrevented;};
+              fire('pointerdown',1,100,200);fire('pointerdown',2,200,200);
+              const pinch=fire('pointermove',1,50,100)||fire('pointermove',2,250,300);
+              fire('pointerup',1,50,100);fire('pointerup',2,250,300);
+              fire('pointerdown',3,100,300);const swipe=fire('pointermove',3,100,100);fire('pointerup',3,100,100);
+              return [pinch,swipe];
+            })()
+            """#) as? [Bool]
+        XCTAssertEqual(state, [false, true])
+    }
+
+    @MainActor
+    func testInstagramProfilePhotoViewerUsesDisplayedAvatarAndClosesOnNavigation() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><body><main><header><a href="/stories/friend/1/"><img id="avatar" alt="friend's profile picture"
+            src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'/%3E"></a></header>
+            <article><img id="post" alt="Post photo"></article></main></body></html>
+            """#, path: "/friend/")
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('avatar').currentSrc)", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('avatar').click()")
+        let matching = try await webView.evaluateJavaScript("""
+            document.querySelector('#vigil-instagram-profile-photo img')?.src === document.getElementById('avatar').currentSrc
+            """) as? Bool
+        XCTAssertEqual(matching, true)
+        _ = try await webView.evaluateJavaScript("""
+            document.querySelector('[aria-label="Close profile photo"]').click();document.getElementById('post').click();
+            """)
+        let closed = try await webView.evaluateJavaScript("document.getElementById('vigil-instagram-profile-photo') === null") as? Bool
+        XCTAssertEqual(closed, true)
+        _ = try await webView.evaluateJavaScript("document.getElementById('avatar').click();history.pushState({}, '', '/direct/inbox/');")
+        try await waitForJavaScriptCondition("document.getElementById('vigil-instagram-profile-photo') === null", in: webView)
+    }
+}

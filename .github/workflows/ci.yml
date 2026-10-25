@@ -52,6 +52,18 @@ jobs:
           assert.ok(readFileSync(process.argv[2], 'utf8').split(/\r?\n/).includes('VIGIL_INSTAGRAM_SHARED_REEL_BROWSER_COMPLETE'), 'Instagram browser fixture did not complete');
           NODE
 
+      - name: Test Instagram friends and photo browser regressions
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          node_modules/.bin/electron tests/ios-instagram-friends-browser.cjs 2>&1 | tee "$RUNNER_TEMP/vigil-instagram-friends-browser.log"
+          node --input-type=module - "$RUNNER_TEMP/vigil-instagram-friends-browser.log" <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          assert.ok(readFileSync(process.argv[2], 'utf8').split(/\r?\n/).includes('VIGIL_INSTAGRAM_FRIENDS_BROWSER_COMPLETE'), 'Instagram friends fixture did not complete');
+          NODE
+
       - name: Test block page Back browser regressions
         timeout-minutes: 3
         shell: bash

@@ -681,6 +681,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         // media with a persisted ledger reservation.
         configuration.allowsPictureInPictureMediaPlayback = service == .youtube
         configuration.allowsInlineMediaPlayback = true
+        // Instagram disables viewport scaling on mobile. Permit Safari-style
+        // pinch enlargement of the photo already on screen.
+        configuration.ignoresViewportScaleLimits = service == .instagram
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         // LinkedIn loads its Apple handler asynchronously after the tap. The
@@ -760,7 +763,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         webView.allowsLinkPreview = false
         webView.scrollView.alwaysBounceVertical = false
         webView.scrollView.isDirectionalLockEnabled = service.usesDirectionalScrollLock
-        webView.scrollView.keyboardDismissMode = .interactive
+        // A recipient sheet moves when the keyboard changes the viewport.
+        // Interactive dismissal treats that adjustment as a dismiss gesture.
+        webView.scrollView.keyboardDismissMode = service == .instagram ? .none : .interactive
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(self, action: #selector(refreshWebView(_:)), for: .valueChanged)
         refreshControl.isEnabled = false
