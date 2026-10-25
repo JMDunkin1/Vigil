@@ -1,0 +1,289 @@
+{
+  "date": "2026-10-23",
+  "decision": "Retain existing enforced strict Google/Bing/DuckDuckGo. Deny reviewed services without verified cross-surface strict filtering or with opaque destination relays. Privacy branding alone is not a reason to block.",
+  "sources": [
+    {
+      "url": "https://support.startpage.com/hc/en-us/articles/4455317663764-How-does-Anonymous-View-work",
+      "finding": "Pages and supporting images are served from Startpage, including random subdomains of proxy.startpage.com."
+    },
+    {
+      "url": "https://support.startpage.com/hc/en-us/articles/4521266723220-What-is-Safe-Search-and-how-does-it-work",
+      "finding": "Filtering is user configurable. No Startpage strict mapping is deployed by Vigil on the supported phone path; advertising a safe endpoint is not a verified app-and-policy transaction."
+    },
+    {
+      "url": "https://metager.org/en-US/hilfe/easy-language/privacy-protection",
+      "finding": "Open anonymously runs a browser on MetaGer servers."
+    },
+    {
+      "url": "https://metager.org/de-AT/hilfe/datensicherheit",
+      "finding": "Fallback proxy at proxy.suma-ev.de."
+    },
+    {
+      "url": "https://search.brave.com/help/safesearch",
+      "finding": "Strict, moderate, off settings. Vigil has no verified strict cross-surface transaction for Brave Search."
+    },
+    {
+      "url": "https://help.qwant.com/hc/en-us/articles/49002557528593-SafeSearch-Filtering-Adult-Content",
+      "finding": "Filtering can be disabled."
+    },
+    {
+      "url": "https://docs.searxng.org/dev/search_api.html",
+      "finding": "GET/POST queries and safesearch=0; safe search applies only to supporting upstream engines."
+    },
+    {
+      "url": "https://docs.searxng.org/",
+      "finding": "Official documentation refers users to searx.space."
+    },
+    {
+      "url": "https://browser.lol/en/docs",
+      "finding": "Streams browsers running in remote containers."
+    },
+    {
+      "url": "https://www.browserling.com/online-browser",
+      "finding": "Remote Chrome and other browser sessions streamed to the client; already blocked."
+    },
+    {
+      "url": "https://www.testmuai.com/cross-browser-testing/",
+      "finding": "LambdaTest redirects here; remote browser sessions."
+    },
+    {
+      "url": "https://www.browserbase.com/",
+      "finding": "Cloud browsers with live view."
+    },
+    {
+      "url": "https://www.browserless.io/",
+      "finding": "Cloud browser service."
+    },
+    {
+      "url": "https://help.kagi.com/kagi/settings/search.html",
+      "finding": "Independent web and image Safe Search preferences are user configurable."
+    },
+    {
+      "url": "https://en-global.help.yahoo.com/kb/homepage/yahoo-safesearch-sln2247.html",
+      "finding": "Strict/moderate/off settings; block only the search service, retaining Yahoo Mail."
+    },
+    {
+      "url": "https://www.mojeek.com/preferences?tab=search",
+      "finding": "User-configurable safe search; no Mojeek strict enforcement in Vigil."
+    },
+    {
+      "url": "https://support.ecosia.org/article/562-how-to-enforce-safe-search-at-your-organization",
+      "finding": "Strict DNS option exists, but Vigil has no deployed cross-surface mapping for it. Conservatively deny until an equivalent transaction can be verified."
+    },
+    {
+      "url": "https://yandex.com/support/search/en/search-results/settings",
+      "finding": "Family/moderate/unrestricted; Yandex strict hosts option exists but is not deployed across Vigil surfaces."
+    },
+    {
+      "url": "https://support.google.com/chrome/answer/173424",
+      "finding": "Google Translate Websites is a web-page relay; block the translation service and relay hosts. Google Search remains available."
+    }
+  ],
+  "searxngSnapshot": {
+    "url": "https://searx.space/data/instances.json",
+    "sha256": "4ae736ff4b3393405dd7ff97de15dabc893626a6214f05472f5e80a9fe799ac4",
+    "httpsHosts": [
+      "anonsearch.win",
+      "auth.seddens.net",
+      "baresearch.org",
+      "etsi.me",
+      "failsearx.culturanerd.it",
+      "find.xenorio.xyz",
+      "grep.vim.wtf",
+      "gruble.de",
+      "isci.si",
+      "kantan.cat",
+      "libresearch.space",
+      "opnxng.com",
+      "paulgo.io",
+      "priv.au",
+      "privacyredirect.com",
+      "sear.lurx.net",
+      "search.anoni.net",
+      "search.banke.cloud",
+      "search.bladerunn.in",
+      "search.catboy.house",
+      "search.chocolatemoo53.com",
+      "search.ctq.ro",
+      "search.einfachzocken.eu",
+      "search.ethibox.fr",
+      "search.femboy.ad",
+      "search.hbubli.cc",
+      "search.im-in.space",
+      "search.inetol.net",
+      "search.jeremyh.xyz",
+      "search.jns.net.ar",
+      "search.liuzj.net",
+      "search.lumy.live",
+      "search.mdosch.de",
+      "search.mectov.my.id",
+      "search.minus27315.dev",
+      "search.mizuki.st",
+      "search.pereira.is",
+      "search.pi.vps.pw",
+      "search.rhscz.eu",
+      "search.rowie.at",
+      "search.serpensin.com",
+      "search.spiralab.org",
+      "search.undertale.uk",
+      "search.unredacted.org",
+      "search.yuri.llc",
+      "search.zina.dev",
+      "searx.dresden.network",
+      "searx.githo.st",
+      "searx.linxx.net",
+      "searx.mbuf.net",
+      "searx.mxchange.org",
+      "searx.namejeff.xyz",
+      "searx.oloke.xyz",
+      "searx.ononoki.org",
+      "searx.party",
+      "searx.perennialte.ch",
+      "searx.redgarden.cv",
+      "searx.rhscz.eu",
+      "searx.ro",
+      "searx.sev.monster",
+      "searx.thefloatinglab.world",
+      "searx.tiekoetter.com",
+      "searx.tsmdt.de",
+      "searxng.buffon.cloud",
+      "searxng.canine.tools",
+      "searxng.cups.moe",
+      "searxng.deggo.fyi",
+      "searxng.eshnetwork.space",
+      "searxng.gdebest.net",
+      "searxng.gr",
+      "searxng.moonshadow.dev",
+      "searxng.paralaxitaentomology.org",
+      "searxng.shreven.org",
+      "searxng.site",
+      "searxng.tr",
+      "searxng.website",
+      "searxng.wuemeli.com",
+      "sx.catgirl.cloud",
+      "sx.xo.st",
+      "xka.cz"
+    ],
+    "count": 80,
+    "selection": "Every HTTPS instance, strip www only, retain exact host and all health states. No parent-domain expansion.",
+    "refresh": "Fetch directory, validate HTTPS hosts, union with prior reviewed domains in src/browserBypassDomains.ts, rebuild and run browser-bypass-policy plus iOS profile cap/reserve tests. Never drop prior denies or truncate a policy to fit."
+  },
+  "boundaries": [
+    "Finite inventory cannot identify every new, private or self-hosted web proxy. No claim of exhaustive Internet coverage.",
+    "Runtime enforcement is offline; directory failures cannot reopen blocked services.",
+    "Phone policy installation requires the existing supervised app-and-policy update transaction, and USB when the non-removable profile changes.",
+    "Other reviewed general search domains are denied conservatively because Vigil does not have verified strict filtering for them across supported surfaces; a cookie or query flag alone is insufficient."
+  ],
+  "deployment": {
+    "sourceCheckoutSynced": true,
+    "sourceCheckout": "/Users/jamesdunkin/Library/Application Support/Vigil Source Checkout",
+    "sourceSync": "Only six task files copied after tracked destinations matched workspace HEAD; unrelated existing edits retained.",
+    "macUpdated": false,
+    "macAttempt": "npm run agent:update -- --allow-local --timeout-seconds 1200",
+    "macBlocker": "Protected updater preflight rejected an unfinished earlier app replacement: /Applications/Vigil.app.vigil-next and /Applications/Vigil.app.vigil-transaction.json. Journal is rolling-back; global recovery manifest is absent. Recovery evidence retained; no manual app replacement or enforcement changes.",
+    "phoneUpdated": true,
+    "phoneBlocker": null,
+    "enforcement": "No Vigil processes terminated and no watchdog or relaunch protection disabled.",
+    "phone": {
+      "command": "npm run agent:update:social",
+      "release": "0.3.215",
+      "build": 218,
+      "policyFingerprint": "a19f3f6579a89dea0a2be614346a7c2387899374bbb16be4140f4c04f7e5693e",
+      "receipt": "./data/ios-phone-deployments/00008150-000954C63628401C.json",
+      "deployedAt": "2026-10-23T21:28:48.468Z",
+      "edition": "personal",
+      "connection": "wired and paired",
+      "nonRemovable": true,
+      "builtInPayloads": 3,
+      "browserServiceHostsVerified": 127,
+      "verifiedServiceLaunches": [
+        {
+          "service": "instagram",
+          "verifiedAt": "2026-10-23T21:28:31.498Z"
+        },
+        {
+          "service": "youtube",
+          "verifiedAt": "2026-10-23T21:28:34.277Z"
+        },
+        {
+          "service": "snapchat",
+          "verifiedAt": "2026-10-23T21:28:35.714Z"
+        },
+        {
+          "service": "linkedin",
+          "verifiedAt": "2026-10-23T21:28:38.400Z"
+        },
+        {
+          "service": "facebook",
+          "verifiedAt": "2026-10-23T21:28:41.170Z"
+        },
+        {
+          "service": "x",
+          "verifiedAt": "2026-10-23T21:28:42.668Z"
+        },
+        {
+          "service": "tiktok",
+          "verifiedAt": "2026-10-23T21:28:46.829Z"
+        },
+        {
+          "service": "reddit",
+          "verifiedAt": "2026-10-23T21:28:48.302Z"
+        }
+      ],
+      "sourceFingerprintVerified": true,
+      "inventoryTrackedByDeploymentFingerprint": true
+    }
+  },
+  "inventory": {
+    "totalServiceHosts": 127,
+    "publicSearxngHosts": 80,
+    "scope": "Search engines not integrated into Vigil strict enforcement, search anonymous views, remote browsers, translation/page-rendering relays. Existing proxy, Tor gateway and VPN site lists remain intact.",
+    "additionalSearchInventory": [
+      "https://www.baidu.com/",
+      "https://www.sogou.com/",
+      "https://www.so.com/",
+      "https://search.aol.com/",
+      "https://www.ask.com/",
+      "https://yep.com/",
+      "https://you.com/",
+      "https://search.naver.com/",
+      "https://search.daum.net/",
+      "https://www.dogpile.com/"
+    ],
+    "restrictionReason": "Additional search services are denied because Vigil has no strict-filter transaction for them; this does not assert that each service lacks its own SafeSearch feature."
+  },
+  "policyCapacity": "Preserve the first supplemental mature-comics payload identity; split overflow into additional stable-UUID BuiltIn payloads of at most 500 entries. Do not truncate curated domains.",
+  "validation": {
+    "build": "passed",
+    "lint": "passed: 496 source files",
+    "targetedSuites": {
+      "passed": 17,
+      "names": [
+        "browser-bypass-policy",
+        "ios-deny-capacity",
+        "policy-enforcement",
+        "ios-mdm",
+        "manageengine-profile-export",
+        "browser-extension-parity",
+        "ios-phone-suite",
+        "apple-static-url-precision",
+        "mature-comic-platforms",
+        "safari-deny-preservation",
+        "network-safe-search",
+        "ios-safari-search-guard",
+        "embedded-frame-policy",
+        "adult-blocklist-migration",
+        "extension-rules",
+        "browser-protection",
+        "ios-url-filter-prefilter"
+      ]
+    },
+    "overflow": "500 custom deny URLs exercise more than two actual BuiltIn payloads; every URL retained, distinct UUIDs, non-removable profile, AutoFilterEnabled=true, each DenyListURLs <=500.",
+    "browserArchive": {
+      "path": "dist/browser/Vigil-Companion-0.3.21.zip",
+      "sha256": "6c4bbaa94b762344e22cb153cff1c1ca000a6c01a27e0df07818222770709fc5",
+      "published": false
+    },
+    "liveBrowserOrPhoneExecution": "Not claimed; policy/guard tests run locally in isolated test data."
+  }
+}

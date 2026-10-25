@@ -62,6 +62,7 @@ const PHONE_SOURCE_FILES = [
   "extension/google-safe-search.ts",
   "src/contextualExplicitSearch.ts",
   "src/browserStaticProtection.ts",
+  "src/browserBypassDomains.ts",
   "src/browserExtensionPages.ts",
   "src/explicitComicPolicy.ts",
   "src/explicitMediaContext.ts",

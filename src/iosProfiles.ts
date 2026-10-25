@@ -323,14 +323,18 @@ export function buildIosConfigurationProfile(
     // Apple supports multiple web-content-filter payloads with unique UUIDs.
     // Keep the existing 500-slot filter intact; this additive filter carries
     // whole-platform comic, art, and adult-product bans over HTTP and HTTPS.
-    // Retain the installed payload's identity when expanding its coverage.
-    payloads.push(commonPayload("com.apple.webcontent-filter", "Adult Content Platforms", "mature-comics", {
-      FilterType: "BuiltIn",
-      AutoFilterEnabled: true,
-      PermittedURLs: [...APPLE_CONTENT_FILTER_PERMITTED_URLS],
-      SafariHistoryRetentionEnabled: settings.allowSafariHistoryClearing === false,
-      DenyListURLs: targets.supplementalDeniedUrls
-    }));
+    // Retain the installed payload's identity, then carry overflow in distinct
+    // additive payloads. Never truncate curated denies to fit Apple's cap.
+    for (let offset = 0; offset < targets.supplementalDeniedUrls.length; offset += MAX_DENY_URLS) {
+      const suffix = offset === 0 ? "mature-comics" : `mature-comics-${offset / MAX_DENY_URLS + 1}`;
+      payloads.push(commonPayload("com.apple.webcontent-filter", "Adult Content Platforms", suffix, {
+        FilterType: "BuiltIn",
+        AutoFilterEnabled: true,
+        PermittedURLs: [...APPLE_CONTENT_FILTER_PERMITTED_URLS],
+        SafariHistoryRetentionEnabled: settings.allowSafariHistoryClearing === false,
+        DenyListURLs: targets.supplementalDeniedUrls.slice(offset, offset + MAX_DENY_URLS)
+      }));
+    }
   }
 
   const safeSearchDns = safeSearchDnsPayload(settings);
@@ -627,9 +631,6 @@ export function iosPolicyTargets(state: VigilState, now = new Date()): IosPolicy
       // preserving both priority coverage and the primary adult reserve.
       ...priorityDeniedUrls.filter((url) => !deniedUrls.includes(url))
     ]) : [];
-  if (supplementalDeniedUrls.length > MAX_DENY_URLS) {
-    throw new Error("The supplemental priority policy exceeds Apple's 500-entry limit; no weakened profile was generated.");
-  }
 
   return {
     profileName,

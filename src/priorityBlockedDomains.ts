@@ -1,3 +1,5 @@
+import { BROWSER_BYPASS_BLOCKED_SITES } from "./browserBypassDomains.js";
+
 /**
  * High-risk sites that deserve scarce Apple BuiltIn deny-list capacity.
  *
@@ -7,6 +9,8 @@
  * current alternate frontends precede downloadable tunnel software.
  */
 export const DEFAULT_FILTER_BYPASS_BLOCKED_SITES = [
+  // Deny opaque search/remote browsing before downloadable bypass tools.
+  ...BROWSER_BYPASS_BLOCKED_SITES,
   // Direct arbitrary-URL web proxies and operator-published mirrors.
   "4everproxy.com",
   "allunblocked.com",
@@ -107,11 +111,7 @@ export const DEFAULT_FILTER_BYPASS_BLOCKED_SITES = [
   "zproxy.org",
 
   // Remote browsers, rendering relays, and Tor-to-web gateways.
-  "browser.lol",
-  "browserling.com",
   "gotoonion.site",
-  "hyperbeam.com",
-  "kitpipe.com",
   "onion.cab",
   "onion.city",
   "onion.link",
@@ -119,8 +119,6 @@ export const DEFAULT_FILTER_BYPASS_BLOCKED_SITES = [
   "onion.sh",
   "onion.to",
   "onion.ws",
-  "r.jina.ai",
-  "send.win",
   "tor2web.org",
   "translated.turbopages.org",
 
@@ -230,6 +228,7 @@ export const DEFAULT_FILTER_BYPASS_BLOCKED_SITES = [
 
 /** Priority destinations that also require plain-HTTP enforcement. */
 export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
+  ...BROWSER_BYPASS_BLOCKED_SITES,
   "go2offer-1.com",
   "r.go2offer-1.com",
   "anonymizer.net",
