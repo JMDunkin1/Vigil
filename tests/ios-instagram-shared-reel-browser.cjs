@@ -257,6 +257,108 @@ async function main() {
     selected.removeAttribute('id'); selected.removeAttribute('role'); selected.outerHTML = selected.outerHTML.replaceAll('article', 'div');`);
   assert.equal(await run(`getComputedStyle(document.getElementById('opened')).visibility`), 'visible',
     'a delayed layout wrapper remount preserves the exact selected video source');
+  // Exercise the browser's compositor input, not just cancelable JS events.
+  // A root-only touch-action misses nested scrollers and caption/control hits.
+  await win.loadURL('https://www.instagram.com/reel/Shared123/');
+  await run(guard);
+  await run(`document.body.innerHTML = ${JSON.stringify(`
+    <style>
+      body{margin:0}#stack{height:780px;overflow-y:scroll;scroll-snap-type:y mandatory}
+      article{height:780px;scroll-snap-align:start}video{width:390px;height:600px;display:block}
+      #caption,#like{display:block;width:390px;height:80px}
+    </style>
+    <main id="stack"><article>Earlier prefetched item</article>
+      <article><video id="opened" muted loop></video><div id="caption">Sent reel caption</div><button id="like">Like</button></article>
+      <article>Recommendation</article>
+    </main>
+  `)}; document.getElementById('stack').scrollTop=780;`);
+  assert.deepEqual(await run(`({offset:document.getElementById('stack').scrollTop,
+    snap:getComputedStyle(document.getElementById('stack')).scrollSnapType,
+    overflow:getComputedStyle(document.getElementById('stack')).overflowY,
+    caption:getComputedStyle(document.getElementById('caption')).touchAction,
+    button:getComputedStyle(document.getElementById('like')).touchAction})`),
+  {offset:780,snap:'y mandatory',overflow:'scroll',caption:'pinch-zoom',button:'pinch-zoom'},
+  'the selected item can align before input; nested scroll layout and non-media hit targets stay intact');
+  win.webContents.debugger.attach('1.3');
+  for (const y of [300, 640, 720]) {
+    for (const yDistance of [3, -3, -400, 400]) {
+      await win.webContents.debugger.sendCommand('Input.synthesizeScrollGesture', {
+        x:200, y, xDistance:0, yDistance, gestureSourceType:'touch'
+      });
+      assert.equal(await run(`document.getElementById('stack').scrollTop`), 780,
+        `trusted ${yDistance}px pull at y=${y} cannot move into a neighbour`);
+    }
+  }
+  // Comments may scroll, but their presence must not unlock the background.
+  await run(`document.body.insertAdjacentHTML('beforeend', ${JSON.stringify(`
+    <section id="comments" data-vigil-instagram-comments-sheet="true" style="position:fixed;top:400px;left:0;width:390px;height:300px;overflow-y:auto">
+      <div style="height:1500px">Comments</div>
+    </section>`)});`);
+  await win.webContents.debugger.sendCommand('Input.synthesizeScrollGesture', {
+    x:200,y:550,xDistance:0,yDistance:-200,gestureSourceType:'touch'
+  });
+  assert.ok(await run(`document.getElementById('comments').scrollTop > 0`), 'trusted swipes scroll comments');
+  await win.webContents.debugger.sendCommand('Input.synthesizeScrollGesture', {
+    x:200,y:250,xDistance:0,yDistance:-400,gestureSourceType:'touch'
+  });
+  assert.equal(await run(`document.getElementById('stack').scrollTop`), 780, 'comments do not unlock the Reel behind them');
+  win.webContents.debugger.detach();
+  await run(`document.getElementById('comments').remove()`);
+  assert.deepEqual(await run(`(() => {
+    const caption=document.getElementById('caption');
+    caption.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:100,clientY:640}));
+    let siteMoves=0; caption.addEventListener('pointermove',()=>siteMoves++);
+    const move=new PointerEvent('pointermove',{bubbles:true,cancelable:true,clientX:100,clientY:639});
+    caption.dispatchEvent(move);
+    const stack=document.getElementById('stack'); stack.scrollTop=1400;
+    stack.dispatchEvent(new Event('scroll'));
+    return {tapStillAllowed:!move.defaultPrevented,siteMoves,offset:stack.scrollTop};
+  })()`), {tapStillAllowed:true,siteMoves:0,offset:780}, 'a tiny pull cannot reach the viewer or move it, while tap jitter remains usable');
+  assert.deepEqual(await run(`(async () => {
+    const canvas=document.createElement('canvas');canvas.width=32;canvas.height=32;
+    const stream=canvas.captureStream(10), recorder=new MediaRecorder(stream,{mimeType:'video/webm;codecs=vp8'}), chunks=[];
+    recorder.ondataavailable=event=>chunks.push(event.data);
+    const done=new Promise(resolve=>recorder.onstop=resolve);recorder.start();
+    canvas.getContext('2d').fillRect(0,0,32,32);
+    await new Promise(resolve=>setTimeout(resolve,200));recorder.stop();await done;
+    stream.getTracks().forEach(track=>track.stop());
+    const blob=new Blob(chunks,{type:recorder.mimeType});
+    let player=document.getElementById('opened'), guardPauseCalls=0;
+    const pause=player.pause.bind(player);player.pause=()=>{guardPauseCalls++;pause();};
+    player.src=URL.createObjectURL(blob);await player.play();
+    player.src=URL.createObjectURL(blob);await player.play();
+    const replacement=player.cloneNode();player.replaceWith(replacement);player=replacement;await player.play();
+    const result={playing:!player.paused,visible:getComputedStyle(player).visibility,guardPauseCalls};
+    player.pause();return result;
+  })()`), {playing:true,visible:'visible',guardPauseCalls:0},
+  'real Reel playback survives source rotation and a React player remount without a guard pause or gray-out');
+  // No link is present on some Direct previews. Pin a newly opened viewer,
+  // without interpreting the already visible full-size chat previews as one.
+  for (const kind of ['video', 'img']) {
+    await win.loadURL('https://www.instagram.com/direct/t/123/');
+    await run(guard);
+    await run(`document.body.innerHTML = ${JSON.stringify(`
+      <style>body{margin:0}#thread{height:844px;overflow:auto}img{width:390px;height:300px}</style>
+      <main id="thread" role="dialog"><button id="preview"><img src="/poster.svg"></button><div style="height:1500px">Messages</div></main>
+    `)}; document.getElementById('preview').onclick=()=>{
+      const viewer=document.createElement('div'); viewer.id='viewer'; viewer.setAttribute('role','dialog');
+      viewer.style='position:fixed;inset:0;overflow-y:auto';
+      viewer.innerHTML='<${kind} id="opened" style="width:390px;height:300px" src="/poster.svg"></${kind}><p style="height:1000px">Caption</p>';
+      document.body.append(viewer);
+    };`);
+    assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), false,
+      `${kind}: large inline messages do not pin the chat`);
+    await run(`document.getElementById('preview').click()`);
+    assert.deepEqual(await run(`(() => {
+      const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+      document.getElementById('opened').dispatchEvent(event);
+      return {pinned:document.documentElement.hasAttribute('data-vigil-single-reel'),blocked:event.defaultPrevented,
+        visible:getComputedStyle(document.getElementById('opened')).visibility};
+    })()`), {pinned:true,blocked:true,visible:'visible'}, `${kind}: a landscape share without a link is viewable and contained`);
+    await run(`document.getElementById('viewer').hidden=true`);
+    assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), false,
+      `${kind}: closing restores the thread`);
+  }
   for (const initialSource of ['', 'src="about:blank"']) {
     await win.loadURL('https://www.instagram.com/p/LazyVideo/');
     await run(guard);

@@ -347,6 +347,81 @@ final class VigilSocialTests: XCTestCase {
         )
         XCTAssertTrue(webView.scrollView.isScrollEnabled,
                       "Navigating away from the Reel restores native scrolling.")
+
+        store.setInstagramReelScrollLocked(true, in: webView)
+        for route in ["feed", "unknown", "post", "modal", "directThread"] {
+            store.setSurface(SocialSurfaceState(route: route, refreshEligible: false, blocksRefresh: true), for: .instagram)
+            XCTAssertFalse(webView.scrollView.isScrollEnabled,
+                           "An open shared viewer must survive an underlying \(route) surface report.")
+        }
+        store.setInstagramReelScrollLocked(false, in: webView)
+        XCTAssertTrue(webView.scrollView.isScrollEnabled)
+    }
+
+    @MainActor
+    func testInstagramSharedViewerContainsCaptionPullsWithoutChangingPlayerLayout() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Shared viewer scroll boundaries")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+          body{margin:0}#stack{height:780px;overflow-y:scroll;scroll-snap-type:y mandatory}
+          article{height:780px;scroll-snap-align:start}video{display:block;width:390px;height:600px}
+          #caption,button{height:80px}#comments{position:fixed;top:400px;height:300px;width:390px;overflow-y:auto}
+          </style></head><body><main id="stack"><article>Prefetch</article><article>
+          <video id="player"></video><div id="caption">Sent item caption</div><button id="like">Like</button>
+          </article><article>Recommendation</article></main></body></html>
+          """#, baseURL: URL(string: "https://www.instagram.com/reel/Sent123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        let state = try await webView.evaluateJavaScript(#"""
+          (() => {
+            const stack=document.getElementById('stack'), player=document.getElementById('player');
+            stack.scrollTop=780;
+            const start=stack.scrollTop, height=player.getBoundingClientRect().height;
+            let presses=0, taps=0, pauses=0, siteMoves=0;
+            player.pause=()=>pauses++;
+            player.addEventListener('pointerdown',()=>presses++);
+            player.addEventListener('click',()=>taps++);
+            const move=(target,delta)=>{
+              target.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,clientX:100,clientY:600}));
+              const event=new PointerEvent('pointermove',{bubbles:true,cancelable:true,clientX:100,clientY:600+delta});
+              target.dispatchEvent(event);
+              target.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,clientX:100,clientY:600+delta}));
+              return event.defaultPrevented;
+            };
+            const targets=[player,document.getElementById('caption'),document.getElementById('like')];
+            targets.forEach(target=>target.addEventListener('pointermove',()=>siteMoves++));
+            const styles=targets.every(node=>getComputedStyle(node).touchAction==='pinch-zoom');
+            const contained=targets.every(target=>[1,-1,300,-300].every(delta=>move(target,delta)===(Math.abs(delta)>6)))&&siteMoves===0;
+            stack.scrollTop=1400;stack.dispatchEvent(new Event('scroll'));
+            player.src='blob:https://www.instagram.com/remounted-player';
+            player.dispatchEvent(new Event('loadedmetadata'));player.click();
+            document.body.insertAdjacentHTML('beforeend','<section id="comments" data-vigil-instagram-comments-sheet="true"><div style="height:1500px">Comments</div></section>');
+            const comments=document.getElementById('comments');comments.scrollTop=200;
+            const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});comments.dispatchEvent(wheel);
+            const result={styles,contained,start,restored:stack.scrollTop===start,
+              layout:getComputedStyle(stack).overflowY==='scroll'&&getComputedStyle(stack).scrollSnapType==='y mandatory'
+                &&player.getBoundingClientRect().height===height,
+              playback:getComputedStyle(player).visibility==='visible'&&pauses===0&&taps===1&&presses===0,
+              comments:!wheel.defaultPrevented&&comments.scrollTop===200&&getComputedStyle(comments).touchAction==='auto',
+              background:getComputedStyle(document.getElementById('caption')).touchAction==='pinch-zoom'};
+            history.pushState({},'','/direct/t/123/');
+            result.closed=!document.documentElement.hasAttribute('data-vigil-single-reel')
+              &&getComputedStyle(document.getElementById('caption')).touchAction==='auto';
+            return result;
+          })()
+          """#) as? [String: Any]
+        XCTAssertEqual(state?["start"] as? Int, 780)
+        for key in ["styles", "contained", "restored", "layout", "playback", "comments", "background", "closed"] {
+            XCTAssertEqual(state?[key] as? Bool, true, key)
+        }
+        webView.navigationDelegate = nil
     }
 
     @MainActor
@@ -614,7 +689,7 @@ final class VigilSocialTests: XCTestCase {
             let post = kind == "post"
             let initialURL = post ? URL(string: "https://www.instagram.com/p/Dump123/")!
                 : kind == "story" ? storyURL : URL(string: "https://www.instagram.com/direct/t/123/")!
-            let body = post ? #"""
+            let body = (post ? #"""
                 <main id="stack"><article id="item" data-vigil-instagram-home-relationship="other">
                   <a href="/p/Dump123/">Sent post</a><div id="carousel">
                     <img id="media" src="https://www.instagram.com/one.jpg"><video src="https://www.instagram.com/clip.mp4"></video><img src="https://www.instagram.com/two.jpg">
@@ -624,7 +699,10 @@ final class VigilSocialTests: XCTestCase {
                 <div id="item" role="dialog"><a href="/stranger/"><img alt="stranger's profile picture" style="width:30px;height:30px" src="https://www.instagram.com/avatar.jpg"></a>
                 <img id="media" src="https://www.instagram.com/story.jpg">
                 <button id="next" aria-label="Next story" onclick="window.advances++">Next</button></div>
-                """#
+                """#).replacingOccurrences(
+                    of: #"https://www\.instagram\.com/[a-z]+\.(?:jpg|mp4)"#,
+                    with: "data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='390'%20height='600'%3E%3C/svg%3E",
+                    options: .regularExpression)
             let encodedBody = String(data: try JSONEncoder().encode(body), encoding: .utf8)!
             webView.loadHTMLString("""
                 <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
@@ -691,12 +769,13 @@ final class VigilSocialTests: XCTestCase {
                 <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
                 body{margin:0}#portal{position:fixed;inset:0;overflow-y:auto}.card{height:700px}
                 video,#other{display:block;width:390px;height:600px}
-                </style></head><body><main id="portal">
+                </style></head><body><a id="share" href="/reel/Sent123/" onclick="event.preventDefault()">Sent item</a><main id="portal">
                 <div class="card"><a href="/reel/Sent123/">Sent</a><video id="media" src="https://www.instagram.com/sent.mp4"></video></div>
                 <div class="card"><img id="other" src="https://www.instagram.com/recommendation.jpg"></div>
                 <button id="next"><svg aria-label="Next reel"></svg></button></main></body></html>
                 """#, baseURL: URL(string: "https://www.instagram.com\(path)")!)
             await fulfillment(of: [loaded], timeout: 5)
+            if path.hasPrefix("/direct/") { _ = try await webView.evaluateJavaScript("document.getElementById('share').click()") }
             try await Task.sleep(nanoseconds: 100_000_000)
             let state = try await webView.evaluateJavaScript(#"""
                 (()=>{
@@ -706,7 +785,7 @@ final class VigilSocialTests: XCTestCase {
                   const direct=location.pathname.startsWith('/direct/');
                   if(!direct)history.replaceState({},'','/reel/Sent123/?share=1');
                   const path=location.pathname;history.pushState({},'','/reels/Other/');history.pushState({},'','/reels/');
-                  return {visible:getComputedStyle(media).visibility==='visible',other:getComputedStyle(document.getElementById('other')).visibility==='hidden',
+                  return {visible:getComputedStyle(media).visibility==='visible',other:getComputedStyle(document.getElementById('other')).visibility==='visible',
                     wheel:wheel.defaultPrevented,next:next.defaultPrevented,contained:location.pathname===path,
                     gate:document.documentElement.dataset.vigilRoutePolicyBlocked||'',path};
                 })()
@@ -783,7 +862,7 @@ final class VigilSocialTests: XCTestCase {
             history.replaceState({}, '', '/reel/abc123/');
             const result = {
               originalVisible: getComputedStyle(video).visibility === 'visible',
-              nextHidden: getComputedStyle(next).visibility === 'hidden',
+              nextUntouched: getComputedStyle(next).visibility === 'visible',
               wheelBlocked: wheel.defaultPrevented,
               swipeBlocked: move.defaultPrevented && up.defaultPrevented && window.siteMoves === 0,
               touchBlocked: touchMove.defaultPrevented && touchEnd.defaultPrevented,
@@ -799,7 +878,7 @@ final class VigilSocialTests: XCTestCase {
             result.scrollRestored = stack.scrollTop === 0;
             video.src = 'https://www.instagram.com/fixture-recycled.mp4';
             video.dispatchEvent(new Event('loadedmetadata'));
-            result.recycledHidden = getComputedStyle(video).visibility === 'hidden';
+            result.recycledVisible = getComputedStyle(video).visibility === 'visible';
             const remount = video.cloneNode();
             remount.src = 'https://www.instagram.com/fixture-one.mp4';
             video.replaceWith(remount);
@@ -814,11 +893,73 @@ final class VigilSocialTests: XCTestCase {
             return result;
           })()
           """#) as? [String: Any]
-        for key in ["originalVisible", "nextHidden", "wheelBlocked", "swipeBlocked", "touchBlocked", "playbackTapAllowed", "keyBlocked", "commentsWork", "nextBlocked", "scrollRestored", "recycledHidden", "originalRemountAllowed", "exited", "secondSharedAllowed"] {
+        for key in ["originalVisible", "nextUntouched", "wheelBlocked", "swipeBlocked", "touchBlocked", "playbackTapAllowed", "keyBlocked", "commentsWork", "nextBlocked", "scrollRestored", "recycledVisible", "originalRemountAllowed", "exited", "secondSharedAllowed"] {
             XCTAssertEqual(state?[key] as? Bool, true, key)
         }
         XCTAssertEqual(state?["path"] as? String, "/reel/AbC123/")
         webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramLandscapeDirectSharesPinOnlyTheirNewViewer() async throws {
+        for media in ["video", "img"] {
+            let controller = WKUserContentController()
+            controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = controller
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+            let loaded = expectation(description: "Landscape \(media) share")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            webView.navigationDelegate = delegate
+            webView.loadHTMLString(#"""
+              <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+              body{margin:0}#thread{position:fixed;inset:0;overflow-y:auto}img{width:390px;height:300px}
+              </style></head><body><main id="thread" role="dialog"><a id="profile" href="/friend/">Friend</a><button id="share"><img></button>
+              <p style="height:1500px">Messages</p></main></body></html>
+              """#, baseURL: URL(string: "https://www.instagram.com/direct/t/123/")!)
+            await fulfillment(of: [loaded], timeout: 5)
+            let initiallyPinned = try await webView.evaluateJavaScript("document.documentElement.hasAttribute('data-vigil-single-reel')") as? Bool
+            XCTAssertEqual(initiallyPinned, false)
+            _ = try await webView.evaluateJavaScript(#"""
+              document.getElementById('profile').onclick=event=>{
+                event.preventDefault();const profile=document.createElement('div');profile.id='profile-modal';
+                profile.setAttribute('role','dialog');profile.style='position:fixed;inset:0';profile.innerHTML='<img>';
+                document.body.append(profile);
+              };document.getElementById('profile').click();true;
+              """#)
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let profilePinned = try await webView.evaluateJavaScript("document.documentElement.hasAttribute('data-vigil-single-reel')") as? Bool
+            XCTAssertEqual(profilePinned, false, "An ordinary profile link must not arm shared-media containment")
+            _ = try await webView.evaluateJavaScript("document.getElementById('profile-modal').remove();true;")
+            _ = try await webView.evaluateJavaScript("""
+              document.getElementById('share').onclick=()=>{
+                const viewer=document.createElement('div');viewer.id='viewer';viewer.style='position:fixed;inset:0;overflow-y:auto';
+                viewer.innerHTML='<\(media) id="media" style="display:block;width:390px;height:300px"></\(media)><p style="height:1500px">Caption</p>';
+                document.getElementById('thread').append(viewer);
+              };document.getElementById('share').click();true;
+              """)
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let state = try await webView.evaluateJavaScript(#"""
+              (()=>{
+                const media=document.getElementById('media');
+                const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});media.dispatchEvent(wheel);
+                return {pinned:document.documentElement.hasAttribute('data-vigil-single-reel'),blocked:wheel.defaultPrevented,
+                  visible:getComputedStyle(media).visibility==='visible'};
+              })()
+              """#) as? [String: Bool]
+            for key in ["pinned", "blocked", "visible"] { XCTAssertEqual(state?[key], true, "\(media): \(key)") }
+            _ = try await webView.evaluateJavaScript("document.getElementById('viewer').replaceWith(document.getElementById('viewer').cloneNode(true));true;")
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let remounted = try await webView.evaluateJavaScript("document.documentElement.hasAttribute('data-vigil-single-reel')") as? Bool
+            XCTAssertEqual(remounted, true, "Replacing a Direct portal preserves its item lock")
+            _ = try await webView.evaluateJavaScript("document.getElementById('viewer').hidden=true;true;")
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let released = try await webView.evaluateJavaScript("!document.documentElement.hasAttribute('data-vigil-single-reel')") as? Bool
+            XCTAssertEqual(released, true,
+                           "Hiding the new viewer releases the retained Direct thread")
+            webView.navigationDelegate = nil
+        }
     }
 
     func testInstagramInformationalAccountInput() {
@@ -8242,7 +8383,7 @@ final class VigilSocialTests: XCTestCase {
         let delegate = FixtureNavigationDelegate { loaded.fulfill() }
         webView.navigationDelegate = delegate
         webView.loadHTMLString(#"""
-          <html><body><a id="share" href="/reel/Shared123/">Shared Reel</a><script>
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><a id="share" href="/reel/Shared123/">Shared Reel</a><script>
             document.getElementById('share').onclick=event=>{event.preventDefault();
               document.body.insertAdjacentHTML('beforeend','<div id="modal" role="dialog" style="height:700px;overflow-y:auto"><div><video style="width:390px;height:700px" src="https://www.instagram.com/one.mp4"></video></div><div><video style="width:390px;height:700px" src="https://www.instagram.com/two.mp4"></video></div></div>');};
           </script></body></html>
@@ -8309,7 +8450,7 @@ final class VigilSocialTests: XCTestCase {
             message:getComputedStyle(document.getElementById('message')).visibility})
           """#) as? [String: String]
         XCTAssertEqual(visible?["selected"], "visible", "Poster hydration cannot hide the unchanged reel")
-        XCTAssertEqual(visible?["suggested"], "hidden")
+        XCTAssertEqual(visible?["suggested"], "visible", "Containment must not classify Reel player sources")
         XCTAssertEqual(visible?["message"], "visible", "The underlying thread is outside the viewer's classifications")
         _ = try await webView.evaluateJavaScript(#"""
           document.getElementById('portal').style.display='none';history.pushState({},'', '/direct/t/123/');true;
@@ -8325,7 +8466,7 @@ final class VigilSocialTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         let reopened = try await webView.evaluateJavaScript(#"""
           getComputedStyle(document.getElementById('opened')).visibility==='visible'
-            && getComputedStyle(document.getElementById('suggested')).visibility==='hidden'
+            && getComputedStyle(document.getElementById('suggested')).visibility==='visible'
           """#) as? Bool
         XCTAssertEqual(reopened, true, "Reopening the same share retains single-item containment")
         webView.navigationDelegate = nil

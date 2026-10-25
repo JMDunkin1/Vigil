@@ -323,6 +323,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var textInspections: [SocialService: [TextInspectionKey: TextInspection]] = [:]
     private var mainDocumentIDs: [SocialService: String] = [:]
     private var mainDocumentGenerations: [SocialService: UInt64] = [:]
+    private var instagramSharedViewerScrollLocked = false
     private var servicesWithUsableContent: Set<SocialService> = []
     private var mediaClassificationTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var mediaClassificationDeadlineTasks: [MediaRequestKey: Task<Void, Never>] = [:]
@@ -1865,17 +1866,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if surfaceStates[service] != surface { surfaceStates[service] = surface }
         guard let webView = webViews[service] else { return }
         if service == .instagram {
-            switch surface.route {
-            case "reels":
-                setInstagramReelScrollLocked(true, in: webView)
-            case "modal", "directThread":
-                // A Reel's comments dialog is still inside its fixed viewer.
-                // The Direct adapter keeps reporting its underlying thread
-                // while a shared Reel is pinned there. Preserve the lock until
-                // the Reel guard explicitly reports that viewer closed.
-                break
-            default:
-                setInstagramReelScrollLocked(false, in: webView)
+            // The item guard owns an open Direct viewer even if the underlying
+            // adapter briefly reports feed/unknown while React remounts it.
+            if instagramSharedViewerScrollLocked || surface.route == "reels" {
+                webView.scrollView.isScrollEnabled = false
+            } else if !["modal", "directThread"].contains(surface.route) {
+                webView.scrollView.isScrollEnabled = true
             }
             // WebKit supplies the same interactive back/forward transition as
             // Safari. Route-gating it keeps center-screen carousels, Stories,
@@ -1897,6 +1893,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func setInstagramReelScrollLocked(_ locked: Bool, in webView: WKWebView) {
         guard webViews[.instagram] === webView else { return }
+        instagramSharedViewerScrollLocked = locked
         // CSS touch-action does not reliably stop the WKWebView's native
         // UIScrollView pan recognizer on iOS. Lock that recognizer at the host
         // view while a shared Reel is pinned, and restore it when the viewer
@@ -2232,6 +2229,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         youtubeAllowsLandscape = false
         guard let service = service(for: webView) else { return }
         if service == .youtube { stopYouTubeExternalPlayback(); lastConfirmedServiceAccess = nil }
+        if service == .instagram { instagramSharedViewerScrollLocked = false }
         mainDocumentGenerations[service, default: 0] &+= 1
         let generation = mainDocumentGenerations[service, default: 0]
         cancelDocumentWork(for: service)
