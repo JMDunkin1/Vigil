@@ -37,6 +37,10 @@ const legacy = sanitizeDefaultFocusProfile({ ...state.profiles[0], blockedSites:
 assert.ok(legacy.blockedSites.includes("retained.example"));
 assert.ok(PUBLIC_SEARXNG_BLOCKED_SITES.length >= 80, "retain the complete audited public registry");
 assert.equal(new Set(BROWSER_BYPASS_BLOCKED_SITES).size, BROWSER_BYPASS_BLOCKED_SITES.length);
+for (const domain of ["presearch.com", "presearch.org", "swisscows.com", "freespoke.com",
+  "oceanhero.today", "gibiru.com", "marginalia-search.com", "old-search.marginalia.nu"]) {
+  assert.ok(BROWSER_BYPASS_BLOCKED_SITES.some(site => site === domain), `niche search regression: ${domain}`);
+}
 for (const domain of BROWSER_BYPASS_BLOCKED_SITES) {
   assert.ok(legacy.blockedSites.includes(domain), `existing focus profiles migrate: ${domain}`);
   assert.ok(hosts.includes(`0.0.0.0 ${domain}\n`), `machine network deny: ${domain}`);
@@ -85,7 +89,8 @@ for (const count of [0, 30, 500]) {
   if (count === 500) assert.ok(filters.length > 2, "large policy must exercise additive overflow payloads");
 }
 for (const domain of ["google.com", "bing.com", "duckduckgo.com", "brave.com", "mail.yahoo.com", "suma-ev.de", "example.org",
-  "startpage.com.example.org", "notstartpage.com", "search.rhscz.eu.example.org", "rhscz.eu"]) {
+  "startpage.com.example.org", "notstartpage.com", "search.rhscz.eu.example.org", "rhscz.eu",
+  "notpresearch.com", "presearch.com.example.org", "marginalia.nu", "mail.yahoo.com"]) {
   assert.equal(shouldBlockSite(state.profiles.find(profile => profile.id === "normal")!, domain), false, `exact service boundary: ${domain}`);
 }
 console.log(`Browser bypass coverage passed: ${BROWSER_BYPASS_BLOCKED_SITES.length} services, top-level/embedded/offline guards, both schemes, migration and preserved supervised policy.`);

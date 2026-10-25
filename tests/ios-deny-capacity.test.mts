@@ -28,7 +28,8 @@ for (const profileId of [NORMAL_PROFILE_ID, SOFT_BLOCK_PROFILE_ID, BRICK_MODE_PR
   const denied = targets.deniedUrls;
   const combined = [...denied, ...targets.supplementalDeniedUrls];
   assert.ok(denied.length <= 500);
-  assert.ok(targets.supplementalDeniedUrls.length <= 500);
+  // Supplemental targets are an unbounded inventory, chunked into <=500-entry
+  // BuiltIn payloads below. Never trim this inventory to fit one payload.
   for (const host of [...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES]) {
     assert.ok(combined.includes(`https://${host}/`), `${profileId}: every curated priority domain must remain blocked`);
   }
@@ -97,8 +98,17 @@ try {
     const targets = iosPolicyTargets(state, now);
     const denied = targets.deniedUrls;
     assert.ok(denied.length <= 500);
-    assert.ok(targets.supplementalDeniedUrls.length <= 500);
     const combined = [...denied, ...targets.supplementalDeniedUrls];
+    const serialized = recordValue(parsePlist(buildIosConfigurationProfile(state, now)));
+    const filters = (serialized.PayloadContent as unknown[]).map(value => recordValue(value))
+      .filter(payload => payload.PayloadType === "com.apple.webcontent-filter" && payload.FilterType === "BuiltIn");
+    const delivered = filters.flatMap(filter => {
+      assert.ok(Array.isArray(filter.DenyListURLs) && filter.DenyListURLs.length <= 500);
+      assert.equal(filter.AutoFilterEnabled, true);
+      return filter.DenyListURLs as string[];
+    });
+    assert.deepEqual([...new Set(delivered)].sort(), [...new Set(combined)].sort(),
+      `${profileId}: bulk filtering must deliver the complete overflow inventory`);
     for (const host of [...DEFAULT_FILTER_BYPASS_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES]) {
       assert.ok(combined.includes(`https://${host}/`), `${profileId}: bulk overlay must preserve all curated priority domains`);
     }

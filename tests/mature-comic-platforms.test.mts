@@ -19,7 +19,7 @@ state.deviceControls.ios.enabled = true;
 state.settings.adultBlocklistEnabled = false;
 assert.equal(new Set(DEFAULT_MATURE_COMIC_BLOCKED_SITES).size, DEFAULT_MATURE_COMIC_BLOCKED_SITES.length,
   "reviewed comic domains must not waste phone capacity on duplicate entries");
-for (const requestedDomain of ["comicland.org", "manhwaread.com", "manhwaread.org"]) {
+for (const requestedDomain of ["comicland.org", "manhwaread.com", "manhwaread.org", "toon-hub.com"]) {
   assert.ok(DEFAULT_MATURE_COMIC_BLOCKED_SITES.some(domain => domain === requestedDomain), requestedDomain);
 }
 for (const profile of state.profiles) {
@@ -51,7 +51,8 @@ for (const [profileId, sanitize] of [
 const normal = state.profiles.find(profile => profile.id === "normal")!;
 assert.equal(shouldBlockSite(normal, "notwebcomicsapp.com"), false);
 assert.equal(shouldBlockSite(normal, "webcomicsapp.com.example.org"), false);
-for (const unrelatedHost of ["comicland.org.example.org", "notcomicland.org", "manhwaread.org.example.org", "notmanhwaread.org"]) {
+for (const unrelatedHost of ["comicland.org.example.org", "notcomicland.org", "manhwaread.org.example.org", "notmanhwaread.org",
+  "nottoon-hub.com", "toon-hub.com.example.org"]) {
   assert.equal(shouldBlockSite(normal, unrelatedHost), false, unrelatedHost);
 }
 const targets = iosPolicyTargets(state);

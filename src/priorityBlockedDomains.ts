@@ -303,6 +303,8 @@ export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
   "mangahere.cc",
   "mangahere.com",
   // Licensed publishers with verified adult catalogs or 18+ editions.
+  // User-requested Toon Hub block; Spanish catalog verified October 25, 2026.
+  "toon-hub.com",
   "lalatoon.com",
   "ridibooks.com",
   "mrblue.com",

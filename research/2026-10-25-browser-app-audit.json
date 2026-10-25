@@ -1,0 +1,500 @@
+{
+  "date": "2026-10-25",
+  "reason": "The user could use the native Startpage browser to reach Reddit without Vigil Safari guards. A search-domain ban does not prohibit an app from navigating directly to another domain.",
+  "decision": "Add verified native search/browser bundle IDs to the permanent unguarded browser deny list. Retain prior IDs and preserve Safari plus Vigil companions. Add reviewed niche search services to all shared domain guards. No claim of exhaustive App Store coverage.",
+  "toonHub": {
+    "domain": "toon-hub.com",
+    "sourceUrl": "https://toon-hub.com/es/",
+    "supportUrl": "https://toon-hub.com/es/contact-us/",
+    "identification": "Likely match for user description: exact Toon Hub name and Spanish catalog/support. No matching local blocked event found. Block whole host including subdomains and all language paths per user request."
+  },
+  "apps": [
+    {
+      "trackName": "Orion Browser by Kagi",
+      "bundleId": "com.kagi.kagiiOS",
+      "trackId": 1484498200,
+      "sellerName": "Kagi Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/orion-browser-by-kagi/id1484498200?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1484498200&country=us"
+    },
+    {
+      "trackName": "Startpage - Private Browser",
+      "bundleId": "com.startpage.app",
+      "trackId": 6478921430,
+      "sellerName": "Startpage BV",
+      "trackViewUrl": "https://apps.apple.com/us/app/startpage-private-browser/id6478921430?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=6478921430&country=us"
+    },
+    {
+      "trackName": "Ecosia: Search to plant trees",
+      "bundleId": "com.ecosia.ecosiaapp",
+      "trackId": 670881887,
+      "sellerName": "Ecosia GmbH",
+      "trackViewUrl": "https://apps.apple.com/us/app/ecosia-search-to-plant-trees/id670881887?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=670881887&country=us"
+    },
+    {
+      "trackName": "Qwant Private Search",
+      "bundleId": "com.qwant.mobile",
+      "trackId": 924470452,
+      "sellerName": "Qwant",
+      "trackViewUrl": "https://apps.apple.com/us/app/qwant-private-search/id924470452?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=924470452&country=us"
+    },
+    {
+      "trackName": "Swisscows Private Search",
+      "bundleId": "com.swisscows.search",
+      "trackId": 1581108092,
+      "sellerName": "Swisscows AG",
+      "trackViewUrl": "https://apps.apple.com/us/app/swisscows-private-search/id1581108092?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1581108092&country=us"
+    },
+    {
+      "trackName": "Mojeek",
+      "bundleId": "com.mojeek.mojeekapp",
+      "trackId": 1505807785,
+      "sellerName": "Mojeek Limited",
+      "trackViewUrl": "https://apps.apple.com/us/app/mojeek/id1505807785?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1505807785&country=us"
+    },
+    {
+      "trackName": "Freespoke - Perspective Search",
+      "bundleId": "com.freespoke.app",
+      "trackId": 1617332602,
+      "sellerName": "Freedom Fries, LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/freespoke-perspective-search/id1617332602?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1617332602&country=us"
+    },
+    {
+      "trackName": "Yandex Browser with Alice AI",
+      "bundleId": "ru.yandex.mobile.search",
+      "trackId": 483693909,
+      "sellerName": "DIRECT CURSUS COMPUTER SYSTEMS TRADING LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/yandex-browser-with-alice-ai/id483693909?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=483693909&country=us"
+    },
+    {
+      "trackName": "Yandex with Alice AI",
+      "bundleId": "ru.yandex.mobile",
+      "trackId": 1050704155,
+      "sellerName": "DIRECT CURSUS COMPUTER SYSTEMS TRADING LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/yandex-with-alice-ai/id1050704155?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1050704155&country=us"
+    },
+    {
+      "trackName": "\u042f\u043d\u0434\u0435\u043a\u0441 \u0411\u0440\u0430\u0443\u0437\u0435\u0440 \u0434\u043b\u044f \u041e\u0440\u0433\u0430\u043d\u0438\u0437\u0430\u0446\u0438\u0439",
+      "bundleId": "ru.yandex.mobile.browser.corporate",
+      "trackId": 6742537534,
+      "sellerName": "DIRECT CURSUS COMPUTER SYSTEMS TRADING LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/%D1%8F%D0%BD%D0%B4%D0%B5%D0%BA%D1%81-%D0%B1%D1%80%D0%B0%D1%83%D0%B7%D0%B5%D1%80-%D0%B4%D0%BB%D1%8F-%D0%BE%D1%80%D0%B3%D0%B0%D0%BD%D0%B8%D0%B7%D0%B0%D1%86%D0%B8%D0%B9/id6742537534?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=6742537534&country=us"
+    },
+    {
+      "trackName": "Aloha Browser \u2013 Private VPN",
+      "bundleId": "com.alohabrowser.alohabrowser",
+      "trackId": 1105317682,
+      "sellerName": "Aloha Mobile Ltd.",
+      "trackViewUrl": "https://apps.apple.com/us/app/aloha-browser-private-vpn/id1105317682?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1105317682&country=us"
+    },
+    {
+      "trackName": "Puffin Cloud Browser",
+      "bundleId": "com.cloudmosa.PuffinFree",
+      "trackId": 472937654,
+      "sellerName": "CloudMosa, Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/puffin-cloud-browser/id472937654?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=472937654&country=us"
+    },
+    {
+      "trackName": "Puffin Browser Pro",
+      "bundleId": "com.cloudmosa.puffin",
+      "trackId": 406239138,
+      "sellerName": "CloudMosa, Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/puffin-browser-pro/id406239138?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=406239138&country=us"
+    },
+    {
+      "trackName": "SnowHaze",
+      "bundleId": "ch.illotros.ios.snowhaze",
+      "trackId": 1121026941,
+      "sellerName": "Illotros GmbH",
+      "trackViewUrl": "https://apps.apple.com/us/app/snowhaze/id1121026941?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1121026941&country=us"
+    },
+    {
+      "trackName": "iCab Mobile (Web Browser)",
+      "bundleId": "de.icab.iCabMobile",
+      "trackId": 308111628,
+      "sellerName": "Alexander Clauss",
+      "trackViewUrl": "https://apps.apple.com/us/app/icab-mobile-web-browser/id308111628?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=308111628&country=us"
+    },
+    {
+      "trackName": "Dolphin Mobile Browser",
+      "bundleId": "RAPS.appstore.com.dolphin.browser.iphone",
+      "trackId": 634693702,
+      "sellerName": "MOBOTAP INC.",
+      "trackViewUrl": "https://apps.apple.com/us/app/dolphin-mobile-browser/id634693702?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=634693702&country=us"
+    },
+    {
+      "trackName": "Dolphin Browser",
+      "bundleId": "RAPS.appstore.com.dolphin.browser.iphone.ios12",
+      "trackId": 1440710469,
+      "sellerName": "MOBOTAP INC.",
+      "trackViewUrl": "https://apps.apple.com/us/app/dolphin-browser/id1440710469?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1440710469&country=us"
+    },
+    {
+      "trackName": "Wave Browser: Clean the Ocean",
+      "bundleId": "com.wavesorsoftware.WaveBrowser",
+      "trackId": 6478534832,
+      "sellerName": "Eightpoint Technologies LTD SEZC",
+      "trackViewUrl": "https://apps.apple.com/us/app/wave-browser-clean-the-ocean/id6478534832?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=6478534832&country=us"
+    },
+    {
+      "trackName": "Whale - Naver Whale Browser",
+      "bundleId": "com.naver.whalebrowser",
+      "trackId": 1374073304,
+      "sellerName": "NAVER Corp.",
+      "trackViewUrl": "https://apps.apple.com/us/app/whale-naver-whale-browser/id1374073304?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1374073304&country=us"
+    },
+    {
+      "trackName": "\ub124\uc774\ubc84 - NAVER",
+      "bundleId": "com.nhncorp.NaverSearch",
+      "trackId": 393499958,
+      "sellerName": "NAVER Corp.",
+      "trackViewUrl": "https://apps.apple.com/us/app/%EB%84%A4%EC%9D%B4%EB%B2%84-naver/id393499958?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=393499958&country=us"
+    },
+    {
+      "trackName": "\ub2e4\uc74c - Daum",
+      "bundleId": "net.daum.mobileApps",
+      "trackId": 365494029,
+      "sellerName": "Daum Corp.",
+      "trackViewUrl": "https://apps.apple.com/us/app/%EB%8B%A4%EC%9D%8C-daum/id365494029?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=365494029&country=us"
+    },
+    {
+      "trackName": "Yahoo Search: Your Daily Hub",
+      "bundleId": "com.yahoo.search2",
+      "trackId": 361071600,
+      "sellerName": "Yahoo Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/yahoo-search-your-daily-hub/id361071600?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=361071600&country=us"
+    },
+    {
+      "trackName": "Quiche Browser",
+      "bundleId": "org.quiche.Browser",
+      "trackId": 1668363952,
+      "sellerName": "Gregory de Jonckheere",
+      "trackViewUrl": "https://apps.apple.com/us/app/quiche-browser/id1668363952?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1668363952&country=us"
+    },
+    {
+      "trackName": "Vivaldi Powerful Web Browser",
+      "bundleId": "com.vivaldi.browser",
+      "trackId": 1633234600,
+      "sellerName": "Vivaldi Technologies AS",
+      "trackViewUrl": "https://apps.apple.com/us/app/vivaldi-powerful-web-browser/id1633234600?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1633234600&country=us"
+    },
+    {
+      "trackName": "Onion Browser",
+      "bundleId": "com.miketigas.OnionBrowser",
+      "trackId": 519296448,
+      "sellerName": "Mike Tigas",
+      "trackViewUrl": "https://apps.apple.com/us/app/onion-browser/id519296448?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=519296448&country=us"
+    },
+    {
+      "trackName": "Opera GX",
+      "bundleId": "com.opera.gx",
+      "trackId": 1559740799,
+      "sellerName": "Opera Norway AS",
+      "trackViewUrl": "https://apps.apple.com/us/app/opera-gx/id1559740799?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1559740799&country=us"
+    },
+    {
+      "trackName": "UC Browser",
+      "bundleId": "com.uc.iphone.browser.international",
+      "trackId": 1048518592,
+      "sellerName": "UCWEB SINGAPORE PTE. LTD.",
+      "trackViewUrl": "https://apps.apple.com/us/app/uc-browser/id1048518592?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1048518592&country=us"
+    },
+    {
+      "trackName": "Maxthon Browser",
+      "bundleId": "com.mx.MxBrowser-iPhone",
+      "trackId": 541052011,
+      "sellerName": "Maxthon Technology Limited",
+      "trackViewUrl": "https://apps.apple.com/us/app/maxthon-browser/id541052011?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=541052011&country=us"
+    },
+    {
+      "trackName": "Fend: Private Browser",
+      "bundleId": "com.fend.ios.browser",
+      "trackId": 1590227509,
+      "sellerName": "Pie Technologies Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/fend-private-browser/id1590227509?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1590227509&country=us"
+    },
+    {
+      "trackName": "Phoenix Browser + Proxy VPN",
+      "bundleId": "timon.proxy.browser",
+      "trackId": 1495750173,
+      "sellerName": "TIMON SOFTWARE SOLUTIONS COMPANY LIMITED",
+      "trackViewUrl": "https://apps.apple.com/us/app/phoenix-browser-proxy-vpn/id1495750173?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1495750173&country=us"
+    },
+    {
+      "trackName": "Private Browsing Web Browser",
+      "bundleId": "com.savysoda.PrivateBrowser",
+      "trackId": 368483462,
+      "sellerName": "Savy Soda HK Limited",
+      "trackViewUrl": "https://apps.apple.com/us/app/private-browsing-web-browser/id368483462?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=368483462&country=us"
+    },
+    {
+      "trackName": "Smart Search & Web Browser",
+      "bundleId": "ru.reactivephone.MobileSearch",
+      "trackId": 555717978,
+      "sellerName": "Reactive Phone Ltd.",
+      "trackViewUrl": "https://apps.apple.com/us/app/smart-search-web-browser/id555717978?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=555717978&country=us"
+    },
+    {
+      "trackName": "TOR Browser: OrNET Onion + VPN",
+      "bundleId": "ch.b-eng.tor",
+      "trackId": 1177964608,
+      "sellerName": "Stronger Apps",
+      "trackViewUrl": "https://apps.apple.com/us/app/tor-browser-ornet-onion-vpn/id1177964608?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1177964608&country=us"
+    },
+    {
+      "trackName": "Darkweb Browser for TOR sites",
+      "bundleId": "com.techlogix.private.browser",
+      "trackId": 1317691373,
+      "sellerName": "PINATA TECHNOLOGIES",
+      "trackViewUrl": "https://apps.apple.com/us/app/darkweb-browser-for-tor-sites/id1317691373?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1317691373&country=us"
+    },
+    {
+      "trackName": "TOR Browser: VPN+Onion Browser",
+      "bundleId": "com.roundcherryapps.vpnTor",
+      "trackId": 1450809061,
+      "sellerName": "Brick Dust Technologies LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/tor-browser-vpn-onion-browser/id1450809061?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1450809061&country=us"
+    },
+    {
+      "trackName": "TOR Browser: Onion VPN & Orbot",
+      "bundleId": "com.youssef.developer.Full-Browser",
+      "trackId": 1144161643,
+      "sellerName": "STELLAR APPS LIMITED",
+      "trackViewUrl": "https://apps.apple.com/us/app/tor-browser-onion-vpn-orbot/id1144161643?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1144161643&country=us"
+    },
+    {
+      "trackName": "Private Browser ++",
+      "bundleId": "com.touchberry.tbprivatebrowser",
+      "trackId": 1471753460,
+      "sellerName": "Touchberry Inc",
+      "trackViewUrl": "https://apps.apple.com/us/app/private-browser/id1471753460?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1471753460&country=us"
+    },
+    {
+      "trackName": "Private Browser Deluxe",
+      "bundleId": "Fairy-Tools.Downloader-Deluxe",
+      "trackId": 1008508212,
+      "sellerName": "Maple Media Apps, LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/private-browser-deluxe/id1008508212?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=1008508212&country=us"
+    },
+    {
+      "trackName": "Google",
+      "bundleId": "com.google.GoogleMobile",
+      "trackId": 284815942,
+      "sellerName": "Google LLC",
+      "trackViewUrl": "https://apps.apple.com/us/app/google/id284815942?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=284815942&country=us"
+    },
+    {
+      "trackName": "Microsoft Bing Search",
+      "bundleId": "com.microsoft.bing",
+      "trackId": 345323231,
+      "sellerName": "Microsoft Corporation",
+      "trackViewUrl": "https://apps.apple.com/us/app/microsoft-bing-search/id345323231?uo=4",
+      "sourceUrl": "https://itunes.apple.com/lookup?id=345323231&country=us"
+    },
+    {
+      "trackName": "Small Web",
+      "bundleId": "com.kagi.smallweb",
+      "trackId": 6756679001,
+      "sellerName": "Kagi Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/small-web/id6756679001?uo=4",
+      "sourceUrl": "https://itunes.apple.com/search?term=Kagi+Search&entity=software&country=us&limit=5"
+    },
+    {
+      "trackName": "\u767e\u5ea6-AI\u667a\u80fd\u641c\u7d22",
+      "bundleId": "com.baidu.BaiduMobile",
+      "trackId": 382201985,
+      "sellerName": "Beijing Baidu Netcom Science & Technology Co.,Ltd",
+      "trackViewUrl": "https://apps.apple.com/us/app/%E7%99%BE%E5%BA%A6-ai%E6%99%BA%E8%83%BD%E6%90%9C%E7%B4%A2/id382201985?uo=4",
+      "sourceUrl": "https://itunes.apple.com/search?term=Baidu&entity=software&country=us&limit=5"
+    },
+    {
+      "trackName": "\u767e\u5ea6\u6781\u901f\u7248",
+      "bundleId": "com.baidu.BaiduMobileInfo",
+      "trackId": 1281873118,
+      "sellerName": "Beijing Baidu Netcom Science & Technology Co.,Ltd",
+      "trackViewUrl": "https://apps.apple.com/us/app/%E7%99%BE%E5%BA%A6%E6%9E%81%E9%80%9F%E7%89%88/id1281873118?uo=4",
+      "sourceUrl": "https://itunes.apple.com/search?term=Baidu&entity=software&country=us&limit=5"
+    },
+    {
+      "trackName": "360\u6d4f\u89c8\u5668-\u6781\u901f\u7248-\u5b89\u5168\u4e0a\u7f51-\u6587\u4ef6\u626b\u63cfPDF\u5de5\u5177",
+      "bundleId": "net.qihoo.browser",
+      "trackId": 892311054,
+      "sellerName": "Beijing Qihoo Technology Co Ltd",
+      "trackViewUrl": "https://apps.apple.com/us/app/360%E6%B5%8F%E8%A7%88%E5%99%A8-%E6%9E%81%E9%80%9F%E7%89%88-%E5%AE%89%E5%85%A8%E4%B8%8A%E7%BD%91-%E6%96%87%E4%BB%B6%E6%89%AB%E6%8F%8Fpdf%E5%B7%A5%E5%85%B7/id892311054?uo=4",
+      "sourceUrl": "https://itunes.apple.com/search?term=360+browser&entity=software&country=us&limit=5"
+    },
+    {
+      "trackName": "Search All - Web Browser",
+      "bundleId": "com.caibo-inc.onesearchinternational",
+      "trackId": 1059929800,
+      "sellerName": "HangZhou Caibo Network Technology Co., Ltd.",
+      "trackViewUrl": "https://apps.apple.com/us/app/search-all-web-browser/id1059929800?uo=4",
+      "sourceUrl": "https://itunes.apple.com/search?term=Search+engine+browser&entity=software&country=us&limit=5"
+    },
+    {
+      "trackName": "Arc Search \u2014 Find it, Faster",
+      "bundleId": "company.thebrowser.ArcMobile2",
+      "trackId": 6472513080,
+      "sellerName": "The Browser Company of New York Inc.",
+      "trackViewUrl": "https://apps.apple.com/us/app/arc-search-find-it-faster/id6472513080?uo=4",
+      "sourceUrl": "https://itunes.apple.com/search?term=Search+engine+browser&entity=software&country=us&limit=5"
+    },
+    {
+      "trackName": "Presearch Privacy Browser",
+      "bundleId": "com.Presearch.BrowseriOS",
+      "trackId": 1565192485,
+      "sellerName": "Presearch.org Global Limited",
+      "trackViewUrl": "https://apps.apple.com/us/app/presearch-privacy-browser/id1565192485",
+      "sourceUrl": "https://github.com/PresearchOfficial/presearch-browser-ios/blob/87b27f33952d25c62a14b1845b440baebebb4d9f/Client.xcodeproj/project.pbxproj",
+      "identityEvidence": "Official developer Xcode project sets PRODUCT_BUNDLE_IDENTIFIER = com.Presearch.BrowseriOS for the Client application configurations. Apple lookup currently has no record in the checked regions; retain this verified source identity for existing installations."
+    }
+  ],
+  "searchDomains": [
+    {
+      "domains": [
+        "presearch.com",
+        "presearch.org"
+      ],
+      "sourceUrl": "https://presearch.com/search?q=%2F"
+    },
+    {
+      "domains": [
+        "swisscows.com"
+      ],
+      "sourceUrl": "https://swisscows.com/en/default-search"
+    },
+    {
+      "domains": [
+        "freespoke.com"
+      ],
+      "sourceUrl": "https://docs.freespoke.com/get-started/"
+    },
+    {
+      "domains": [
+        "oceanhero.today"
+      ],
+      "sourceUrl": "https://oceanhero.today/"
+    },
+    {
+      "domains": [
+        "ekoru.org"
+      ],
+      "sourceUrl": "https://ekoru.org/faq/"
+    },
+    {
+      "domains": [
+        "gibiru.com"
+      ],
+      "sourceUrl": "https://gibiru.com/"
+    },
+    {
+      "domains": [
+        "goodsearch.com"
+      ],
+      "sourceUrl": "https://www.goodsearch.com/"
+    },
+    {
+      "domains": [
+        "wiby.me"
+      ],
+      "sourceUrl": "https://wiby.me/about/"
+    },
+    {
+      "domains": [
+        "marginalia-search.com",
+        "search.marginalia.nu",
+        "old-search.marginalia.nu"
+      ],
+      "sourceUrl": "https://search.marginalia.nu/",
+      "finding": "Redirects to marginalia-search.com and links old-search.marginalia.nu."
+    }
+  ],
+  "boundaries": [
+    "Swisscows and Freespoke advertise their own content filtering. Denial means there is no verified Vigil enforcement for these search services/apps; it does not assert they lack filtering.",
+    "Google/Bing/DuckDuckGo sites keep existing strict enforcement. Their native apps cannot run Vigil Safari guards and are denied.",
+    "Vivaldi and Onion Browser have current Apple IDs different from the prior list. Both current and legacy IDs are retained.",
+    "Presearch App Store ID 1565192485 is indexed but Apple lookup returned no result in US/GB/CA/DE/AU. Its bundle ID is verified from the official developer Xcode project; store availability is not assumed.",
+    "The inventory is static and offline; no live discovery dependency can remove a restriction.",
+    "Install on phone only through the combined verified app-and-policy transaction, with USB for changed non-removable policy."
+  ],
+  "refresh": "Review current Apple catalog records and primary vendor sources. Add verified browser/search identities; never infer bundle IDs from names or deny unrelated search results. Retain previous entries. Regenerate guard/content resources and run browser guards, bypass policy, mature comics, iOS deny capacity and phone transaction tests.",
+  "deployment": {
+    "phoneUpdated": false,
+    "phoneReason": "User will connect phone later. Changed non-removable supervised policy requires USB and exact live-policy verification with companion launch checks.",
+    "sourceCheckoutSynced": true,
+    "sourceCheckout": "/Users/jamesdunkin/Library/Application Support/Vigil Source Checkout",
+    "sourceSync": "Seven source/test files copied only after destination bytes matched workspace HEAD; audit added. Other existing edits retained.",
+    "macCommand": "npm run agent:update -- --allow-local --timeout-seconds 1200",
+    "enforcement": "No Vigil processes terminated and no watchdog/relaunch protection disabled.",
+    "macUpdated": false,
+    "macBlocker": "Protected updater rejected an unfinished earlier app replacement: /Applications/Vigil.app.vigil-next and /Applications/Vigil.app.vigil-transaction.json. No manual replacement or removal attempted. New Mac source rules are not yet installed.",
+    "phoneNextCommand": "npm run agent:update:social"
+  },
+  "validation": {
+    "build": "passed",
+    "lint": "passed: 496 source files",
+    "targetedSuites": {
+      "passed": 14,
+      "failed": 0,
+      "names": [
+        "ios-browser-guards",
+        "browser-bypass-policy",
+        "mature-comic-platforms",
+        "ios-deny-capacity",
+        "ios-mdm",
+        "ios-phone-suite",
+        "ios-safari-search-guard",
+        "browser-extension-parity",
+        "safari-deny-preservation",
+        "network-safe-search",
+        "policy-enforcement",
+        "explicit-content-policy",
+        "ios-social-build",
+        "manageengine-profile-export"
+      ]
+    },
+    "scope": "Serialized supervised policy, saved-setting migration, idle and focus deny/allow modes, all domain/subdomain guards, exact host boundaries, <=500-entry payload chunks, preserved curated denies and adult reserve. Phone execution is deferred until connection.",
+    "newAppIdentities": 47,
+    "newSearchDomains": 12,
+    "totalBrowserBypassServiceHosts": 139,
+    "contentPolicy": "Bundled generated iOS explicit-content policy matches source; unchanged by this domain-only change."
+  }
+}

@@ -1,7 +1,8 @@
 /**
  * Browser-in-browser and search services without verified Safari-equivalent
  * enforcement. Domain policy only: these names must never become text keywords.
- * Evidence and refresh procedure: research/2026-10-23-browser-bypass-audit.json.
+ * Evidence and refresh procedure: research/2026-10-23-browser-bypass-audit.json
+ * and research/2026-10-25-browser-app-audit.json.
  * Keep Google/Bing/DuckDuckGo on the existing strict network/extension path.
  */
 export const UNENFORCED_SEARCH_BLOCKED_SITES = [
@@ -35,6 +36,18 @@ export const UNENFORCED_SEARCH_BLOCKED_SITES = [
   "you.com",
   "search.naver.com",
   "search.daum.net",
+  "presearch.com",
+  "presearch.org",
+  "swisscows.com",
+  "freespoke.com",
+  "oceanhero.today",
+  "ekoru.org",
+  "gibiru.com",
+  "goodsearch.com",
+  "wiby.me",
+  "marginalia-search.com",
+  "search.marginalia.nu",
+  "old-search.marginalia.nu",
   "searx.space"
 ] as const;
 
