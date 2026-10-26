@@ -54,3 +54,21 @@ APIs. No private WebKit classes or selectors are used.
 Physical-device deployment and live validation are recorded separately after
 the verified app-and-policy transaction completes. Simulator success alone
 does not establish that a live Instagram swipe is blocked.
+
+## Physical-device deployment
+
+`npm run agent:update:social` completed on the paired, wired iPhone. Installed
+combined companion: **0.3.197 (200)**; phone release: **0.3.217 (220)**. The
+transaction verified the current implementation, signing, and launches for all
+eight services. Exact live policy fingerprint:
+`4e6da9b09d55539e804a6a68094db7404cf5fde971f5bee9a0a34ce99ad1c1a0`.
+The existing non-removable policy already matched and was left installed.
+
+The paired developer diagnostic launch exposed the existing opt-in inspector.
+Read-only inspection confirmed the new guard and its diagnostic state on the
+physical phone's Instagram page. Home correctly reported no pinned item. A
+human swipe of an opened share is still required to verify live containment;
+deployment and script presence are not that verification.
+
+The refreshed runtime social-build checks, 48 native route probes, and two
+story-position regressions also passed.
