@@ -359,6 +359,84 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramNativePanGuardOwnsNestedScrollDecisionsAndPreservesControls() {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
+        let webView = store.webView(for: .instagram)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        guard let boundary = webView.gestureRecognizers?.compactMap({ $0 as? InstagramSharedItemPanGuard }).first else {
+            return XCTFail("Every Instagram WebView needs a native pan boundary")
+        }
+        XCTAssertFalse(boundary.isEnabled)
+        store.setInstagramReelScrollLocked(true, in: webView)
+        let nested = UIScrollView(frame: webView.bounds)
+        webView.scrollView.addSubview(nested)
+        XCTAssertTrue(boundary.isEnabled)
+        XCTAssertTrue(boundary.gestureRecognizer(boundary, shouldBeRequiredToFailBy: nested.panGestureRecognizer))
+        XCTAssertTrue(boundary.canPrevent(nested.panGestureRecognizer))
+        XCTAssertFalse(boundary.canBePrevented(by: nested.panGestureRecognizer))
+        XCTAssertFalse(boundary.canPrevent(UITapGestureRecognizer()))
+        XCTAssertFalse(boundary.canPrevent(UIPinchGestureRecognizer()))
+        XCTAssertFalse(boundary.delaysTouchesBegan)
+        XCTAssertFalse(boundary.delaysTouchesEnded)
+        XCTAssertEqual(boundary.maximumNumberOfTouches, 1)
+        boundary.scrollingRegions = [CGRect(x: 0, y: 0.6, width: 1, height: 0.4)]
+        boundary.carouselRegions = [CGRect(x: 0, y: 0.1, width: 1, height: 0.4)]
+        XCTAssertTrue(boundary.blocksPan(from: CGPoint(x: 100, y: 200), translation: CGPoint(x: 0, y: -100)))
+        XCTAssertFalse(boundary.blocksPan(from: CGPoint(x: 100, y: 200), translation: CGPoint(x: -100, y: 0)))
+        XCTAssertFalse(boundary.blocksPan(from: CGPoint(x: 100, y: 700), translation: CGPoint(x: 0, y: -100)))
+        XCTAssertTrue(boundary.blocksPan(from: CGPoint(x: 100, y: 470), translation: CGPoint(x: -100, y: 0)))
+        store.setInstagramReelScrollLocked(false, in: webView)
+        XCTAssertFalse(boundary.isEnabled)
+        XCTAssertTrue(boundary.scrollingRegions.isEmpty)
+        XCTAssertTrue(boundary.carouselRegions.isEmpty)
+    }
+
+    func testInstagramNativeGestureRegionsRejectMalformedGeometry() {
+        XCTAssertEqual(SocialWebViewStore.instagramGestureRegions([[0.0, 0.5, 1.0, 0.5]]), [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)])
+        XCTAssertEqual(SocialWebViewStore.instagramGestureRegions([[-0.5, 0.0, 1.0, 1.0]]), [CGRect(x: 0, y: 0, width: 0.5, height: 1)])
+        XCTAssertTrue(SocialWebViewStore.instagramGestureRegions([[0.0, Double.nan, 1.0, 1.0]]).isEmpty)
+        XCTAssertTrue(SocialWebViewStore.instagramGestureRegions([[0.0, 0.0, -1.0, 1.0]]).isEmpty)
+        XCTAssertTrue(SocialWebViewStore.instagramGestureRegions([[0.0, 0.0, 1.0]]).isEmpty)
+    }
+
+    @MainActor
+    func testInstagramNativeGestureStateReplaysAfterDocumentBinding() async throws {
+        let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
+        controller.add(bridge, name: "vigil")
+        controller.addUserScript(WKUserScript(source: "window.__vigilDocumentID='native-gesture-fixture';" + DOMAdapters.instagramSingleReelGuard,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Native gesture bridge")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body>
+          <video style="width:390px;height:700px"></video></body></html>
+          """#, baseURL: URL(string: "https://www.instagram.com/reel/Shared123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let initialCount = bridge.messages.filter { $0["type"] as? String == "reelScrollLock" }.count
+        _ = try await webView.evaluateJavaScript("window.__vigilInstagramSharedItem.synchronizeNativeGestureGuard();window.__vigilInstagramSharedItem.synchronizeNativeGestureGuard();true;")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let replayed = bridge.messages.filter { $0["type"] as? String == "reelScrollLock" }
+        XCTAssertEqual(replayed.count, initialCount + 2, "The host can recover an early lock message rejected before document binding")
+        XCTAssertEqual(replayed.last?["locked"] as? Bool, true)
+        XCTAssertEqual(replayed.last?["documentID"] as? String, "native-gesture-fixture")
+        _ = try await webView.evaluateJavaScript(#"""
+          document.body.insertAdjacentHTML('beforeend','<section data-vigil-instagram-comments-sheet="true" style="position:fixed;left:0;top:500px;width:390px;height:300px;overflow:auto"><div style="height:1500px">Comments</div></section>');true;
+          """#)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let message = bridge.messages.last { $0["type"] as? String == "reelScrollLock" }
+        XCTAssertEqual(message?["locked"] as? Bool, true)
+        XCTAssertEqual(SocialWebViewStore.instagramGestureRegions(message?["scrollingRegions"]).count, 1,
+                       "Only the comments rectangle yields native panning; the underlying Reel stays locked")
+        webView.navigationDelegate = nil
+        controller.removeScriptMessageHandler(forName: "vigil")
+    }
+
+    @MainActor
     func testInstagramSharedViewerContainsCaptionPullsWithoutChangingPlayerLayout() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
@@ -966,7 +1044,7 @@ final class VigilSocialTests: XCTestCase {
             webView.loadHTMLString(#"""
               <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
               body{margin:0}#thread{position:fixed;inset:0;overflow-y:auto}img{width:390px;height:300px}
-              </style></head><body><main id="thread" role="dialog"><a id="profile" href="/friend/">Friend</a><button id="share"><img></button>
+              </style></head><body><main id="thread" role="dialog"><input placeholder="Search"><a id="profile" href="/friend/">Friend</a><div id="share"><img></div>
               <p style="height:1500px">Messages</p></main></body></html>
               """#, baseURL: URL(string: "https://www.instagram.com/direct/t/123/")!)
             await fulfillment(of: [loaded], timeout: 5)
@@ -985,7 +1063,7 @@ final class VigilSocialTests: XCTestCase {
             _ = try await webView.evaluateJavaScript("document.getElementById('profile-modal').remove();true;")
             _ = try await webView.evaluateJavaScript("""
               document.getElementById('share').onclick=()=>{
-                const viewer=document.createElement('div');viewer.id='viewer';viewer.style='position:fixed;inset:0;overflow-y:auto';
+                const viewer=document.createElement('div');viewer.id='viewer';viewer.style='position:absolute;inset:0;overflow-y:auto';
                 viewer.innerHTML='<\(media) id="media" style="display:block;width:390px;height:300px"></\(media)><p style="height:1500px">Caption</p>';
                 document.getElementById('thread').append(viewer);
               };document.getElementById('share').click();true;

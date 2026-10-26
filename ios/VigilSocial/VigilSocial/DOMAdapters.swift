@@ -1917,15 +1917,40 @@ enum DOMAdapters {
       let pointerGesture = null;
       const touchPointers = new Set();
       const lockedScroll = new Map();
-      // `null` forces the first route sync to tell the native host the page's
-      // initial state, including an explicit unlock after a WebView reload.
-      let nativeScrollLocked = null;
-      const reportNativeScrollLock = locked => {
-        if (nativeScrollLocked === locked) return;
-        nativeScrollLocked = locked;
+      // Cache the complete native gesture state, including scrolling sheets.
+      let nativeScrollState = '';
+      const nativeGestureRegion = (node, requireForeground = false) => {
+        if (!(node instanceof Element) || !node.isConnected || node.closest('[hidden], [aria-hidden="true"]')) return null;
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') return null;
+        const box = node.getBoundingClientRect(), viewport = window.visualViewport;
+        const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
+        const left = (box.left - (viewport?.offsetLeft || 0)) / width;
+        const top = (box.top - (viewport?.offsetTop || 0)) / height;
+        if (requireForeground) {
+          const x = Math.max(0, Math.min(width - 1, box.left + box.width / 2));
+          const y = Math.max(0, Math.min(height - 1, box.top + box.height / 2));
+          const foreground = document.elementFromPoint(x, y);
+          if (!foreground || (foreground !== node && !node.contains(foreground))) return null;
+        }
+        return box.width > 0 && box.height > 0 && left < 1 && top < 1
+          && left + box.width / width > 0 && top + box.height / height > 0
+          ? [left, top, box.width / width, box.height / height] : null;
+      };
+      const reportNativeScrollLock = (locked, force = false) => {
+        const sheets = locked ? [...document.querySelectorAll(
+          '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
+        ), ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)] : [];
+        const scrollingRegions = [...new Set(sheets)].map(node => nativeGestureRegion(node, true)).filter(Boolean).slice(0, 24);
+        const carouselRegions = locked && postCarousel && !postCarousel.rejected
+          ? [nativeGestureRegion(postCarousel.track)].filter(Boolean) : [];
+        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions });
+        if (!force && nativeScrollState === state) return;
+        nativeScrollState = state;
         try {
           window.webkit?.messageHandlers?.vigil?.postMessage({
-            type: 'reelScrollLock', locked, documentID: String(window.__vigilDocumentID || '')
+            type: 'reelScrollLock', locked, scrollingRegions, carouselRegions,
+            documentID: String(window.__vigilDocumentID || '')
           });
         } catch (_) {}
       };
@@ -2046,7 +2071,7 @@ enum DOMAdapters {
         if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
-          reportNativeScrollLock(pinnedKind === 'reel');
+          reportNativeScrollLock(true);
           return true;
         }
         if (route && pinnedID && (route.id !== pinnedID || route.kind !== pinnedKind) && pinnedURL) {
@@ -2063,7 +2088,7 @@ enum DOMAdapters {
         if (!pinnedURL) pinnedURL = location.href;
         document.documentElement.dataset.vigilSingleReel = pinnedID;
         document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
-        reportNativeScrollLock(pinnedKind === 'reel');
+        reportNativeScrollLock(true);
         return true;
       };
       const fullScreenMedia = media => {
@@ -2100,7 +2125,11 @@ enum DOMAdapters {
           if (!activeModal(media)) continue;
           for (let node = media.parentElement; node && node !== document.body; node = node.parentElement) {
             const box = node.getBoundingClientRect();
-            if (getComputedStyle(node).position === 'fixed' && !inSheet(node) && !node.contains(origin) && node !== background
+            const position = getComputedStyle(node).position;
+            const viewportPortal = position === 'fixed' || (position === 'absolute'
+              && box.top <= innerHeight * 0.2 && box.bottom >= innerHeight * 0.8
+              && box.height <= innerHeight * 1.25);
+            if (viewportPortal && !inSheet(node) && !node.contains(origin) && node !== background
                 && box.width >= innerWidth * 0.72 && box.height >= innerHeight * 0.6) return node;
           }
         }
@@ -2123,6 +2152,15 @@ enum DOMAdapters {
               && Date.now() >= sharedStory.at && Date.now() - sharedStory.at < 30 * 60 * 1000));
         },
         isPinnedStory() { return syncRoute() && pinnedKind === 'story'; },
+        synchronizeNativeGestureGuard() {
+          // The first document-start message can precede native document-ID
+          // binding. Replay the complete current state once the host is ready.
+          reportNativeScrollLock(syncRoute(), true);
+        },
+        containmentState() {
+          return { pinned: Boolean(pinnedID), kind: pinnedKind,
+            viewer: Boolean(modalContext?.isConnected), awaitingViewer: Boolean(sharedIntent) };
+        },
         blocksDestination(value) { return blocksDestination(value); }
       });
       const blocksDestination = (value) => {
@@ -2147,6 +2185,13 @@ enum DOMAdapters {
         const dialog = target?.closest?.('[role="dialog"], [aria-modal="true"]');
         if (!dialog || dialog === modalContext || (pinnedCard && dialog.contains(pinnedCard))
             || dialog.closest('[aria-hidden="true"], [hidden]')) return null;
+        // Direct's retained thread can itself be a dialog with a Search box.
+        // It is not a recipient sheet and must never exempt its opened media.
+        if (dialog.matches('main, [role="main"]') || dialog.querySelector('main, [role="main"], article, [role="article"]')
+            || [...dialog.querySelectorAll('video, img')].some(media => {
+              const box = media.getBoundingClientRect();
+              return box.width >= 180 && box.height >= 140;
+            })) return null;
         const search = dialog.querySelector(recipientSearchSelector);
         return search?.closest('[role="dialog"], [aria-modal="true"]') === dialog ? dialog : null;
       };
@@ -2436,6 +2481,7 @@ enum DOMAdapters {
           }
         }
         restoreScroll();
+        reportNativeScrollLock(true);
       };
       window.addEventListener('touchstart', event => {
         if (!syncRoute() || inSheet(event.target) || event.touches.length !== 1) { gesture = null; return; }
@@ -2515,7 +2561,7 @@ enum DOMAdapters {
         const link = event.target?.closest?.('a[href]');
         if (!pinnedID && link) rememberShare(link.href, link);
         if (!pinnedID && (!link || link.getAttribute('href') === '#') && location.pathname.startsWith('/direct/') && !inSheet(event.target)
-            && event.target?.closest?.('a, button, [role="button"], video, img')) {
+            && event.target instanceof Element && !event.target.closest('nav, [role="navigation"]')) {
           sharedIntent = { route: null, origin: event.target, source: location.pathname,
             at: Date.now(), previousModal: foregroundModal() };
         }
@@ -2544,6 +2590,9 @@ enum DOMAdapters {
       });
       window.addEventListener('popstate', reconcile, true);
       window.addEventListener('pageshow', reconcile, true);
+      window.addEventListener('resize', reconcile, true);
+      window.visualViewport?.addEventListener('resize', reconcile);
+      window.visualViewport?.addEventListener('scroll', reconcile);
       new MutationObserver(reconcile).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'data-vigil-instagram-comments-sheet']
       });

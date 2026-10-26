@@ -155,7 +155,7 @@ async function main() {
     document.dispatchEvent(e); return [document.documentElement.hasAttribute('data-vigil-single-reel'), e.defaultPrevented]; })()`)
     .then(value => JSON.stringify(value)), JSON.stringify([true, true]),
     'an explicitly opened full-screen Reel blocks viewer scrolling');
-  assert.deepEqual(await run(`window.__vigilNativeScrollLocks.map(message => message.locked)`), [true],
+  assert.deepEqual(await run(`window.__vigilNativeScrollLocks.map(message => message.locked).filter((value,index,values)=>!index||value!==values[index-1])`), [true],
     'opening a shared Reel asks the native WKWebView to disable its scroll view');
   assert.equal(await run(`getComputedStyle(document.documentElement).touchAction`), 'pinch-zoom',
     'an open Reel disables native touch panning while preserving pinch zoom');
@@ -210,7 +210,7 @@ async function main() {
       document.getElementById('thread').dispatchEvent(e); return e.defaultPrevented; })() })`),
     { pinned: false, before: 'visible', after: 'visible', touchAction: 'auto', wheelBlocked: false },
     'returning from a closed Reel route must release a retained transparent viewer and restore chat scrolling');
-  assert.deepEqual(await run(`window.__vigilNativeScrollLocks.map(message => message.locked)`), [true, false],
+  assert.deepEqual(await run(`window.__vigilNativeScrollLocks.map(message => message.locked).filter((value,index,values)=>!index||value!==values[index-1])`), [true, false],
     'closing a shared Reel restores native chat scrolling');
   await run(`document.getElementById('portal').style.display = 'none';`);
   assert.deepEqual(await run(`({ pinned: document.documentElement.hasAttribute('data-vigil-single-reel'),
