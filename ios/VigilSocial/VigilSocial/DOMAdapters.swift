@@ -7694,6 +7694,15 @@ enum DOMAdapters {
         if (typeof viewerFollows !== 'boolean' || typeof followsViewer !== 'boolean') return null;
         return viewerFollows && followsViewer;
       };
+      // Bounded local diagnostics contain schema/status counters only. Never
+      // persist account names, cookies, tokens, URLs, or response bodies.
+      const friendshipDiagnostics = { version: 2, startedAt: Date.now(), events: [] };
+      const recordFriendshipDiagnostic = (stage, detail = {}) => {
+        friendshipDiagnostics.events.push({ stage, ...detail });
+        friendshipDiagnostics.events = friendshipDiagnostics.events.slice(-80);
+        try { localStorage.setItem('vigil.instagram.friendship-diagnostics.v2', JSON.stringify(friendshipDiagnostics)); } catch (_) {}
+      };
+      recordFriendshipDiagnostic('start');
       const instagramRequestHeaders = () => ({
         Accept: '*/*',
         'X-IG-App-ID': '936619743392459',
@@ -7719,7 +7728,10 @@ enum DOMAdapters {
             headers: instagramRequestHeaders(),
             signal: controller.signal
           });
-          if (!response.ok) throw new Error(`Instagram lookup returned ${response.status}`);
+          if (!response.ok) {
+            recordFriendshipDiagnostic('rest-failed', { status: response.status });
+            throw new Error(`Instagram lookup returned ${response.status}`);
+          }
           return response.json();
         })();
         try {
@@ -7741,6 +7753,7 @@ enum DOMAdapters {
       const fetchInstagramRuntimeJSON = async (method, path, options) => {
         const api = instagramRuntimeAPI();
         const operation = method === 'POST' ? api?.apiPost : api?.apiGet;
+        if (!api) recordFriendshipDiagnostic('batch-module-unavailable');
         if (typeof operation !== 'function') {
           throw new Error('Instagram request runtime is unavailable');
         }
@@ -7753,6 +7766,21 @@ enum DOMAdapters {
           return module?.default || module;
         } catch (_) { return null; }
       };
+      const instagramModuleLoads = new Map();
+      const loadInstagramModule = async (name) => {
+        const loaded = instagramModule(name);
+        if (loaded) return loaded;
+        if (!instagramModuleLoads.has(name)) {
+          const bootloader = instagramModule('Bootloader');
+          const promise = typeof bootloader?.loadModules === 'function'
+            ? withInstagramLookupDeadline(() => new Promise((resolve) => {
+              bootloader.loadModules([name], (module) => resolve(module?.default || module), 'VigilInstagramFriendship');
+            })).catch(() => null)
+            : Promise.resolve(null);
+          instagramModuleLoads.set(name, promise);
+        }
+        return instagramModuleLoads.get(name);
+      };
       const exactInstagramUser = (entries, username) => {
         for (const entry of entries || []) {
           const user = entry?.user || entry;
@@ -7764,17 +7792,29 @@ enum DOMAdapters {
         // Current Instagram search is a Relay query. Reuse the loaded client's
         // operation and authenticated environment rather than pinning a query
         // ID or depending on the retired REST search working first.
-        const relay = instagramModule('CometRelay');
-        const environment = instagramModule('PolarisRelayEnvironment');
-        const query = instagramModule('PolarisSearchBoxRefetchableQuery.graphql');
-        if (relay?.fetchQuery && environment && query) {
+        const [relay, environment, query] = await Promise.all([
+          loadInstagramModule('CometRelay'), loadInstagramModule('PolarisRelayEnvironment'),
+          loadInstagramModule('PolarisSearchBoxRefetchableQuery.graphql')
+        ]);
+        recordFriendshipDiagnostic('modules', { relay: !!relay?.fetchQuery, environment: !!environment, query: !!query });
+        if (relay?.fetchQuery && environment && query?.operation?.selections && query?.fragment) {
           try {
-            const payload = await withInstagramLookupDeadline(() => relay.fetchQuery(environment, query, {
+            // fetchQuery reads query.fragment, not query.operation. Instagram's
+            // reader fragment contains only fragment spreads, so the ordinary
+            // result is a masked reference with no `users` field. Read the
+            // fields already present in the existing normalization operation;
+            // keep its persisted query, network selections and variables intact.
+            const readerQuery = { ...query, fragment: {
+              ...query.fragment, selections: query.operation.selections
+            } };
+            const payload = await withInstagramLookupDeadline(() => relay.fetchQuery(environment, readerQuery, {
               data: { context: 'blended', include_reel: 'true', query: username, search_surface: 'web_top_search' },
               hasQuery: true
             }, { fetchPolicy: 'network-only' }).toPromise());
-            return exactInstagramUser(payload?.xdt_api__v1__fbsearch__topsearch_connection?.users, username);
-          } catch (_) {}
+            const users = payload?.xdt_api__v1__fbsearch__topsearch_connection?.users;
+            recordFriendshipDiagnostic('relay-result', { users: Array.isArray(users) ? users.length : -1 });
+            return exactInstagramUser(users, username);
+          } catch (error) { recordFriendshipDiagnostic('relay-failed', { error: String(error?.name || 'Error') }); }
         }
         const queryString = new URLSearchParams({
           context: 'blended', include_reel: 'true', query: username, search_surface: 'web_top_search'
@@ -7793,13 +7833,15 @@ enum DOMAdapters {
         // when search had no friendship fields or the old GET returns an
         // incomplete (HTTP 200) response, not only when that GET throws.
         try {
+          await loadInstagramModule('PolarisInstapi');
           const payload = await fetchInstagramRuntimeJSON('POST', '/api/v1/friendships/show_many/', {
             body: { user_ids: String(userID) }
           });
           const statuses = payload?.data?.friendship_statuses || payload?.friendship_statuses || {};
           const mutual = relationshipFromUser(statuses[String(userID)]);
+          recordFriendshipDiagnostic('batch-result', { complete: mutual !== null, mutual });
           if (mutual !== null) return mutual;
-        } catch (_) {}
+        } catch (error) { recordFriendshipDiagnostic('batch-failed', { error: String(error?.name || 'Error') }); }
         const payload = await fetchInstagramJSON(`/api/v1/friendships/show/${encodeURIComponent(userID)}/`);
         const mutual = relationshipFromUser(payload?.data || payload);
         if (mutual === null) throw new Error('relationship lookup omitted mutual-follow fields');
@@ -7886,6 +7928,7 @@ enum DOMAdapters {
               if (typeof mutual !== 'boolean') {
                 throw new Error('relationship lookup omitted mutual-follow fields');
               }
+              recordFriendshipDiagnostic('verified', { mutual });
               friendshipCache.set(username, mutual);
               persistFriendship(username, mutual);
               return mutual;
@@ -7900,6 +7943,7 @@ enum DOMAdapters {
           // not friends. Keep the surface concealed without poisoning the
           // viewer-scoped cache with a false negative.
           friendshipLookupFailed = true;
+          recordFriendshipDiagnostic('unavailable');
           return null;
         });
         friendshipChecks.set(username, check);
@@ -7975,6 +8019,15 @@ enum DOMAdapters {
         const hasFriend = articles.some((article) => (
           ['friend', 'self'].includes(article.dataset.vigilInstagramHomeRelationship)
         ));
+        const summary = {};
+        articles.forEach((article) => {
+          const state = article.dataset.vigilInstagramHomeRelationship || 'unknown';
+          summary[state] = (summary[state] || 0) + 1;
+        });
+        if (JSON.stringify(friendshipDiagnostics.home) !== JSON.stringify(summary)) {
+          friendshipDiagnostics.home = summary;
+          recordFriendshipDiagnostic('home');
+        }
         if (hasFriend) {
           removeFriendsState();
           return;

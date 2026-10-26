@@ -28,6 +28,7 @@ async function main() {
       window.require = name => {
         if(name==='CometRelay')return {fetchQuery:(_environment,_query,variables,options)=>({toPromise:async()=>{
           calls.push(['relay',variables,options]);
+          if(_query.fragment.selections[0]?.kind!=='LinkedField')return {__id:'client:root',__fragments:{}};
           const username=variables.data.query;
           return {xdt_api__v1__fbsearch__topsearch_connection:{users:[
             {user:{username:'lookalike',pk:'wrong',friendship_status:{following:true,followed_by:true}}},
@@ -35,7 +36,10 @@ async function main() {
           ]}};
         }})};
         if(name==='PolarisRelayEnvironment')return {default:{fixture:true}};
-        if(name==='PolarisSearchBoxRefetchableQuery.graphql' && scenario==='relay')return {fixture:true};
+        if(name==='PolarisSearchBoxRefetchableQuery.graphql' && scenario==='relay')return {
+          params:{id:'fixture-persisted-query'},fragment:{selections:[{kind:'FragmentSpread',name:'PolarisSearchBoxContainer_topsearch'}]},
+          operation:{selections:[{kind:'LinkedField',name:'xdt_api__v1__fbsearch__topsearch_connection'}]}
+        };
         if(name==='PolarisInstapi' && ['relay','document'].includes(scenario))return {apiPost:async (url,options)=>{
           calls.push(['batch',url,options]);
           const id=options.body.user_ids;

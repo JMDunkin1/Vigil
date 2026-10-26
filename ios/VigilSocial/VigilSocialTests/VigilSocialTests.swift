@@ -12206,12 +12206,17 @@ extension VigilSocialTests {
             <html><head><script>
             window.fixtureBatchIDs = [];
             window.require = name => {
-              if (name === 'CometRelay') return { fetchQuery: (_environment, _query, variables) => ({toPromise: async () => ({
+              if (name === 'CometRelay') return { fetchQuery: (_environment, query, variables) => ({toPromise: async () => query.fragment.selections[0]?.kind !== 'LinkedField' ? {__id:'client:root',__fragments:{}} : ({
                 xdt_api__v1__fbsearch__topsearch_connection: { users: [{user:{
                   username: variables.data.query, pk: 'pk-' + variables.data.query, id: 'opaque-relay-id'
                 }}] }
               })}) };
-              if (name === 'PolarisRelayEnvironment' || name === 'PolarisSearchBoxRefetchableQuery.graphql') return {default:{}};
+              if (name === 'PolarisRelayEnvironment') return {default:{}};
+              if (name === 'PolarisSearchBoxRefetchableQuery.graphql') return {
+                params:{id:'fixture-persisted-query'},
+                fragment:{selections:[{kind:'FragmentSpread',name:'PolarisSearchBoxContainer_topsearch'}]},
+                operation:{selections:[{kind:'LinkedField',name:'xdt_api__v1__fbsearch__topsearch_connection'}]}
+              };
               if (name === 'PolarisInstapi') return { apiPost: async (path, options) => {
                 const id = options.body.user_ids;
                 fixtureBatchIDs.push(id);
@@ -12411,5 +12416,54 @@ extension VigilSocialTests {
         XCTAssertEqual(closed, true)
         _ = try await webView.evaluateJavaScript("document.getElementById('avatar').click();history.pushState({}, '', '/direct/inbox/');")
         try await waitForJavaScriptCondition("document.getElementById('vigil-instagram-profile-photo') === null", in: webView)
+    }
+}
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramDeferredModulesResolveMaskedRelaySearchWithoutLegacyREST() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><script>
+            window.loadedModules={};window.bootloads=[];window.fixtureNetworkQueries=0;
+            const operation={selections:[{kind:'LinkedField',name:'xdt_api__v1__fbsearch__topsearch_connection'}]};
+            const params={id:'fixture-persisted-query',operationKind:'query'};
+            const modules={
+              'PolarisRelayEnvironment':{default:{}},
+              'PolarisSearchBoxRefetchableQuery.graphql':{params,operation,fragment:{
+                selections:[{kind:'FragmentSpread',name:'PolarisSearchBoxContainer_topsearch'}]}},
+              'CometRelay':{fetchQuery:(_environment,request,variables)=>({toPromise:async()=>{
+                fixtureNetworkQueries++;
+                if(request.params!==params || request.operation!==operation)throw new Error('Network query changed');
+                if(request.fragment.selections[0].kind==='FragmentSpread')return {__id:'client:root',__fragments:{}};
+                return {xdt_api__v1__fbsearch__topsearch_connection:{users:[{user:{
+                  username:variables.data.query,pk:'pk-'+variables.data.query
+                }}]}};
+              }})},
+              'PolarisInstapi':{apiPost:async (_path,options)=>({data:{friendship_statuses:{
+                [options.body.user_ids]:{following:true,followed_by:options.body.user_ids==='pk-friend'}
+              }}})}
+            };
+            window.require=name=>{
+              if(name==='Bootloader')return {loadModules:(names,callback)=>{
+                bootloads.push(...names);setTimeout(()=>{loadedModules[names[0]]=modules[names[0]];callback(modules[names[0]])},0);
+              }};
+              if(!loadedModules[name])throw new Error('Module not loaded yet');
+              return loadedModules[name];
+            };
+            window.fetch=async()=>{throw new Error('Legacy REST unavailable')};
+            </script></head><body><nav><a href="/viewer/" aria-label="Profile">Profile</a></nav><main>
+            <div role="list"><a id="story" href="/stories/friend/1/"><img alt="friend's profile picture"></a></div>
+            <article id="friend"><a href="/friend/">Friend</a></article>
+            <article id="other"><a href="/other/">Other</a></article></main></body></html>
+            """#)
+        try await waitForJavaScriptCondition("document.getElementById('friend').dataset.vigilInstagramHomeRelationship === 'friend'", in: webView)
+        let state = try await webView.evaluateJavaScript("""
+            [document.getElementById('story').dataset.vigilInstagramStoryRelationship === 'friend',
+             document.getElementById('other').dataset.vigilInstagramHomeRelationship === 'other',
+             bootloads.length===4 && new Set(bootloads).size===4,
+             fixtureNetworkQueries===2,
+             !localStorage.getItem('vigil.instagram.friendship-diagnostics.v2').includes('pk-friend')]
+            """) as? [Bool]
+        XCTAssertEqual(state, [true, true, true, true, true])
     }
 }
