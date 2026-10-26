@@ -12545,3 +12545,59 @@ extension VigilSocialTests {
         XCTAssertEqual(state, [true, true, true, true, true])
     }
 }
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramLateFriendAboveReadingPositionDoesNotJumpTheFeed() async throws {
+        for nested in [false, true] {
+            let shellStyle = nested ? "#feed{height:600px;overflow-y:auto}" : ""
+            let webView = try await instagramRepairFixture(#"""
+                <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>body{margin:0} article{height:500px} #before{height:700px} #after{height:2000px}
+                """# + shellStyle + #"""
+                </style><script>
+                window.fetch=async input=>{
+                  const url=new URL(input,location.href);
+                  if(url.pathname.includes('/web/search/topsearch/')){
+                    const username=url.searchParams.get('query');
+                    if(username==='slowfriend')await new Promise(resolve=>window.releaseSlowFriend=resolve);
+                    return {ok:true,json:async()=>({users:[{user:{username,friendship_status:{following:true,followed_by:username!=='stranger'}}}]})};
+                  }
+                  return {ok:false,status:400};
+                };
+                </script></head><body><nav><a href="/viewer/" aria-label="Profile">Profile</a></nav><main><div id="feed">
+                <div id="before"></div><article id="slow"><a href="/slowfriend/">Slow friend</a></article>
+                <article id="reading"><a href="/friend/">Friend</a><div id="carousel" style="width:300px;overflow-x:auto"><div style="width:900px">Current photo</div></div></article><div id="after"></div>
+                </div></main></body></html>
+                """#)
+            try await waitForJavaScriptCondition("document.getElementById('reading').dataset.vigilInstagramHomeRelationship === 'friend' && typeof releaseSlowFriend === 'function'", in: webView)
+            let before = try await webView.evaluateJavaScript("""
+                (()=>{const reading=document.getElementById('reading');
+                  const scroller=\(nested ? "document.getElementById('feed')" : "document.scrollingElement");
+                  scroller.scrollTop=reading.offsetTop-100;
+                  document.getElementById('carousel').scrollLeft=300;
+                  window.fixtureReadingTop=reading.getBoundingClientRect().top;
+                  releaseSlowFriend();return fixtureReadingTop;})()
+                """) as? Double
+            try await waitForJavaScriptCondition("document.getElementById('slow').dataset.vigilInstagramHomeRelationship === 'friend'", in: webView)
+            let after = try await webView.evaluateJavaScript("document.getElementById('reading').getBoundingClientRect().top") as? Double
+            XCTAssertEqual(try XCTUnwrap(after), try XCTUnwrap(before), accuracy: 1,
+                           "A newly verified post above the current post must not move the reading position (nested=\(nested))")
+            _ = try await webView.evaluateJavaScript("document.querySelector('#slow a').href='/stranger/'")
+            try await waitForJavaScriptCondition("document.getElementById('slow').dataset.vigilInstagramHomeRelationship === 'other'", in: webView)
+            let filteredTop = try await webView.evaluateJavaScript("document.getElementById('reading').getBoundingClientRect().top") as? Double
+            XCTAssertEqual(try XCTUnwrap(filteredTop), try XCTUnwrap(before), accuracy: 1,
+                           "Removing a recycled nonfriend above the reader must preserve position")
+            let carousel = try await webView.evaluateJavaScript("document.getElementById('carousel').scrollLeft") as? Double
+            XCTAssertEqual(carousel, 300, "Home filtering must not select another photo")
+            let afterUserScroll = try await webView.evaluateJavaScript("""
+                (()=>{const scroller=\(nested ? "document.getElementById('feed')" : "document.scrollingElement");
+                  scroller.scrollTop+=60;return document.getElementById('reading').getBoundingClientRect().top;})()
+                """) as? Double
+            XCTAssertEqual(try XCTUnwrap(afterUserScroll), try XCTUnwrap(before)-60, accuracy: 1,
+                           "Ordinary feed scrolling must remain under the user's control")
+
+
+        }
+    }
+}

@@ -277,10 +277,13 @@ assert.doesNotMatch(
   /article\s+a\[href\*=["']\/reel\//u,
   "friendly inline Reels must not cause their containing followed/profile/Direct card to disappear"
 );
+const readingAnchorStart = instagramStableAdapterSource.indexOf("const withHomeScrollAnchor =");
+const readingAnchorEnd = instagramStableAdapterSource.indexOf("const homeCardIdentities =", readingAnchorStart);
+assert.ok(readingAnchorStart >= 0 && readingAnchorEnd > readingAnchorStart);
 assert.doesNotMatch(
-  instagramStableAdapterSource,
-  /touchmove|scrollTop\s*=|scrollBy\(|overflow\s*=\s*['"]hidden/u,
-  "the stable adapter must not seize Instagram's gestures or scrolling to contain Reels"
+  instagramStableAdapterSource.slice(0, readingAnchorStart) + instagramStableAdapterSource.slice(readingAnchorEnd),
+  /touchmove|scrollTop\s*[+\-]?=|scrollBy\(|overflow\s*=\s*['"]hidden/u,
+  "only the Home classification reading anchor may compensate vertical position; ordinary gestures stay native"
 );
 assert.match(
   instagramStableAdapterSource,

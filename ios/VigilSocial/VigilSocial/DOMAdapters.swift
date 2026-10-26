@@ -7644,6 +7644,44 @@ enum DOMAdapters {
       // the viewer. This is identity-based and deliberately has no item limit.
       const homeCards = () => [...document.querySelectorAll('article, [role="article"]')]
         .filter((card) => !card.closest('nav, [role="navigation"], [role="dialog"], [aria-modal="true"]'));
+      let homeScrollAnchorDepth = 0;
+      const homeScrollContainer = (card) => {
+        for (let node = card.parentElement; node && node !== document.body
+            && node !== document.documentElement; node = node.parentElement) {
+          if (/^(auto|scroll)$/.test(getComputedStyle(node).overflowY)
+              && node.scrollHeight > node.clientHeight) return node;
+        }
+        return document.scrollingElement;
+      };
+      const withHomeScrollAnchor = (update) => {
+        // WebKit does not retain a reading anchor when a previously concealed
+        // friend post appears above it. Compensate only our synchronous filter
+        // updates; never monitor ordinary scrolling or set a carousel index.
+        if (homeScrollAnchorDepth || instagramRoute() !== 'feed') return update();
+        const anchors = homeCards().filter((card) =>
+          ['friend', 'self'].includes(card.dataset.vigilInstagramHomeRelationship)
+        ).map((card) => {
+          const scroller = homeScrollContainer(card);
+          const bounds = card.getBoundingClientRect();
+          const viewport = scroller === document.scrollingElement
+            ? { top: 0, bottom: innerHeight } : scroller?.getBoundingClientRect();
+          return { card, scroller, top: bounds.top, author: homeCardAuthor(card),
+            visible: viewport && bounds.height > 0 && bounds.bottom > viewport.top && bounds.top < viewport.bottom };
+        }).filter((anchor) => anchor.visible).slice(0, 3);
+        homeScrollAnchorDepth += 1;
+        try { return update(); }
+        finally {
+          homeScrollAnchorDepth -= 1;
+          const anchor = anchors.find(({ card, scroller, author }) => card.isConnected && scroller?.isConnected
+            && homeScrollContainer(card) === scroller && author && homeCardAuthor(card) === author
+            && ['friend', 'self'].includes(card.dataset.vigilInstagramHomeRelationship)
+            && card.getBoundingClientRect().height > 0);
+          if (anchor) {
+            const delta = anchor.card.getBoundingClientRect().top - anchor.top;
+            if (Math.abs(delta) > 1) anchor.scroller.scrollTop += delta;
+          }
+        }
+      };
       const homeCardIdentities = new WeakMap();
       const homeCardStableRelationships = new WeakMap();
       const homeCardRefreshTimers = new WeakMap();
@@ -8097,7 +8135,7 @@ enum DOMAdapters {
         }
         scheduleFriendsEmpty('checked-articles', 350);
       };
-      const classifyHomeCard = (article, settleMissingIdentity = false) => {
+      const classifyHomeCard = (article, settleMissingIdentity = false) => withHomeScrollAnchor(() => {
         if (!(article instanceof Element) || article.hasAttribute('data-vigil-hidden-feature')) return;
         const previousIdentity = homeCardIdentities.get(article) || '';
         const username = homeCardAuthor(article, previousIdentity);
@@ -8155,7 +8193,7 @@ enum DOMAdapters {
         article.dataset.vigilInstagramHomeAuthor = username;
         homeCardIdentities.set(article, username);
         article.dataset.vigilInstagramHomeRelationship = 'pending';
-        void canViewAccount(username).then((mutual) => {
+        void canViewAccount(username).then((mutual) => withHomeScrollAnchor(() => {
           if (!article.isConnected || homeCardAuthor(article, username) !== username
               || article.dataset.vigilInstagramHomeAuthor !== username) return;
           const relationship = username === discoverViewerUsername()
@@ -8168,8 +8206,8 @@ enum DOMAdapters {
             homeCardStableRelationships.delete(article);
           }
           reconcileFriendsEmptyState();
-        });
-      };
+        }));
+      });
       const validInstagramUsername = (value) => {
         const username = normalizedUsername(value);
         return /^[a-z0-9._]{1,30}$/.test(username) ? username : '';
@@ -9017,7 +9055,7 @@ enum DOMAdapters {
         redirectedStoryPath = path;
         navigateVerifiedStory(nextPath || '/');
       };
-      const reconcileFriendsFeed = () => {
+      const reconcileFriendsFeed = () => withHomeScrollAnchor(() => {
         const isFeed = instagramRoute() === 'feed';
         if (!isFeed) {
           clearTimeout(storyRelationshipFlushTimer);
@@ -9047,7 +9085,7 @@ enum DOMAdapters {
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
-        void hydrateViewerUsername().then(() => {
+        void hydrateViewerUsername().then(() => withHomeScrollAnchor(() => {
           // A slow identity request may finish after the user opens Profile.
           // Never run Home's avatar classifier against that destination tree.
           if (instagramRoute() !== 'feed') return;
@@ -9057,7 +9095,7 @@ enum DOMAdapters {
           flushHomeStoryRelationships();
           reconcileFriendsEmptyState();
           removeStoryPlaceholders();
-        });
+        }));
         const controls = homeStoryControls();
         homeCards().forEach(classifyHomeCard);
         controls.forEach(classifyHomeStory);
@@ -9065,7 +9103,7 @@ enum DOMAdapters {
         removeStoryPlaceholders();
         normalizeHomeStoryRail(controls);
         reconcileFriendsEmptyState();
-      };
+      });
       const elementsWithin = (root, selector) => [
         ...(root.matches?.(selector) ? [root] : []), ...root.querySelectorAll(selector)
       ];
