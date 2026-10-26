@@ -1,9 +1,10 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, EXPLICIT_MEDIA_PATTERNS, EXPLICIT_MEDIA_ORDINARY_PHRASES, EXPLICIT_AUTOMATIC_ORDINARY_PHRASES, EXPLICIT_VOCABULARY_REPLACEMENTS, EXPLICIT_SEARCH_ALIAS_PATTERNS, EXPLICIT_SEARCH_KEYWORD_TERMS, EXPLICIT_SEARCH_COMPOUND_PATTERN, MULTILINGUAL_EXPLICIT_TERMS } from "../src/explicitMediaContext.js";
+import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, EXPLICIT_MEDIA_PATTERNS, EXPLICIT_MEDIA_ORDINARY_PHRASES, EXPLICIT_AUTOMATIC_ORDINARY_PHRASES, EXPLICIT_VOCABULARY_REPLACEMENTS, EXPLICIT_SEARCH_ALIAS_PATTERNS, EXPLICIT_SEARCH_KEYWORD_TERMS, EXPLICIT_SEARCH_COMPOUND_PATTERN, MULTILINGUAL_EXPLICIT_TERMS, EXPLICIT_PRINT_ORDINARY_PHRASES, EXPLICIT_PRINT_PATTERNS, REVIEWED_EXPLICIT_PRINT_PRODUCT_IDS, REVIEWED_EXPLICIT_PRINT_PRODUCT_ROUTE } from "../src/explicitMediaContext.js";
 import { isDirectRun } from "../src/directRun.js";
 import { CONTEXTUAL_SEARCH_PLATFORMS, CONTEXTUAL_SEARCH_NAMES, CONTEXTUAL_SEARCH_MARKERS, EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS } from "../src/contextualExplicitSearch.js";
+import { MARKETPLACE_SEARCH_FIELDS } from "../src/searchQueryContext.js";
 
 const projectRoot = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
 const paths = [
@@ -67,12 +68,37 @@ ${ordinaryReplacements}
 
     static func normalizedEvidence(_ value: String) -> String { normalized(value) }
 
+    static func isMarketplaceSearchField(_ name: String, host: String, path: String) -> Bool {
+${MARKETPLACE_SEARCH_FIELDS.map(field => `        if name == ${JSON.stringify(field.name)}, path.range(of: #"${field.route}"#, options: [.regularExpression, .caseInsensitive]) != nil,
+           [${field.domains.map(domain => JSON.stringify(domain)).join(", ")}].contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }`).join("\n")}
+        return false
+    }
+
+    private static let printPatterns = [${EXPLICIT_PRINT_PATTERNS.map(pattern => `try! NSRegularExpression(pattern: #"${pattern}"#)`).join(", ")}]
+    private static let reviewedPrintProductIDs: Set<String> = [${REVIEWED_EXPLICIT_PRINT_PRODUCT_IDS.map(id => JSON.stringify(id)).join(", ")}]
+    private static let reviewedPrintProductRoute = try! NSRegularExpression(pattern: #"${REVIEWED_EXPLICIT_PRINT_PRODUCT_ROUTE}"#, options: .caseInsensitive)
+    private static func containsPrintMediaEvidence(_ value: String) -> Bool {
+        var text = value.lowercased()
+${EXPLICIT_PRINT_ORDINARY_PHRASES.map(pattern => `        text = text.replacingOccurrences(of: #"${pattern}"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])`).join("\n")}
+        text = text.replacingOccurrences(of: #"\\b18\\s*\\+"#, with: "18plus", options: .regularExpression)
+            .replacingOccurrences(of: #"\\br[\\s_-]+18\\b"#, with: "r18", options: .regularExpression)
+            .replacingOccurrences(of: #"[^\\p{L}\\p{N}]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return printPatterns.contains { matches($0, text) }
+    }
+
     // Match meaningful destination labels and early routes, never credentials,
     // arbitrary query/hash metadata, or identifiers later in the address.
     static func containsSemanticURL(_ url: URL) -> Bool {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let host = components.host else { return false }
+        let productHost = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if productHost == "etsy.com" || productHost.hasSuffix(".etsy.com") {
+            let path = semanticNormalized(components.percentEncodedPath)
+            if let match = reviewedPrintProductRoute.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)),
+               reviewedPrintProductIDs.contains((path as NSString).substring(with: match.range(at: 1))) { return true }
+        }
         let labels = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")).split(separator: ".").map(String.init)
         if ["xxx", "porn"].contains(labels.last ?? "") { return true }
         let hostLabels = labels.dropLast().map(semanticNormalized)
@@ -84,6 +110,7 @@ ${ordinaryReplacements}
         let segments = Array(components.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true).prefix(4)).map { semanticNormalized(String($0.prefix(512))) }
         let routeText = segments.map(normalizedEvidence).joined(separator: " ")
         let qualifiedRouteText = normalizedEvidence(routeText)
+        if containsPrintMediaEvidence(qualifiedRouteText) { return true }
         if qualifiedRouteText != routeText {
             return semanticClassifies(qualifiedRouteText, previous: segments.first(where: semanticCatalog.contains) ?? "")
         }
@@ -147,7 +174,7 @@ ${ordinaryReplacements}
         if compact.range(of: #"^(?!rule34\\d)(?:p[o0]rn|h[e3]ntai|nsfw|rule34)(?:hub|tube|world|land|zone|site|sites|read|reader|live|free|hd|vr|4k|\\d{1,3}|videos?|photos?|pics?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)?$"#, options: .regularExpression) != nil
             || compact.range(of: #"^(?:free|best|my|the|all|hd|new|daily|live|watch|read|anime|manga|comic|comics|webtoon|3d|vr|4k)(?:porn|hentai|nsfw)$"#, options: .regularExpression) != nil { return true }
         if hostname, compact.range(of: #"^x{3,}$"#, options: .regularExpression) != nil { return true }
-        let media = "(?:videos?|vids?|photos?|pics?|images?|gifs?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))"
+        let media = #"(?:videos?|vids?|photos?|photographs?|pics?|images?|gifs?|prints?|posters?|pin[\\s_-]?ups?|calendars?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))"#
         let marker = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18plus)"
         if tokens.contains(where: { $0.range(of: "^(?:" + marker + media + "|" + media + marker + ")$", options: .regularExpression) != nil }) { return true }
         if tokens.contains(where: { $0.range(of: #"^r34(?:comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)$"#, options: .regularExpression) != nil })
@@ -182,6 +209,7 @@ ${ordinaryReplacements}
 
     static func contains(_ value: String) -> Bool {
         let text = normalizedEvidence(value).lowercased()
+        if containsPrintMediaEvidence(text) { return true }
         let textSource = text as NSString
         let labelTokens = words.matches(in: text, range: NSRange(location: 0, length: textSource.length)).map { textSource.substring(with: $0.range) }
         if labelTokens.contains(where: { labels.contains($0) || ["porn", "porno", "nsfw"].contains($0) }) { return true }

@@ -77,6 +77,8 @@ let filter = NavigationFilter(rules: rules)
 func check(_ query: String, _ expected: Bool) {
     var url = URLComponents(string: "https://www.google.com/search")!
     url.queryItems = [URLQueryItem(name: "q", value: query)]
+    // Foundation leaves literal plus signs unescaped; form queries need %2B.
+    url.percentEncodedQuery = url.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
     let blocked: Bool
     switch filter.decide(url.url!) { case .block: blocked = true; case .allow: blocked = false }
     precondition(blocked == expected, "Navigation mismatch: \\(query)")

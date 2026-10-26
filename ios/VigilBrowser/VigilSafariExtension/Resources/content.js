@@ -44,6 +44,9 @@ const EXPLICIT_VOCABULARY_REPLACEMENTS = [
     { pattern: /\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b/giu.source, replacement: "sexdoll" },
     { pattern: /\bsex[\s_\p{Pd}]+robots?\b/giu.source, replacement: "sexrobot" },
     { pattern: /\bsex[\s_\p{Pd}]+toys?\b/giu.source, replacement: "sextoy" },
+    // Marketplace titles often attach a marketing label directly to a print size.
+    { pattern: /\b(sexy|lingerie|mature)(?=\d{1,2}[x×]\d{1,2}\b)/giu.source, replacement: "$1 " },
+    { pattern: /\b(?:bare|exposed|uncovered)[\s_-]+(?:breasts?|nipples?|genitals?)\b/giu.source, replacement: "nude" },
     { pattern: /\b(?:nak3d|n4ked|n4k3d)\b/giu.source, replacement: "naked" },
     { pattern: /\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b/giu.source, replacement: "nudes" },
     { pattern: /\b(?:ph0t0s|ph0tos|phot0s)\b/giu.source, replacement: "photos" },
@@ -130,6 +133,88 @@ function normalizeAutomaticExplicitText(value) {
         text = text.replace(pattern, " vigilordinary ");
     return text;
 }
+// Printed sexual imagery is still sexual media when sold as decor or a
+// collectible. Keep the evidence local and require both a sexual label and a
+// visual product. Reviewed sexual print subjects also qualify otherwise plain
+// photo/collectible titles. Names alone, canvas supplies and ordinary art stay
+// outside this rule. Exact nonsexual phrases consume only their own words.
+const EXPLICIT_PRINT_ORDINARY_PHRASES = [
+    /\b(?:lingerie|underwear|bikinis?|swimsuits?)[\s_-]+(?:(?:sewing|knitting|crochet)[\s_-]+)?patterns?\b/giu.source,
+    /\b(?:floral|leopard|zebra|animal|paisley|polka[\s_-]+dot)[\s_-]+prints?[\s_-]+(?:bikinis?|underwear|lingerie|thongs?)\b/giu.source,
+    /\bpin[\s_-]*up[\s_-]+(?:hair(?:styles?)?|hairstyles?|hairdos?)\b/giu.source,
+    /\b(?:cigarette|cigar|pork|boston)[\s_-]+butts?\b/giu.source,
+    /\bbutt[\s_-]+joints?\b/giu.source
+];
+const printVisual = "(?:prints?|posters?|photos?|photographs?|photography|pictures?|images?|portraits?|canvases|canvas|art(?:works?)?|decor|decorations?|illustrations?|paintings?|drawings?|cartoons?|stickers?|decals?|postcards?|calendars?|tapestries|plaques?|trading cards?)";
+const printSexual = "(?:mature|explicit|provocative|suggestive|revealing|spicy|uncensored|unfiltered|sexy|sensual|seductive|sultry|raunchy|racy|risque|erotic|erotica|lewd|nude|naked|topless|underboob|lingerie|underwear|bikinis?|thongs?|boudoir|pin ups?|pinups?|shibari|bondage|fetish|hotwife|swingers?|sexploitation|strippers?|busty|voluptuous|thicc|hotties?|butts?|booty|18plus|r18)";
+const printGap = "(?:[\\p{L}\\p{N}]+ ){0,4}";
+// Full subjects verified in the reviewed explicit photo-print catalog. Never
+// infer a sexual subject from a first name, surname, or arbitrary celebrity.
+const reviewedPrintSubjects = "(?:abella danger|abelladanger)";
+const subjectPrintProduct = "(?:photos?|photographs?|pictures?|images?|prints?|posters?|portraits?|canvas|art|calendars?|trading cards?|autographs?|mugs?)";
+const printRating = "(?:18plus|r18|adults? only|not suitable for (?:young people|children|minors))";
+const EXPLICIT_PRINT_PATTERNS = [
+    `(?:^|[^\\p{L}\\p{N}])${printSexual} ${printGap}${printVisual}(?=$|[^\\p{L}\\p{N}])`,
+    `(?:^|[^\\p{L}\\p{N}])${printVisual} ${printGap}${printSexual}(?=$|[^\\p{L}\\p{N}])`,
+    // A trailing age label can follow a longer product name or edition number.
+    `(?:^|[^\\p{L}\\p{N}])${printRating} (?:[\\p{L}\\p{N}]+ ){0,12}(?:${printVisual}|digital downloads?)(?=$|[^\\p{L}\\p{N}])`,
+    `(?:^|[^\\p{L}\\p{N}])(?:${printVisual}|digital downloads?) (?:[\\p{L}\\p{N}]+ ){0,12}${printRating}(?=$|[^\\p{L}\\p{N}])`,
+    `(?:^|[^\\p{L}\\p{N}])${reviewedPrintSubjects} (?:[\\p{L}\\p{N}]+ ){0,8}${subjectPrintProduct}(?=$|[^\\p{L}\\p{N}])`,
+    `(?:^|[^\\p{L}\\p{N}])${subjectPrintProduct} (?:[\\p{L}\\p{N}]+ ){0,8}${reviewedPrintSubjects}(?=$|[^\\p{L}\\p{N}])`,
+    /(?:^|[^\p{L}\p{N}])(?:busty|voluptuous|thicc) (?:[\p{L}\p{N}]+ ){0,4}ai models?(?=$|[^\p{L}\p{N}])/u.source,
+    /(?:^|[^\p{L}\p{N}])models? (?:[\p{L}\p{N}]+ ){0,4}mature collections?(?=$|[^\p{L}\p{N}])/u.source
+];
+// Visually reviewed sexual listings whose neutral titles carry no dependable
+// text signal. IDs are provider-scoped, never global words or tracking values.
+// Evidence: research/2026-10-25-print-poster-audit.md.
+const REVIEWED_EXPLICIT_PRINT_PRODUCT_IDS = [
+    "4596079411", "250555610", "4439331570", "4531137091", "4520580803",
+    "4596303659", "4584233511", "4299890278", "4545313735", "4314991788",
+    "4551934894", "1891438757", "4543154295", "4341915187", "4583202389",
+    "1876924798", "4439560667", "4522401873"
+];
+const REVIEWED_EXPLICIT_PRINT_PRODUCT_ROUTE = /^\/(?:listing|r\/similar)\/([0-9]+)(?:\/|$)/iu.source;
+function isReviewedExplicitPrintProductUrl(value) {
+    let url;
+    try {
+        url = new URL(String(value || ""));
+    }
+    catch {
+        return false;
+    }
+    if (!/^https?:$/u.test(url.protocol))
+        return false;
+    const host = url.hostname.toLowerCase().replace(/\.$/u, "");
+    if (host !== "etsy.com" && !host.endsWith(".etsy.com"))
+        return false;
+    let path = url.pathname;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+            const decoded = decodeURIComponent(path);
+            if (decoded === path)
+                break;
+            path = decoded;
+        }
+        catch {
+            break;
+        }
+    }
+    const id = new RegExp(REVIEWED_EXPLICIT_PRINT_PRODUCT_ROUTE, "iu").exec(path)?.[1];
+    return Boolean(id && REVIEWED_EXPLICIT_PRINT_PRODUCT_IDS.includes(id));
+}
+const printOrdinaryPatterns = EXPLICIT_PRINT_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
+const printPatterns = EXPLICIT_PRINT_PATTERNS.map(pattern => new RegExp(pattern, "u"));
+function containsExplicitPrintMedia(value) {
+    return containsExplicitPrintEvidence(normalizeAutomaticExplicitText(value));
+}
+function containsExplicitPrintEvidence(value) {
+    let text = value.toLowerCase();
+    for (const pattern of printOrdinaryPatterns)
+        text = text.replace(pattern, " vigilordinary ");
+    text = text.replace(/\b18\s*\+/gu, "18plus").replace(/\br[\s_-]+18\b/gu, "r18")
+        .replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+    return printPatterns.some(pattern => pattern.test(text));
+}
 // Automatic rules use complete vocabulary tokens. User-authored literal URL
 // rules retain their separate matching semantics in the policy engine.
 const EXPLICIT_SEARCH_KEYWORD_TERMS = [
@@ -206,6 +291,8 @@ function containsContextualExplicitMedia(value) {
     if (containsAdditionalExplicitSearchTerm(value))
         return true;
     const text = normalizeAutomaticExplicitText(value).toLowerCase();
+    if (containsExplicitPrintEvidence(text))
+        return true;
     if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
         return true;
     const tokens = text.replace(/\b(?:without(?:[\s_-]+any)?|with[\s_-]+no)[\s_-]+clothes\b/gu, "naked")
@@ -298,6 +385,8 @@ function matchSemanticExplicitUrl(value) {
     }
     if (!/^https?:$/u.test(url.protocol))
         return null;
+    if (isReviewedExplicitPrintProductUrl(url.href))
+        return { component: "path", term: "reviewed-explicit-print", normalizedText: url.pathname };
     const strong = new Set([
         ...EXPLICIT_SEARCH_KEYWORD_TERMS,
         "porn", "porno", "pornography", "pornographic", "p0rn", "p0rno", "p0rnography", "hentai", "h3ntai", "nhentai", "nsfw",
@@ -464,6 +553,8 @@ function matchSemanticExplicitUrl(value) {
     // hyphens. Qualify only that phrase and retain any separate explicit words.
     const routeText = segments.map(segment => normalizeAutomaticExplicitText(normalize(segment.slice(0, 512)))).join(" ");
     const qualifiedRouteText = normalizeAutomaticExplicitText(routeText);
+    if (containsExplicitPrintMedia(routeText))
+        return { component: "path", term: "explicit-print", normalizedText: routeText };
     if (qualifiedRouteText !== routeText) {
         const catalogRoute = segments.map(segment => normalize(segment)).find(segment => catalog.has(segment)) || "";
         const term = classify(qualifiedRouteText, catalogRoute);
@@ -496,6 +587,17 @@ const AMBIGUOUS_SEARCH_PARAMETER_NAMES = new Set(["p", "k", "s", "mode"]);
 // direct category links need the same checks as a site's search box.
 const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=\/|$)/iu;
 const STRUCTURED_SEARCH_PARAMETER_PATTERN = /^(q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)\[(\d*|q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|word|tags|tag)\]$/iu;
+// These marketplaces use field/route names that are otherwise ambiguous URL
+// metadata. Scope them to their declared hosts and search routes.
+const MARKETPLACE_SEARCH_FIELDS = [
+    { name: "k", route: "^/s/?$", domains: ["amazon.com", "amazon.ca", "amazon.co.uk", "amazon.com.au", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.co.jp", "amazon.in", "amazon.com.mx", "amazon.com.br", "amazon.nl", "amazon.se", "amazon.pl", "amazon.com.be", "amazon.ie", "amazon.com.tr", "amazon.ae", "amazon.sa", "amazon.sg", "amazon.eg", "amazon.co.za"] },
+    { name: "_nkw", route: "^/sch(?:/|$)", domains: ["ebay.com", "ebay.ca", "ebay.co.uk", "ebay.com.au", "ebay.de", "ebay.fr", "ebay.it", "ebay.es", "ebay.ie", "ebay.at", "ebay.be", "ebay.ch", "ebay.nl", "ebay.pl"] }
+];
+function isMarketplaceSearchField(name, hostname, pathname) {
+    return MARKETPLACE_SEARCH_FIELDS.some(field => field.name === name
+        && new RegExp(field.route, "iu").test(pathname)
+        && field.domains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`)));
+}
 function decodeSearchQueryValue(value) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
         const next = value.replace(/(?:%[a-f0-9]{2})+/giu, run => {
@@ -558,7 +660,8 @@ function searchQueries(value) {
         const providerField = (normalized === "p" && hostname === "search.yahoo.com")
             || (normalized === "mode" && (hostname === "pixiv.net" || hostname.endsWith(".pixiv.net"))
                 && /^\/ranking(?:\.php)?\/?$/u.test(decodeSearchQueryValue(url.pathname).toLowerCase()));
-        return isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch || providerField);
+        return isMarketplaceSearchField(normalized, hostname, decodeSearchQueryValue(url.pathname))
+            || isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch || providerField);
     };
     const queries = [...url.searchParams]
         .filter(([name]) => protectedParameter(name))

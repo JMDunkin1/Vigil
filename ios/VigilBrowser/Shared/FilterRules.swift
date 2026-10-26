@@ -189,7 +189,8 @@ struct NavigationFilter: Sendable {
                 let providerField = (name == "p" && host == "search.yahoo.com")
                     || (name == "mode" && (host == "pixiv.net" || host.hasSuffix(".pixiv.net"))
                         && path.range(of: #"^/ranking(?:\.php)?/?$"#, options: .regularExpression) != nil)
-                return Self.isProtectedSearchParameter(item.name, onSearchRoute: onSearchRoute || providerField)
+                return BroadenedExplicitMedia.isMarketplaceSearchField(name, host: host, path: path)
+                    || Self.isProtectedSearchParameter(item.name, onSearchRoute: onSearchRoute || providerField)
             }
             .map(\.value)
         if let fragment = components.percentEncodedFragment, fragmentText != nil,
@@ -376,6 +377,8 @@ private enum BroadenedExplicitMedia {
         text = text.replacingOccurrences(of: #"\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b"#, with: "sexdoll", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+robots?\b"#, with: "sexrobot", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+toys?\b"#, with: "sextoy", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(sexy|lingerie|mature)(?=\d{1,2}[x×]\d{1,2}\b)"#, with: "$1 ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:bare|exposed|uncovered)[\s_-]+(?:breasts?|nipples?|genitals?)\b"#, with: "nude", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:nak3d|n4ked|n4k3d)\b"#, with: "naked", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b"#, with: "nudes", options: [.regularExpression, .caseInsensitive])
         text = text.replacingOccurrences(of: #"\b(?:ph0t0s|ph0tos|phot0s)\b"#, with: "photos", options: [.regularExpression, .caseInsensitive])
@@ -433,12 +436,43 @@ private enum BroadenedExplicitMedia {
 
     static func normalizedEvidence(_ value: String) -> String { normalized(value) }
 
+    static func isMarketplaceSearchField(_ name: String, host: String, path: String) -> Bool {
+        if name == "k", path.range(of: #"^/s/?$"#, options: [.regularExpression, .caseInsensitive]) != nil,
+           ["amazon.com", "amazon.ca", "amazon.co.uk", "amazon.com.au", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.co.jp", "amazon.in", "amazon.com.mx", "amazon.com.br", "amazon.nl", "amazon.se", "amazon.pl", "amazon.com.be", "amazon.ie", "amazon.com.tr", "amazon.ae", "amazon.sa", "amazon.sg", "amazon.eg", "amazon.co.za"].contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }
+        if name == "_nkw", path.range(of: #"^/sch(?:/|$)"#, options: [.regularExpression, .caseInsensitive]) != nil,
+           ["ebay.com", "ebay.ca", "ebay.co.uk", "ebay.com.au", "ebay.de", "ebay.fr", "ebay.it", "ebay.es", "ebay.ie", "ebay.at", "ebay.be", "ebay.ch", "ebay.nl", "ebay.pl"].contains(where: { host == $0 || host.hasSuffix("." + $0) }) { return true }
+        return false
+    }
+
+    private static let printPatterns = [try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:mature|explicit|provocative|suggestive|revealing|spicy|uncensored|unfiltered|sexy|sensual|seductive|sultry|raunchy|racy|risque|erotic|erotica|lewd|nude|naked|topless|underboob|lingerie|underwear|bikinis?|thongs?|boudoir|pin ups?|pinups?|shibari|bondage|fetish|hotwife|swingers?|sexploitation|strippers?|busty|voluptuous|thicc|hotties?|butts?|booty|18plus|r18) (?:[\p{L}\p{N}]+ ){0,4}(?:prints?|posters?|photos?|photographs?|photography|pictures?|images?|portraits?|canvases|canvas|art(?:works?)?|decor|decorations?|illustrations?|paintings?|drawings?|cartoons?|stickers?|decals?|postcards?|calendars?|tapestries|plaques?|trading cards?)(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:prints?|posters?|photos?|photographs?|photography|pictures?|images?|portraits?|canvases|canvas|art(?:works?)?|decor|decorations?|illustrations?|paintings?|drawings?|cartoons?|stickers?|decals?|postcards?|calendars?|tapestries|plaques?|trading cards?) (?:[\p{L}\p{N}]+ ){0,4}(?:mature|explicit|provocative|suggestive|revealing|spicy|uncensored|unfiltered|sexy|sensual|seductive|sultry|raunchy|racy|risque|erotic|erotica|lewd|nude|naked|topless|underboob|lingerie|underwear|bikinis?|thongs?|boudoir|pin ups?|pinups?|shibari|bondage|fetish|hotwife|swingers?|sexploitation|strippers?|busty|voluptuous|thicc|hotties?|butts?|booty|18plus|r18)(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:18plus|r18|adults? only|not suitable for (?:young people|children|minors)) (?:[\p{L}\p{N}]+ ){0,12}(?:(?:prints?|posters?|photos?|photographs?|photography|pictures?|images?|portraits?|canvases|canvas|art(?:works?)?|decor|decorations?|illustrations?|paintings?|drawings?|cartoons?|stickers?|decals?|postcards?|calendars?|tapestries|plaques?|trading cards?)|digital downloads?)(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:(?:prints?|posters?|photos?|photographs?|photography|pictures?|images?|portraits?|canvases|canvas|art(?:works?)?|decor|decorations?|illustrations?|paintings?|drawings?|cartoons?|stickers?|decals?|postcards?|calendars?|tapestries|plaques?|trading cards?)|digital downloads?) (?:[\p{L}\p{N}]+ ){0,12}(?:18plus|r18|adults? only|not suitable for (?:young people|children|minors))(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:abella danger|abelladanger) (?:[\p{L}\p{N}]+ ){0,8}(?:photos?|photographs?|pictures?|images?|prints?|posters?|portraits?|canvas|art|calendars?|trading cards?|autographs?|mugs?)(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:photos?|photographs?|pictures?|images?|prints?|posters?|portraits?|canvas|art|calendars?|trading cards?|autographs?|mugs?) (?:[\p{L}\p{N}]+ ){0,8}(?:abella danger|abelladanger)(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:busty|voluptuous|thicc) (?:[\p{L}\p{N}]+ ){0,4}ai models?(?=$|[^\p{L}\p{N}])"#), try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])models? (?:[\p{L}\p{N}]+ ){0,4}mature collections?(?=$|[^\p{L}\p{N}])"#)]
+    private static let reviewedPrintProductIDs: Set<String> = ["4596079411", "250555610", "4439331570", "4531137091", "4520580803", "4596303659", "4584233511", "4299890278", "4545313735", "4314991788", "4551934894", "1891438757", "4543154295", "4341915187", "4583202389", "1876924798", "4439560667", "4522401873"]
+    private static let reviewedPrintProductRoute = try! NSRegularExpression(pattern: #"^\/(?:listing|r\/similar)\/([0-9]+)(?:\/|$)"#, options: .caseInsensitive)
+    private static func containsPrintMediaEvidence(_ value: String) -> Bool {
+        var text = value.lowercased()
+        text = text.replacingOccurrences(of: #"\b(?:lingerie|underwear|bikinis?|swimsuits?)[\s_-]+(?:(?:sewing|knitting|crochet)[\s_-]+)?patterns?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:floral|leopard|zebra|animal|paisley|polka[\s_-]+dot)[\s_-]+prints?[\s_-]+(?:bikinis?|underwear|lingerie|thongs?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bpin[\s_-]*up[\s_-]+(?:hair(?:styles?)?|hairstyles?|hairdos?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b(?:cigarette|cigar|pork|boston)[\s_-]+butts?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\bbutt[\s_-]+joints?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        text = text.replacingOccurrences(of: #"\b18\s*\+"#, with: "18plus", options: .regularExpression)
+            .replacingOccurrences(of: #"\br[\s_-]+18\b"#, with: "r18", options: .regularExpression)
+            .replacingOccurrences(of: #"[^\p{L}\p{N}]+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return printPatterns.contains { matches($0, text) }
+    }
+
     // Match meaningful destination labels and early routes, never credentials,
     // arbitrary query/hash metadata, or identifiers later in the address.
     static func containsSemanticURL(_ url: URL) -> Bool {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let host = components.host else { return false }
+        let productHost = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        if productHost == "etsy.com" || productHost.hasSuffix(".etsy.com") {
+            let path = semanticNormalized(components.percentEncodedPath)
+            if let match = reviewedPrintProductRoute.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)),
+               reviewedPrintProductIDs.contains((path as NSString).substring(with: match.range(at: 1))) { return true }
+        }
         let labels = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")).split(separator: ".").map(String.init)
         if ["xxx", "porn"].contains(labels.last ?? "") { return true }
         let hostLabels = labels.dropLast().map(semanticNormalized)
@@ -450,6 +484,7 @@ private enum BroadenedExplicitMedia {
         let segments = Array(components.percentEncodedPath.split(separator: "/", omittingEmptySubsequences: true).prefix(4)).map { semanticNormalized(String($0.prefix(512))) }
         let routeText = segments.map(normalizedEvidence).joined(separator: " ")
         let qualifiedRouteText = normalizedEvidence(routeText)
+        if containsPrintMediaEvidence(qualifiedRouteText) { return true }
         if qualifiedRouteText != routeText {
             return semanticClassifies(qualifiedRouteText, previous: segments.first(where: semanticCatalog.contains) ?? "")
         }
@@ -513,7 +548,7 @@ private enum BroadenedExplicitMedia {
         if compact.range(of: #"^(?!rule34\d)(?:p[o0]rn|h[e3]ntai|nsfw|rule34)(?:hub|tube|world|land|zone|site|sites|read|reader|live|free|hd|vr|4k|\d{1,3}|videos?|photos?|pics?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)?$"#, options: .regularExpression) != nil
             || compact.range(of: #"^(?:free|best|my|the|all|hd|new|daily|live|watch|read|anime|manga|comic|comics|webtoon|3d|vr|4k)(?:porn|hentai|nsfw)$"#, options: .regularExpression) != nil { return true }
         if hostname, compact.range(of: #"^x{3,}$"#, options: .regularExpression) != nil { return true }
-        let media = "(?:videos?|vids?|photos?|pics?|images?|gifs?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))"
+        let media = #"(?:videos?|vids?|photos?|photographs?|pics?|images?|gifs?|prints?|posters?|pin[\s_-]?ups?|calendars?|cams?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|novels?|art|galler(?:y|ies))"#
         let marker = "(?:adults?|mature|uncensored|lewd|erotic|nudes?|naked|sex(?:ual)?|x{3,}|r18|18plus)"
         if tokens.contains(where: { $0.range(of: "^(?:" + marker + media + "|" + media + marker + ")$", options: .regularExpression) != nil }) { return true }
         if tokens.contains(where: { $0.range(of: #"^r34(?:comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?)$"#, options: .regularExpression) != nil })
@@ -548,6 +583,7 @@ private enum BroadenedExplicitMedia {
 
     static func contains(_ value: String) -> Bool {
         let text = normalizedEvidence(value).lowercased()
+        if containsPrintMediaEvidence(text) { return true }
         let textSource = text as NSString
         let labelTokens = words.matches(in: text, range: NSRange(location: 0, length: textSource.length)).map { textSource.substring(with: $0.range) }
         if labelTokens.contains(where: { labels.contains($0) || ["porn", "porno", "nsfw"].contains($0) }) { return true }

@@ -1,4 +1,7 @@
+import { printBlockedTitles, printAllowedTitles } from "./explicit-print-media.mjs";
+
 export const broadenedBlockedSearches = [
+  ...printBlockedTitles,
   "sex dolls", "silicone sex doll", "sex silicone dolls", "love dolls",
   "love realistic silicone doll", "love full-body silicone dolls", "sex-doll", "love_dolls",
   "sex dolls medical", "love dolls art", "sexdolls", "lovedolls", "sex robots",
@@ -20,6 +23,7 @@ export const broadenedBlockedSearches = [
 ];
 
 export const broadenedAllowedSearches = [
+  ...printAllowedTitles,
   "silicone dolls", "reborn silicone baby dolls", "dollhouse toys", "silicone baking molds",
   "love dollhouse furniture", "adult doll collectors", "toy robots", "sexdollhouse product",
   "naked", "nude", "topless", "bottomless", "sex", "sexual", "sensual", "sexy", "hot",

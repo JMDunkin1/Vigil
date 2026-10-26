@@ -10,6 +10,19 @@ const AMBIGUOUS_SEARCH_PARAMETER_NAMES = new Set(["p", "k", "s", "mode"]);
 const SEARCH_ROUTE_CONTEXT_PATTERN = /(?:^|\/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=\/|$)/iu;
 const STRUCTURED_SEARCH_PARAMETER_PATTERN = /^(q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)\[(\d*|q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|word|tags|tag)\]$/iu;
 
+// These marketplaces use field/route names that are otherwise ambiguous URL
+// metadata. Scope them to their declared hosts and search routes.
+export const MARKETPLACE_SEARCH_FIELDS = [
+  { name: "k", route: "^/s/?$", domains: ["amazon.com", "amazon.ca", "amazon.co.uk", "amazon.com.au", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.co.jp", "amazon.in", "amazon.com.mx", "amazon.com.br", "amazon.nl", "amazon.se", "amazon.pl", "amazon.com.be", "amazon.ie", "amazon.com.tr", "amazon.ae", "amazon.sa", "amazon.sg", "amazon.eg", "amazon.co.za"] },
+  { name: "_nkw", route: "^/sch(?:/|$)", domains: ["ebay.com", "ebay.ca", "ebay.co.uk", "ebay.com.au", "ebay.de", "ebay.fr", "ebay.it", "ebay.es", "ebay.ie", "ebay.at", "ebay.be", "ebay.ch", "ebay.nl", "ebay.pl"] }
+] as const;
+
+export function isMarketplaceSearchField(name: string, hostname: string, pathname: string): boolean {
+  return MARKETPLACE_SEARCH_FIELDS.some(field => field.name === name
+    && new RegExp(field.route, "iu").test(pathname)
+    && field.domains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`)));
+}
+
 export function decodeSearchQueryValue(value: string): string {
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const next = value.replace(/(?:%[a-f0-9]{2})+/giu, run => {
@@ -68,7 +81,8 @@ export function searchQueries(value: unknown): Array<{ query: string; hostname: 
     const providerField = (normalized === "p" && hostname === "search.yahoo.com")
       || (normalized === "mode" && (hostname === "pixiv.net" || hostname.endsWith(".pixiv.net"))
         && /^\/ranking(?:\.php)?\/?$/u.test(decodeSearchQueryValue(url.pathname).toLowerCase()));
-    return isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch || providerField);
+    return isMarketplaceSearchField(normalized, hostname, decodeSearchQueryValue(url.pathname))
+      || isProtectedSearchParameter(name, pathIsSearch || fragmentIsSearch || providerField);
   };
   const queries = [...url.searchParams]
     .filter(([name]) => protectedParameter(name))

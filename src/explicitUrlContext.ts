@@ -1,4 +1,4 @@
-import { normalizeAutomaticExplicitText, normalizeExplicitVocabulary, EXPLICIT_SEARCH_KEYWORD_TERMS, containsMultilingualExplicitText } from "./explicitMediaContext.js";
+import { normalizeAutomaticExplicitText, normalizeExplicitVocabulary, EXPLICIT_SEARCH_KEYWORD_TERMS, containsMultilingualExplicitText, containsExplicitPrintMedia, isReviewedExplicitPrintProductUrl } from "./explicitMediaContext.js";
 
 export interface SemanticExplicitUrlMatch {
   component: "hostname" | "path";
@@ -12,6 +12,7 @@ export function matchSemanticExplicitUrl(value: unknown): SemanticExplicitUrlMat
   try { url = value instanceof URL ? value : new URL(String(value || "")); }
   catch { return null; }
   if (!/^https?:$/u.test(url.protocol)) return null;
+  if (isReviewedExplicitPrintProductUrl(url.href)) return { component: "path", term: "reviewed-explicit-print", normalizedText: url.pathname };
 
   const strong = new Set([
     ...EXPLICIT_SEARCH_KEYWORD_TERMS,
@@ -152,6 +153,7 @@ export function matchSemanticExplicitUrl(value: unknown): SemanticExplicitUrlMat
   // hyphens. Qualify only that phrase and retain any separate explicit words.
   const routeText = segments.map(segment => normalizeAutomaticExplicitText(normalize(segment.slice(0, 512)))).join(" ");
   const qualifiedRouteText = normalizeAutomaticExplicitText(routeText);
+  if (containsExplicitPrintMedia(routeText)) return { component: "path", term: "explicit-print", normalizedText: routeText };
   if (qualifiedRouteText !== routeText) {
     const catalogRoute = segments.map(segment => normalize(segment)).find(segment => catalog.has(segment)) || "";
     const term = classify(qualifiedRouteText, catalogRoute);

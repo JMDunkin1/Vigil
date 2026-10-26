@@ -32,8 +32,14 @@ for (const name of ["p", "k", "s", "mode"]) {
 }
 assert.deepEqual(queryTexts("https://search.yahoo.com/?p=porn"), ["porn"]);
 assert.deepEqual(queryTexts("https://www.pixiv.net/ranking.php?mode=r18"), ["r18"]);
+assert.deepEqual(queryTexts("https://www.amazon.com/s?k=lingerie+prints"), ["lingerie prints"]);
+assert.deepEqual(queryTexts("https://www.ebay.com/sch/i.html?_nkw=mature+poster"), ["mature poster"]);
 
 const blockedURLs = [
+  "https://www.amazon.com/s?k=lingerie+prints",
+  "https://www.amazon.co.uk/s?k=mature+poster",
+  "https://www.ebay.com/sch/i.html?_nkw=lingerie+photo+print",
+  "https://www.ebay.co.uk/sch/360/i.html?_nkw=provocative+wall+art",
   ...["word", "tag", "tags", "mode", "searchQuery", "q[]", "search[keyword]"].map(key =>
     `https://catalog.example/search?${encodeURIComponent(key)}=naked+girls`),
   ...["tags", "tagged", "hashtag", "search", "search.php", "results"].map(route =>
@@ -44,6 +50,12 @@ const blockedURLs = [
   "https://catalog.example/search?q=adult%2520videos%25ZZ"
 ];
 const allowedURLs = [
+  "https://www.amazon.com/s?k=family+photo+prints",
+  "https://www.ebay.com/sch/i.html?_nkw=Henry+Danger+poster",
+  "https://www.amazon.com/ap/signin?k=lingerie+prints",
+  "https://www.ebay.com/auth?_nkw=mature+poster",
+  "https://www.amazon.com.example.org/s?k=lingerie+prints",
+  "https://www.ebay.com.example.org/sch/i.html?_nkw=mature+poster",
   ...["leaks pipes", "leaks aquariums", "naked economics", "naked eye astronomy", "sex education"].flatMap(query => [
     `https://catalog.example/search?q=${encodeURIComponent(query)}`,
     `https://catalog.example/search/${encodeURIComponent(query)}`,
@@ -84,6 +96,15 @@ const explicitQueries = [
   "naked photos research", "xxx videos education", "pornography law porn videos"
 ];
 const precisionURLs: Array<readonly [string, boolean]> = [
+  ["https://www.etsy.com/listing/4596079411/neutral-title", true],
+  ["https://www.etsy.com/r/similar/250555610/", true],
+  ["https://www.etsy.com/%6cisting/4439331570/neutral", true],
+  ["https://www.etsy.com.example.org/listing/4596079411/neutral", false],
+  ["https://www.etsy.com/listing/45960794110/neutral", false],
+  ["https://www.etsy.com/?tracking=4596079411", false],
+  ["https://www.ebay.com/sch/i.html?_nkw=abella+danger+prints", true],
+  ["https://www.etsy.com/search?q=abella+danger+hot+prints", true],
+  ["https://www.ebay.com/sch/i.html?_nkw=henry+danger+prints", false],
   ...ordinaryQueries.map(query => [`https://catalog.example/search?q=${encodeURIComponent(query)}`, false] as const),
   ...explicitQueries.map(query => [`https://catalog.example/search?q=${encodeURIComponent(query)}`, true] as const),
   ...["p", "k", "s", "mode"].map(name => [`https://ordinary.example/auth?${name}=xxx`, false] as const),
