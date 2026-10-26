@@ -1974,7 +1974,7 @@ enum DOMAdapters {
         ), ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)] : [];
         const scrollingRegions = [...new Set(sheets)].map(node => nativeGestureRegion(node, true)).filter(Boolean).slice(0, 24);
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
-          ? [nativeGestureRegion(postCarousel.track)].filter(Boolean) : [];
+          ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
         const state = JSON.stringify({ locked, scrollingRegions, carouselRegions });
         if (!force && nativeScrollState === state) return;
         nativeScrollState = state;
@@ -2009,8 +2009,11 @@ enum DOMAdapters {
           overscroll-behavior-y: none !important;
           scroll-snap-type: none !important;
         }
-        html[data-vigil-single-reel-kind="p"] [data-vigil-single-reel-carousel],
-        html[data-vigil-single-reel-kind="p"] [data-vigil-single-reel-carousel] * {
+        html[data-vigil-single-reel-kind="p"]:has([data-vigil-single-reel-carousel]),
+        html[data-vigil-single-reel-kind="p"] :is(
+          [data-vigil-single-reel-carousel], [data-vigil-single-reel-carousel] *,
+          :has([data-vigil-single-reel-carousel])
+        ) {
           touch-action: pan-x pinch-zoom !important;
         }
         html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"],
@@ -2267,7 +2270,7 @@ enum DOMAdapters {
         }
       };
       const allowsCarouselPan = target => pinnedKind === 'p' && postCarousel && !postCarousel.rejected
-        && exactPostCard(pinnedCard) && postCarousel.track.contains(target);
+        && postCarousel.track.isConnected && exactPostCard(pinnedCard) && postCarousel.viewport.contains(target);
       const reelAdvanceControl = target => {
         const control = target?.closest?.('button, [role="button"], a[href]') || target;
         const labels = [control, ...control?.querySelectorAll?.('[aria-label]') || []];
@@ -2283,6 +2286,9 @@ enum DOMAdapters {
       const containPress = event => {
         if (!syncRoute() || inSheet(event.target)) return false;
         if (reelAdvanceControl(event.target)) { cancel(event); return true; }
+        // Instagram's SwipeArea needs the complete start/move/end lifecycle.
+        // Vertical movement and navigation to another post remain contained.
+        if (allowsCarouselPan(event.target)) return false;
         if (pinnedKind === 'reel') {
           // Instagram arms its recommendation rail on press-and-hold. Stop the
           // press path before that timer starts; the ordinary click still
@@ -2352,20 +2358,79 @@ enum DOMAdapters {
         const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
         return routes.length > 0 && routes.every(route => route.id === pinnedID && route.kind === pinnedKind);
       };
+      const loadedCarouselManifest = card => {
+        // Read only the loaded Sidecar props for this exact shortcode. React's
+        // virtual list unmounts offscreen li nodes; DOM position alone must not
+        // authorize newly mounted media or recommendation sources.
+        const seen = new WeakSet(), pending = [];
+        const value = (object, key) => object && typeof object === 'object'
+          ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
+        for (const node of [card, ...card.querySelectorAll('*')].slice(0, 128)) {
+          for (const key of Object.getOwnPropertyNames(node).filter(key => key.startsWith('__reactProps$'))) {
+            pending.push({ object: value(node, key), depth: 0 });
+          }
+        }
+        for (let inspected = 0; pending.length && inspected < 800; inspected += 1) {
+          const { object, depth } = pending.pop();
+          if (!object || typeof object !== 'object' || seen.has(object) || depth > 10) continue;
+          seen.add(object);
+          const children = value(object, 'sidecarChildren');
+          if (value(object, 'code') === pinnedID && value(object, 'isSidecar') === true
+              && Array.isArray(children) && children.length >= 2 && children.length <= 100) {
+            const manifest = { image: new Set(), video: new Set() };
+            for (const child of children) {
+              if (!value(child, 'id') || typeof value(child, 'isVideo') !== 'boolean') continue;
+              const add = (set, source) => {
+                if (typeof source !== 'string' || !source.trim()) return;
+                try { const url = new URL(source, location.href); if (url.protocol === 'https:') set.add(url.href); } catch (_) {}
+              };
+              add(manifest.image, value(child, 'src'));
+              const images = value(child, 'displayResources');
+              for (const resource of Array.isArray(images) ? images : []) add(manifest.image, value(resource, 'src'));
+              if (value(child, 'isVideo') === true) {
+                add(manifest.video, value(child, 'videoUrl'));
+                const videos = value(child, 'videoResources');
+                for (const resource of Array.isArray(videos) ? videos : []) add(manifest.video, value(resource, 'src'));
+              }
+            }
+            return manifest;
+          }
+          const next = Array.isArray(object) ? object.slice(0, 100)
+            : ['props', 'children', 'post'].map(key => value(object, key));
+          next.forEach(object => pending.push({ object, depth: depth + 1 }));
+        }
+        return null;
+      };
       const capturePostCarousel = card => {
         if (pinnedKind !== 'p' || !exactPostCard(card)) return null;
         for (const track of [card, ...card.querySelectorAll('*')]) {
-          if (!horizontalCarousel(track) || !(track.getAttribute('aria-roledescription') === 'carousel'
-              || (track.clientWidth > 0 && track.scrollWidth > track.clientWidth + 1
-                && /auto|scroll/.test(getComputedStyle(track).overflowX)))) continue;
+          if (!horizontalCarousel(track)) continue;
           const slides = mediaGroups(track);
           if (slides.length < 2) continue;
+          let viewport = null;
+          if (track.getAttribute('aria-roledescription') === 'carousel'
+              || (track.clientWidth > 0 && track.scrollWidth > track.clientWidth + 1
+                && /auto|scroll/.test(getComputedStyle(track).overflowX))) viewport = track;
+          // PolarisVirtualHSnapScroll puts translated li slots in a flex ul,
+          // inside a separate SwipeArea. That area changes overflowX to hidden
+          // during touchstart, so the list is not itself a native scroller.
+          if (!viewport && track.matches('ul, ol') && slides.every(slide => slide.matches('li'))) {
+            for (let parent = track.parentElement; parent && parent !== card; parent = parent.parentElement) {
+              if (parent.getAttribute('role') !== 'presentation' || parent.clientWidth <= 0
+                  || !/auto|scroll|hidden/.test(getComputedStyle(parent).overflowX)) continue;
+              if ([...parent.querySelectorAll('video, img')].filter(contentMedia).some(media => !track.contains(media))) break;
+              viewport = parent;
+              break;
+            }
+          }
+          if (!viewport) continue;
           const boxes = slides.map(slide => slide.getBoundingClientRect()).sort((a, b) => a.left - b.left);
           // A video and its overlaid poster are one slide. Only distinct,
           // substantial horizontal groups can authorize additional videos.
           if (boxes.some((box, index) => box.width < 180 || box.height < 140
               || (index > 0 && box.left < boxes[index - 1].right - 1))) continue;
-          return { track, rejected: false, slides: slides.map(node => ({ node,
+          return { track, viewport, manifest: viewport !== track ? loadedCarouselManifest(card) : null,
+            rejected: false, slides: slides.map(node => ({ node,
             media: [...(node.matches('video, img') ? [node] : node.querySelectorAll('video, img'))]
               .filter(contentMedia).map(media => ({ node: media,
                 video: media instanceof HTMLVideoElement,
@@ -2379,13 +2444,21 @@ enum DOMAdapters {
         if (!exactPostCard(pinnedCard)) { postCarousel.rejected = true; return false; }
         const slide = postCarousel.slides.find(slide => slide.node.parentElement === postCarousel.track
           && (slide.node === media || slide.node.contains(media)));
-        if (!slide) return false;
         const video = media instanceof HTMLVideoElement;
-        const remembered = slide.media.find(entry => entry.node === media)
-          || slide.media.find(entry => entry.video === video && entry.source !== null && entry.source === source);
-        if (!remembered || remembered.video !== video) return false;
-        if (remembered.source === null && !emptyMediaSource(source)) remembered.source = source;
-        return remembered.source === null ? emptyMediaSource(source) : remembered.source === source;
+        const remembered = slide?.media.find(entry => entry.node === media)
+          || slide?.media.find(entry => entry.video === video && entry.source !== null && entry.source === source);
+        if (remembered?.video === video) {
+          if (remembered.source === null && !emptyMediaSource(source)) remembered.source = source;
+          if (remembered.source === null ? emptyMediaSource(source) : remembered.source === source) return true;
+        }
+        const slot = media.closest('li'), manifest = postCarousel.manifest?.[video ? 'video' : 'image'];
+        if (!manifest || slot?.parentElement !== postCarousel.track) return false;
+        const srcset = media.getAttribute('srcset');
+        const sources = srcset ? srcset.split(',').map(entry => entry.trim().split(/\s+/)[0])
+          : [media.getAttribute('src') || media.querySelector('source')?.src || ''];
+        return sources.length > 0 && sources.every(source => {
+          try { return manifest.has(new URL(source, location.href).href); } catch (_) { return false; }
+        });
       };
       const reconcile = () => {
         normalizeRecipientSheets();
@@ -2452,6 +2525,7 @@ enum DOMAdapters {
           postLayoutCaptured = Boolean(postCarousel)
             || ![pinnedCard, ...pinnedCard.querySelectorAll('*')].some(horizontalCarousel);
           postCarousel?.track.setAttribute('data-vigil-single-reel-carousel', 'true');
+          postCarousel?.viewport.setAttribute('data-vigil-single-reel-carousel', 'true');
         }
         if (postCarousel && (!pinnedCard?.contains(postCarousel.track) || !exactPostCard(pinnedCard))) {
           postCarousel.rejected = true;
@@ -7396,6 +7470,14 @@ enum DOMAdapters {
         const distance = Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
         if (distance < 10) return;
         consumePhotoPinch(event);
+        // The first finger may already have started Instagram's SwipeArea.
+        // Hand that gesture back as cancelled before taking the second finger,
+        // so its overflow/pressed state cannot strand the next photo swipe.
+        const swipeCancel = new Event('touchcancel', { bubbles: true });
+        Object.defineProperties(swipeCancel, {
+          touches: { value: [] }, targetTouches: { value: [] }, changedTouches: { value: event.touches }
+        });
+        target.dispatchEvent(swipeCancel);
         drainingPhotoTouches = true;
         const x = (touches[0].clientX + touches[1].clientX) / 2;
         const y = (touches[0].clientY + touches[1].clientY) / 2;

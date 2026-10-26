@@ -13079,3 +13079,106 @@ extension VigilSocialTests {
         try await waitForJavaScriptCondition("!document.getElementById('vigil-instagram-post-zoom')", in: webView)
     }
 }
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramPhotoDumpReceivesNativeSwipeLifecycleAcrossScrollAndVirtualTracks() async throws {
+        for virtual in [false, true] {
+            let media = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='500'/%3E"
+            let slides = (0..<2).map { index in
+                "<li style='\(virtual ? "position:absolute;transform:translateX(\(index * 390)px);" : "flex:none;")width:390px;height:500px'><img src=\"\(media)#\(index)\" style='width:390px;height:500px'></li>"
+            }.joined()
+            let track = virtual
+                ? "<div id='motion'><ul id='track'>\(slides)</ul></div>"
+                : "<ul id='track'>\(slides)</ul>"
+            let webView = try await instagramRepairFixture("""
+                <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+                body{margin:0}#stack{height:700px;overflow-y:auto}article{height:700px}
+                #viewport{width:390px;height:500px;overflow-x:\(virtual ? "hidden" : "auto");position:relative;display:flex}
+                #motion,#track{position:relative;display:flex;flex-direction:row;width:390px;height:500px;padding:0;margin:0;list-style:none}
+                </style></head><body><main id="stack"><article><a href="/p/Dump123/">Sent post</a>
+                <div id="viewport" role="presentation">\(track)</div></article>
+                <article><a href="/p/Other123/">Other post</a><img id="other" src="\(media)#other" style="width:390px;height:500px"></article></main>
+                <script>
+                window.siteEvents=[];window.photoIndex=0;window.siteStart=null;window.siteLast=null;
+                const viewport=document.getElementById('viewport'),motion=document.getElementById('motion')||document.getElementById('track');
+                viewport.addEventListener('touchstart',event=>{siteEvents.push('start');siteStart=event.touches[0];siteLast=null;viewport.style.overflowX='hidden'});
+                viewport.addEventListener('touchmove',event=>{siteEvents.push('move');siteLast=event.touches[0]});
+                viewport.addEventListener('touchend',()=>{siteEvents.push('end');if(siteStart&&siteLast){const dx=siteLast.clientX-siteStart.clientX;
+                  if(Math.abs(dx)>30)photoIndex=Math.max(0,Math.min(1,photoIndex+(dx<0?1:-1)))}
+                  motion.style.transform='translateX('+(-photoIndex*390)+'px)';siteStart=null;siteLast=null;viewport.style.overflowX='auto'});
+                viewport.addEventListener('touchcancel',()=>{siteEvents.push('cancel');siteStart=null;siteLast=null;viewport.style.overflowX='auto'});
+                window.fireCarouselTouch=(type,points)=>{const rect=viewport.getBoundingClientRect(),event=new Event(type,{bubbles:true,cancelable:true});
+                  Object.defineProperty(event,'touches',{value:points.map(([identifier,x,y])=>({identifier,clientX:rect.left+x,clientY:rect.top+y}))});
+                  // Instagram's transparent image hit target can be the swipe area itself.
+                  viewport.dispatchEvent(event);return event.defaultPrevented};
+                window.swipePhoto=(from,to)=>{fireCarouselTouch('touchstart',[[1,from,200]]);const blocked=fireCarouselTouch('touchmove',[[1,to,200]]);
+                  fireCarouselTouch('touchend',[]);return blocked};
+                </script></body></html>
+                """, path: "/p/Dump123/")
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let state = try await webView.evaluateJavaScript("""
+                (()=>{const leftBlocked=swipePhoto(280,60),forward=photoIndex,rightBlocked=swipePhoto(60,280),back=photoIndex;
+                  const chain=[];for(let n=document.getElementById('viewport');n;n=n.parentElement)chain.push(getComputedStyle(n).touchAction);
+                  return {leftBlocked,rightBlocked,forward,back,events:siteEvents.join(','),nativePan:chain.every(v=>v==='auto'||v.includes('pan-x')),
+                    otherHidden:getComputedStyle(document.getElementById('other')).visibility==='hidden',buttons:document.querySelectorAll('button').length};})()
+                """) as? [String: Any]
+            XCTAssertEqual(state?["leftBlocked"] as? Bool, false, "virtual=\(virtual)")
+            XCTAssertEqual(state?["rightBlocked"] as? Bool, false, "virtual=\(virtual)")
+            XCTAssertEqual(state?["forward"] as? Int, 1, "The site must receive a complete left swipe, virtual=\(virtual)")
+            XCTAssertEqual(state?["back"] as? Int, 0)
+            XCTAssertEqual(state?["events"] as? String, "start,move,end,start,move,end")
+            XCTAssertEqual(state?["nativePan"] as? Bool, true, "Every ancestor must permit horizontal native panning")
+            XCTAssertEqual(state?["otherHidden"] as? Bool, true)
+            XCTAssertEqual(state?["buttons"] as? Int, 0, "Finger swipes need no replacement arrow controls")
+            let pinchHandoff = try await webView.evaluateJavaScript("""
+                fireCarouselTouch('touchstart',[[1,80,200]]);
+                fireCarouselTouch('touchstart',[[1,80,200],[2,180,200]]);
+                const zoom=!!document.getElementById('vigil-instagram-post-zoom'),cancelled=siteEvents.at(-1)==='cancel';
+                fireCarouselTouch('touchend',[]);swipePhoto(280,60);[zoom,cancelled,photoIndex===1]
+                """) as? [Bool]
+            XCTAssertEqual(pinchHandoff, [true, true, true], "Pinching must release the site's swipe state for the next one-finger gesture")
+            let contained = try await webView.evaluateJavaScript("""
+                fireCarouselTouch('touchstart',[[1,100,350]]);
+                const vertical=fireCarouselTouch('touchmove',[[1,100,100]]);fireCarouselTouch('touchend',[]);
+                history.pushState({},'', '/p/Other123/');[vertical,location.pathname==='/p/Dump123/']
+                """) as? [Bool]
+            XCTAssertEqual(contained, [true, true], "Photo swipes must not release the next-post boundary")
+        }
+    }
+}
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramVirtualCarouselAuthorizesLaterSlidesOnlyFromTheExactLoadedPost() async throws {
+        for exact in [true, false] {
+            let webView = try await instagramRepairFixture("""
+                <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+                body{margin:0}#viewport{position:relative;display:flex;overflow-x:hidden;width:390px;height:500px}
+                ul{position:relative;display:flex;flex-direction:row;width:390px;height:500px;margin:0;padding:0}
+                li{position:absolute;width:390px;height:500px}img{width:390px;height:500px}
+                </style></head><body><article><a href="/p/Dump123/">Sent post</a><div id="viewport" role="presentation"><div>
+                <ul id="track"><li><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='500'/%3E#one"></li>
+                <li style="transform:translateX(390px)"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='500'/%3E#two"></li></ul>
+                </div></div></article><script>
+                window.laterSource='https://example.com/vigil-fixture-third.jpg';
+                document.getElementById('viewport')['__reactProps$fixture']={children:{props:{post:{code:'\(exact ? "Dump123" : "Other123")',isSidecar:true,
+                  sidecarChildren:[{id:'first',isVideo:false,src:'https://example.com/vigil-fixture-first.jpg'},
+                    {id:'second',isVideo:false,src:'https://example.com/vigil-fixture-second.jpg'},
+                    {id:'third',isVideo:false,src:laterSource}]}}}};
+                </script></body></html>
+                """, path: "/p/Dump123/")
+            try await Task.sleep(nanoseconds: 120_000_000)
+            _ = try await evaluateJavaScriptRetryingKnownGestureTransition("""
+                (()=>{if(document.getElementById('later'))return true;
+                  const slot=document.createElement('li');slot.style.transform='translateX(780px)';
+                  const image=document.createElement('img');image.id='later';image.src=laterSource;slot.append(image);document.getElementById('track').append(slot);return true;})()
+                """, in: webView)
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let authorized = try await evaluateJavaScriptRetryingKnownGestureTransition("document.querySelector('article').dataset.vigilSingleReelCard==='allowed' && getComputedStyle(document.getElementById('later')).visibility==='visible'", in: webView) as? Bool
+            XCTAssertEqual(authorized, exact, "Only the selected post's loaded sidecar source list may authorize a virtual remount")
+            _ = try await evaluateJavaScriptRetryingKnownGestureTransition("document.getElementById('later').src='https://example.com/vigil-fixture-recommendation.jpg';true", in: webView)
+            try await waitForJavaScriptCondition("document.querySelector('article').dataset.vigilSingleReelCard==='blocked'", in: webView)
+        }
+    }
+}
