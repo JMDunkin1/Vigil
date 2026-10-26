@@ -70,5 +70,12 @@ physical phone's Instagram page. Home correctly reported no pinned item. A
 human swipe of an opened share is still required to verify live containment;
 deployment and script presence are not that verification.
 
+Subsequent live inspection observed a sent Reel while Direct retained its
+thread route: `pinned=true`, `kind=reel`, `viewer=true`, no misclassified recipient
+or comments sheet, and a visible, actively playing video. Its viewport-sized
+ancestor was an anonymous absolute-positioned div, matching the missed portal
+shape now covered by the regression. This confirms activation and playback on
+the device; the user's swipe result remains the final containment check.
+
 The refreshed runtime social-build checks, 48 native route probes, and two
 story-position regressions also passed.
