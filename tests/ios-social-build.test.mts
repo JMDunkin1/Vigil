@@ -280,11 +280,18 @@ assert.doesNotMatch(
 const readingAnchorStart = instagramStableAdapterSource.indexOf("const withHomeScrollAnchor =");
 const readingAnchorEnd = instagramStableAdapterSource.indexOf("const homeCardIdentities =", readingAnchorStart);
 assert.ok(readingAnchorStart >= 0 && readingAnchorEnd > readingAnchorStart);
+const photoPinchStart = instagramStableAdapterSource.indexOf("let postPhotoPinch =");
+const photoPinchEnd = instagramStableAdapterSource.indexOf("const dismissInstagramPhotoViewer =", photoPinchStart);
+assert.ok(photoPinchStart >= 0 && photoPinchEnd > photoPinchStart);
 assert.doesNotMatch(
-  instagramStableAdapterSource.slice(0, readingAnchorStart) + instagramStableAdapterSource.slice(readingAnchorEnd),
+  instagramStableAdapterSource.slice(0, photoPinchStart)
+    + instagramStableAdapterSource.slice(photoPinchEnd, readingAnchorStart)
+    + instagramStableAdapterSource.slice(readingAnchorEnd),
   /touchmove|scrollTop\s*[+\-]?=|scrollBy\(|overflow\s*=\s*['"]hidden/u,
-  "only the Home classification reading anchor may compensate vertical position; ordinary gestures stay native"
+  "only Home classification may compensate scroll; the isolated post-photo pinch must leave other gestures native"
 );
+assert.doesNotMatch(instagramStableAdapterSource.slice(photoPinchStart, photoPinchEnd), /scrollTop\s*[+\-]?=|scrollBy\(/u,
+  "content-only pinch must never move the feed or carousel");
 assert.match(
   instagramStableAdapterSource,
   /const directActivationTarget[\s\S]*?event\.pointerType !== 'touch'[\s\S]*?performance\.now\(\) - touch\.startedAt > 420[\s\S]*?touch\.activation\.click\(\)/u,

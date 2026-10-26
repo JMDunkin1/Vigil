@@ -5,6 +5,21 @@ import MediaPlayer
 import UIKit
 import WebKit
 
+@MainActor
+final class InstagramWebView: WKWebView {
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        scrollView.pinchGestureRecognizer?.isEnabled = false
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        // WebKit creates this recognizer after navigation, sometimes after
+        // the view was attached. Keep webpage zoom out of the photo gesture.
+        scrollView.pinchGestureRecognizer?.isEnabled = false
+    }
+}
+
 // WKWebView's root UIScrollView is not the scroller used by every Instagram
 // viewer. Own the pan decision above WebKit's nested recognizers, without
 // covering the player with a view or intercepting ordinary taps and pinches.
@@ -738,9 +753,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         // media with a persisted ledger reservation.
         configuration.allowsPictureInPictureMediaPlayback = service == .youtube
         configuration.allowsInlineMediaPlayback = true
-        // Instagram disables viewport scaling on mobile. Permit Safari-style
-        // pinch enlargement of the photo already on screen.
-        configuration.ignoresViewportScaleLimits = service == .instagram
+        // Instagram's adapter enlarges only the touched post photo. Browser
+        // viewport zoom would also move the captions, chrome and touch origin.
+        configuration.ignoresViewportScaleLimits = false
         configuration.mediaTypesRequiringUserActionForPlayback = []
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
         // LinkedIn loads its Apple handler asynchronously after the tap. The
@@ -756,7 +771,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             configuration.applicationNameForUserAgent = XWebCompatibility.safariApplicationNameSuffix
         }
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = service == .instagram
+            ? InstagramWebView(frame: .zero, configuration: configuration)
+            : WKWebView(frame: .zero, configuration: configuration)
         if service == .snapchat {
             webView.customUserAgent = SnapchatWebCompatibility.desktopSafariUserAgent
         }
@@ -824,6 +841,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         // A recipient sheet moves when the keyboard changes the viewport.
         // Interactive dismissal treats that adjustment as a dismiss gesture.
         webView.scrollView.keyboardDismissMode = service == .instagram ? .none : .interactive
+        if service == .instagram { webView.scrollView.pinchGestureRecognizer?.isEnabled = false }
         let refreshControl = UIRefreshControl()
         refreshControl.addTarget(self, action: #selector(refreshWebView(_:)), for: .valueChanged)
         refreshControl.isEnabled = false

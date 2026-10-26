@@ -149,9 +149,9 @@ async function main() {
   await run(`document.getElementById('avatar').click()`);
   assert.deepEqual(await run(`(() => {
     const viewer=document.getElementById('vigil-instagram-profile-photo');
-    return {open:!!viewer,source:viewer?.querySelector('img').src,closeFocused:document.activeElement?.getAttribute('aria-label')};
-  })()`),{open:true,source:'https://www.instagram.com/avatar.svg',closeFocused:'Close profile photo'});
-  await run(`document.querySelector('[aria-label="Close profile photo"]').click();document.getElementById('post').click();`);
+    return {open:!!viewer,source:viewer?.querySelector('img').src,viewerFocused:document.activeElement===viewer,circular:getComputedStyle(viewer.querySelector('img')).borderRadius==='50%'};
+  })()`),{open:true,source:'https://www.instagram.com/avatar.svg',viewerFocused:true,circular:true});
+  await run(`document.getElementById('vigil-instagram-profile-photo').click();document.getElementById('post').click();`);
   assert.equal(await run(`!!document.getElementById('vigil-instagram-profile-photo')`),false,'post images must not be mistaken for avatars');
   await run(`document.getElementById('avatar').click();history.pushState({},'','/direct/inbox/');`);
   await settle();

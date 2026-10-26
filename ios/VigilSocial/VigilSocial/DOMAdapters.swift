@@ -7217,6 +7217,119 @@ enum DOMAdapters {
       document.addEventListener('touchstart', rememberCommentPlayback, { capture: true, passive: true });
       document.addEventListener('click', rememberCommentPlayback, true);
 
+      // Content-only pinch: a fixed starting rectangle and finger IDs keep
+      // the same point beneath the fingers while the page itself stays still.
+      let postPhotoPinch = null;
+      let postPhotoPinchRelease = 0;
+      let drainingPhotoTouches = false;
+      const zoomablePostPhoto = image => {
+        if (!(image instanceof HTMLImageElement) || !image.currentSrc
+            || !image.closest('article, [role="article"], [data-vigil-single-reel-card="allowed"]')
+            || image.closest('nav, [role="navigation"], [data-vigil-instagram-comments-sheet], [data-vigil-instagram-recipient-sheet]')
+            || /profile picture$/i.test(image.alt || '')) return false;
+        const box = image.getBoundingClientRect();
+        if (box.width < 140 || box.height < 140) return false;
+        for (let node = image; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (node.hidden || node.getAttribute('aria-hidden') === 'true' || style.display === 'none'
+              || style.visibility !== 'visible' || Number(style.opacity) === 0 || style.filter !== 'none') return false;
+        }
+        return true;
+      };
+      const finishPostPhotoPinch = (animate = false) => {
+        const pinch = postPhotoPinch;
+        if (!pinch) return;
+        postPhotoPinch = null;
+        postPhotoPinchRelease = performance.now() + 400;
+        if (animate && pinch.image.isConnected && pinch.source === pinch.image.currentSrc && zoomablePostPhoto(pinch.image)) {
+          pinch.photo.style.transition = 'transform 160ms ease-out';
+          pinch.photo.style.transform = 'translate(0px,0px) scale(1)';
+          pinch.layer.style.transition = 'background 160ms ease-out';
+          pinch.layer.style.background = 'transparent';
+          setTimeout(() => { pinch.layer.remove(); pinch.observer.disconnect(); }, 170);
+        } else { pinch.layer.remove(); pinch.observer.disconnect(); }
+      };
+      const consumePhotoPinch = event => {
+        if (event.cancelable) event.preventDefault();
+        event.stopImmediatePropagation();
+      };
+      window.addEventListener('touchstart', event => {
+        if (postPhotoPinch || drainingPhotoTouches) { consumePhotoPinch(event); return; }
+        if (event.touches.length !== 2) return;
+        const target = event.target, touches = [...event.touches];
+        if (!(target instanceof Element) || target.closest(
+          'nav, input, textarea, [contenteditable="true"], [data-vigil-instagram-comments-sheet], [data-vigil-instagram-recipient-sheet]'
+        )) return;
+        // Instagram can put a transparent double-tap/tag hit area over the
+        // photo. Resolve the displayed image in that same post under both
+        // fingers, rather than assuming the touch target is the img itself.
+        const card = target.closest('article, [role="article"], [data-vigil-single-reel-card="allowed"]');
+        const candidates = card ? [...card.querySelectorAll('img')].slice(0, 24) : [];
+        const image = [target, ...candidates].find(candidate => {
+          if (!zoomablePostPhoto(candidate)) return false;
+          const box = candidate.getBoundingClientRect();
+          return touches.every(touch => touch.clientX >= box.left && touch.clientX <= box.right
+            && touch.clientY >= box.top && touch.clientY <= box.bottom);
+        });
+        if (!image) return;
+        const box = image.getBoundingClientRect();
+        const distance = Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY);
+        if (distance < 10) return;
+        consumePhotoPinch(event);
+        drainingPhotoTouches = true;
+        const x = (touches[0].clientX + touches[1].clientX) / 2;
+        const y = (touches[0].clientY + touches[1].clientY) / 2;
+        const layer = document.createElement('div');
+        layer.id = 'vigil-instagram-post-zoom';
+        layer.setAttribute('aria-hidden', 'true');
+        layer.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;background:transparent';
+        // The shadow keeps this presentation copy out of Instagram's carousel
+        // and shared-item DOM queries. Vigil's media scanner covers shadow DOM.
+        const photo = document.createElement('img'), appearance = getComputedStyle(image);
+        photo.src = image.currentSrc;
+        photo.alt = image.alt;
+        photo.style.cssText = `position:absolute;left:${box.left}px;top:${box.top}px;width:${box.width}px;height:${box.height}px;max-width:none;max-height:none;pointer-events:none;transform-origin:${x - box.left}px ${y - box.top}px;will-change:transform`;
+        photo.style.objectFit = appearance.objectFit;
+        photo.style.objectPosition = appearance.objectPosition;
+        layer.attachShadow({ mode: 'open' }).append(photo);
+        document.body.append(layer);
+        const source = image.currentSrc, url = location.href;
+        const observer = new MutationObserver(() => {
+          if (location.href !== url || image.currentSrc !== source || !zoomablePostPhoto(image)) {
+            if (postPhotoPinch?.layer === layer) finishPostPhotoPinch();
+            else { layer.remove(); observer.disconnect(); }
+          }
+        });
+        observer.observe(document.documentElement, { childList: true, subtree: true, attributes: true });
+        postPhotoPinch = { image, source: image.currentSrc, url: location.href, layer, photo, observer,
+          ids: touches.map(touch => touch.identifier), distance, x, y };
+      }, { capture: true, passive: false });
+      window.addEventListener('touchmove', event => {
+        const pinch = postPhotoPinch;
+        if (!pinch) { if (drainingPhotoTouches) consumePhotoPinch(event); return; }
+        consumePhotoPinch(event);
+        const touches = pinch.ids.map(id => [...event.touches].find(touch => touch.identifier === id));
+        if (touches.some(touch => !touch) || location.href !== pinch.url
+            || pinch.source !== pinch.image.currentSrc || !zoomablePostPhoto(pinch.image)) {
+          finishPostPhotoPinch(); return;
+        }
+        const scale = Math.max(1, Math.min(4,
+          Math.hypot(touches[1].clientX - touches[0].clientX, touches[1].clientY - touches[0].clientY) / pinch.distance));
+        const dx = (touches[0].clientX + touches[1].clientX) / 2 - pinch.x;
+        const dy = (touches[0].clientY + touches[1].clientY) / 2 - pinch.y;
+        pinch.photo.style.transform = `translate(${dx}px,${dy}px) scale(${scale})`;
+        pinch.layer.style.background = `rgba(0,0,0,${Math.min(.5, (scale - 1) * .3)})`;
+      }, { capture: true, passive: false });
+      for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
+        if (!postPhotoPinch && !drainingPhotoTouches) return;
+        consumePhotoPinch(event);
+        if (!event.touches.length || type === 'touchcancel') drainingPhotoTouches = false;
+        if (event.touches.length < 2 || type === 'touchcancel') finishPostPhotoPinch(type === 'touchend');
+      }, { capture: true, passive: false });
+      document.addEventListener('click', event => {
+        if (performance.now() < postPhotoPinchRelease && event.target instanceof HTMLImageElement) consumePhotoPinch(event);
+      }, true);
+
       const dismissInstagramPhotoViewer = () => document.getElementById('vigil-instagram-profile-photo')?.remove();
       document.addEventListener('click', (event) => {
         if (instagramRoute() !== 'profile' || !(event.target instanceof Element)
@@ -7241,34 +7354,37 @@ enum DOMAdapters {
         viewer.setAttribute('role', 'dialog');
         viewer.setAttribute('aria-modal', 'true');
         viewer.setAttribute('aria-label', 'Profile photo');
-        viewer.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:rgba(0,0,0,.92);padding:24px;box-sizing:border-box';
+        viewer.tabIndex = 0;
+        viewer.style.cssText = 'position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;background:rgba(0,0,0,.65);padding:24px;box-sizing:border-box;outline:none';
         const photo = document.createElement('img');
         photo.src = image.currentSrc;
         photo.alt = image.alt;
-        photo.style.cssText = 'max-width:100%;max-height:85dvh;object-fit:contain;touch-action:pinch-zoom';
+        photo.style.cssText = 'width:min(78vw,320px,70dvh);aspect-ratio:1;object-fit:cover;border-radius:50%;pointer-events:none';
         const close = document.createElement('button');
         close.textContent = 'Close';
         close.setAttribute('aria-label', 'Close profile photo');
-        close.style.cssText = 'position:absolute;top:12px;right:12px;min-width:60px;min-height:44px;border:0;border-radius:22px;background:#fff;color:#111;font:16px -apple-system,sans-serif';
+        // Keep a screen-reader/keyboard dismissal action without visual chrome.
+        close.style.cssText = 'position:absolute;width:1px;height:1px;padding:0;border:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap';
         const dismiss = () => {
           dismissInstagramPhotoViewer();
-          image.closest('button, a[href], [role="button"]')?.focus();
+          image.closest('button, a[href], [role="button"]')?.focus({ preventScroll: true });
         };
         close.addEventListener('click', dismiss);
-        viewer.addEventListener('click', (click) => { if (click.target === viewer) dismiss(); });
+        viewer.addEventListener('click', dismiss);
         viewer.addEventListener('keydown', (key) => {
           if (key.key === 'Escape') { key.preventDefault(); dismiss(); }
           if (key.key === 'Tab') { key.preventDefault(); close.focus(); }
         });
         viewer.append(photo, close);
         document.body.append(viewer);
-        close.focus({ preventScroll: true });
+        viewer.focus({ preventScroll: true });
       }, true);
 
       let redirectedURL = '';
       let lastURL = location.href;
       let sharedReelPath = '';
       const enforceRoute = () => {
+        if (postPhotoPinch && postPhotoPinch.url !== location.href) finishPostPhotoPinch();
         const photoViewer = document.getElementById('vigil-instagram-profile-photo');
         if (photoViewer && photoViewer.dataset.profilePath !== location.pathname) dismissInstagramPhotoViewer();
         lastURL = location.href;
@@ -7410,14 +7526,24 @@ enum DOMAdapters {
         '[tabindex]:not([tabindex="-1"])'
       ].join(', ');
       const directActivationTarget = (target) => {
+        if (postPhotoPinch || performance.now() < postPhotoPinchRelease) return null;
         const route = instagramRoute();
         if (route !== 'directInbox' && route !== 'directThread') return null;
         if (!(target instanceof Element)
             || target.closest('input, textarea, select, option, [contenteditable="true"]')) return null;
+        const dialog = target.closest('[role="dialog"], [aria-modal="true"]');
+        // Direct's retained thread can itself carry dialog semantics. Preserve
+        // its message taps, while foreground sheets keep real site activation.
+        if (dialog && !dialog.matches('main, [role="main"]') && !dialog.querySelector('main, [role="main"]')) return null;
         const activation = target.closest(directActivationSelector);
         if (!(activation instanceof HTMLElement)
             || activation.matches(':disabled, [aria-disabled="true"]')) return null;
         if (activation.querySelector('input, textarea, select, [contenteditable="true"]')) return null;
+        // Search can be a button that mounts its textbox only on activation.
+        // A synthetic compatibility click can toggle that freshly focused
+        // search closed and cannot reliably retain WebKit keyboard activation.
+        if (/\bsearch\b/.test(normalizedInstagramLabel(activation))
+            || activation.querySelector('[aria-label*="search" i]')) return null;
         return activation;
       };
       let directTouch = null;

@@ -12339,12 +12339,29 @@ private final class RoutePolicyNavigationDelegate: NSObject, WKNavigationDelegat
 
 extension VigilSocialTests {
     @MainActor
-    func testInstagramPhotoZoomAndRecipientKeyboardConfiguration() {
+    func testInstagramPhotoZoomAndRecipientKeyboardConfiguration() async throws {
         let instagram = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false,
                                           websiteDataStore: .nonPersistent())
         let webView = instagram.webView(for: .instagram)
-        XCTAssertTrue(webView.configuration.ignoresViewportScaleLimits,
-                      "Instagram photos must support native pinch enlargement despite its viewport limits")
+        XCTAssertFalse(webView.configuration.ignoresViewportScaleLimits)
+        XCTAssertTrue(webView is InstagramWebView)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController()
+        webView.frame = window.bounds
+        window.rootViewController?.view.addSubview(webView)
+        window.isHidden = false
+        defer { webView.removeFromSuperview(); window.isHidden = true }
+        let loaded = expectation(description: "Instagram zoom configuration fixture")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString("<html><head><meta name='viewport' content='width=device-width,initial-scale=1,maximum-scale=5'></head><body>Photo zoom</body></html>",
+                               baseURL: URL(string: "https://www.instagram.com/p/ZoomTest/"))
+        await fulfillment(of: [loaded], timeout: 5)
+        webView.setNeedsLayout()
+        webView.layoutIfNeeded()
+        XCTAssertEqual(webView.scrollView.pinchGestureRecognizer?.isEnabled, false,
+                       "Post zoom must enlarge the photo without scaling Instagram's viewport")
+        webView.navigationDelegate = nil
         XCTAssertEqual(webView.scrollView.keyboardDismissMode, .none,
                        "Recipient sheet layout changes must not interactively dismiss the search keyboard")
         let youtube = SocialWebViewStore(fixedService: .youtube, loadInitialPages: false,
@@ -12466,8 +12483,12 @@ extension VigilSocialTests {
 
 extension VigilSocialTests {
     @MainActor
-    private func instagramRepairFixture(_ html: String, path: String = "/") async throws -> WKWebView {
+    private func instagramRepairFixture(_ html: String, path: String = "/", safetyBootstrap: Bool = false) async throws -> WKWebView {
         let controller = WKUserContentController()
+        if safetyBootstrap {
+            controller.addUserScript(WKUserScript(source: DOMAdapters.contentFilterBootstrap(for: .conceal),
+                                                  injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        }
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
             injectionTime: .atDocumentEnd, forMainFrameOnly: true
@@ -12574,8 +12595,16 @@ extension VigilSocialTests {
             document.querySelector('#vigil-instagram-profile-photo img')?.src === document.getElementById('avatar').currentSrc
             """) as? Bool
         XCTAssertEqual(matching, true)
+        let appearance = try await webView.evaluateJavaScript("""
+            (()=>{const v=document.getElementById('vigil-instagram-profile-photo');
+              const photo=v.querySelector('img'),close=v.querySelector('button'),r=photo.getBoundingClientRect();
+              return [getComputedStyle(photo).borderRadius==='50%',Math.abs(r.width-r.height)<1,
+                getComputedStyle(photo).objectFit==='cover',close.getBoundingClientRect().width<=1,
+                document.activeElement===v];})()
+            """) as? [Bool]
+        XCTAssertEqual(appearance, [true, true, true, true, true])
         _ = try await webView.evaluateJavaScript("""
-            document.querySelector('[aria-label="Close profile photo"]').click();document.getElementById('post').click();
+            document.getElementById('vigil-instagram-profile-photo').click();document.getElementById('post').click();
             """)
         let closed = try await webView.evaluateJavaScript("document.getElementById('vigil-instagram-profile-photo') === null") as? Bool
         XCTAssertEqual(closed, true)
@@ -12686,5 +12715,106 @@ extension VigilSocialTests {
 
 
         }
+    }
+}
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramPostPhotoPinchKeepsFingerAnchorAndPageStill() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"></head>
+            <body style="margin:0"><main><article><a href="/p/Shared123/">Post</a>
+            <div style="position:relative;width:300px;height:300px"><img id="photo" style="display:block;width:300px;height:300px;object-fit:cover"
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='300' height='300' fill='purple'/%3E%3C/svg%3E">
+            <div id="photo-hit" style="position:absolute;inset:0"></div></div>
+            <p id="caption">An unchanged caption</p></article></main></body></html>
+            """#, path: "/p/Shared123/")
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('photo').currentSrc)", in: webView)
+        let state = try await webView.evaluateJavaScript(#"""
+            (()=>{
+              const photo=document.getElementById('photo'),box=photo.getBoundingClientRect();
+              const caption=document.getElementById('caption').getBoundingClientRect().top,scroll=scrollY;
+              window.pinchTouch=(type,points)=>{
+                const event=new Event(type,{bubbles:true,cancelable:true});
+                Object.defineProperty(event,'touches',{value:points.map(([identifier,x,y])=>({identifier,clientX:box.left+x,clientY:box.top+y}))});
+                document.getElementById('photo-hit').dispatchEvent(event);return event.defaultPrevented;
+              };
+              pinchTouch('touchstart',[[1,80,100]]);
+              const started=pinchTouch('touchstart',[[1,80,100],[2,180,100]]);
+              // Reverse TouchList order: identity, rather than array order, owns the anchor.
+              const moved=pinchTouch('touchmove',[[2,240,150],[1,40,150]]);
+              const layer=document.getElementById('vigil-instagram-post-zoom'),copy=layer?.shadowRoot.querySelector('img');
+              const matrix=new DOMMatrix(copy?.style.transform);
+              return [started,moved,!!copy,Math.abs(matrix.a-2)<.01,Math.abs(matrix.e-10)<.01,Math.abs(matrix.f-50)<.01,
+                copy?.src===photo.currentSrc,!copy?.hasAttribute('data-vigil-media-verdict'),
+                photo.getBoundingClientRect().top===box.top,document.getElementById('caption').getBoundingClientRect().top===caption,
+                scrollY===scroll,visualViewport.scale===1,getComputedStyle(photo).transform==='none'];
+            })()
+            """#) as? [Bool]
+        XCTAssertEqual(state, Array(repeating: true, count: 13))
+        _ = try await webView.evaluateJavaScript("pinchTouch('touchend',[])")
+        try await waitForJavaScriptCondition("!document.getElementById('vigil-instagram-post-zoom')", in: webView)
+        _ = try await webView.evaluateJavaScript("pinchTouch('touchstart',[[1,80,100],[2,180,100]]);document.getElementById('photo').style.filter='blur(32px)';")
+        try await waitForJavaScriptCondition("!document.getElementById('vigil-instagram-post-zoom')", in: webView)
+        let hidden = try await webView.evaluateJavaScript("pinchTouch('touchstart',[[1,80,100],[2,180,100]]);!document.getElementById('vigil-instagram-post-zoom')") as? Bool
+        XCTAssertEqual(hidden, true, "Unclassified or concealed media must never receive an unfiltered zoom copy")
+    }
+
+    @MainActor
+    func testInstagramRecipientSearchButtonUsesSiteActivationBeforeTextboxMounts() async throws {
+        for inDialog in [false, true] {
+            let wrapper = inDialog ? "<div role='dialog' aria-label='Share'>" : "<div>"
+            let webView = try await instagramRepairFixture("""
+                <html><body>\(wrapper)<button id="open-search" aria-label="Search people"><span id="search-icon">Search</span></button>
+                <div id="field"></div></div><script>
+                window.searchClicks=0;
+                document.getElementById('open-search').addEventListener('click',()=>{
+                  searchClicks++;
+                  document.getElementById('field').innerHTML='<input id="recipient-query" placeholder="Search">';
+                  document.getElementById('recipient-query').focus();
+                });</script></body></html>
+                """, path: "/direct/t/friend/")
+            _ = try await webView.evaluateJavaScript("""
+                for(const type of ['pointerdown','pointerup'])document.getElementById('search-icon').dispatchEvent(
+                  new PointerEvent(type,{bubbles:true,cancelable:true,pointerId:1,pointerType:'touch',isPrimary:true,clientX:30,clientY:30}));
+                """)
+            let prematureClicks = try await webView.evaluateJavaScript("searchClicks") as? Int
+            XCTAssertEqual(prematureClicks, 0, "The native search tap must not be replaced by an asynchronous synthetic click")
+            _ = try await webView.evaluateJavaScript("document.getElementById('open-search').click();document.getElementById('recipient-query').value='distant friend'")
+            let state = try await webView.evaluateJavaScript("[searchClicks===1,document.activeElement.id==='recipient-query',document.activeElement.value==='distant friend']") as? [Bool]
+            XCTAssertEqual(state, [true, true, true])
+        }
+    }
+
+    @MainActor
+    func testInstagramPostPhotoZoomKeepsShadowMediaSafetyAndClosesOnRouteChange() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><body><article><a href="/p/Shared123/">Post</a><img id="photo" data-vigil-media-verdict="safe"
+              style="display:block;width:300px;height:300px"
+              src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'/%3E">
+            </article></body></html>
+            """#, path: "/p/Shared123/", safetyBootstrap: true)
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('photo').currentSrc)", in: webView)
+        // Simulate the native classifier accepting this fictional page. The
+        // new presentation image still has to pass its independent media gate.
+        _ = try await webView.evaluateJavaScript("document.documentElement.dataset.vigilPageVerdict='safe'")
+        let safety = try await webView.evaluateJavaScript(#"""
+            (()=>{const photo=document.getElementById('photo'),box=photo.getBoundingClientRect();
+              const event=new Event('touchstart',{bubbles:true,cancelable:true});
+              Object.defineProperty(event,'touches',{value:[{identifier:1,clientX:box.left+80,clientY:box.top+100},
+                {identifier:2,clientX:box.left+180,clientY:box.top+100}]});photo.dispatchEvent(event);
+              const copy=document.getElementById('vigil-instagram-post-zoom')?.shadowRoot.querySelector('img');
+              return [!!copy,!copy?.hasAttribute('data-vigil-media-verdict'),
+                !!copy && (getComputedStyle(copy).filter.includes('blur') || getComputedStyle(copy).visibility==='hidden')];})()
+            """#) as? [Bool]
+        let diagnostic = try await webView.evaluateJavaScript("""
+            JSON.stringify([...document.querySelectorAll('html,body,article,#photo')].map(n=>({tag:n.tagName,
+              verdict:n.getAttribute('data-vigil-media-verdict'),display:getComputedStyle(n).display,
+              visibility:getComputedStyle(n).visibility,filter:getComputedStyle(n).filter,opacity:getComputedStyle(n).opacity,
+              box:[n.getBoundingClientRect().width,n.getBoundingClientRect().height]})))
+            """) as? String
+        XCTAssertEqual(safety, [true, true, true], "The presentation copy must remain under ordinary shadow-DOM media classification: \(diagnostic ?? "")")
+        _ = try await webView.evaluateJavaScript("history.pushState({}, '', '/direct/inbox/');")
+        try await waitForJavaScriptCondition("!document.getElementById('vigil-instagram-post-zoom')", in: webView)
     }
 }
