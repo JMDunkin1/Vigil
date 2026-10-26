@@ -30,3 +30,17 @@ contracts, 48 native route probes, and whitespace checks passed.
 Physical-device deployment is recorded after the verified combined transaction;
 the fixture establishes a reproduced cause rather than claiming a recorded
 human interaction on the phone.
+
+## Deployment
+
+The concurrent verified Social update completed with this commit already in the
+shared source tree. It installed **0.3.198 (201)**, phone release **0.3.218 (221)**,
+and reported the implementation and service launches current. The exact live
+policy remained `4e6da9b09d55539e804a6a68094db7404cf5fde971f5bee9a0a34ce99ad1c1a0`;
+its existing non-removable installation was retained. No competing update was
+started and no parallel uncommitted code was added to this change's commits.
+
+The user had already confirmed that normal Home posts and Stories were working
+before this motion correction. The reading-position correction is validated by
+the reproduced native fixture; a subsequent human scroll is still the final
+check of the original intermittent on-screen symptom.
