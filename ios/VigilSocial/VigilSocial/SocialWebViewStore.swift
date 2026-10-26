@@ -2,7 +2,9 @@ import AVFoundation
 import Combine
 import Foundation
 import MediaPlayer
+import Photos
 import UIKit
+import UniformTypeIdentifiers
 import WebKit
 
 @MainActor
@@ -414,6 +416,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
     private var snapchatRenderSnapshots: [[String: Any]] = []
+    private var snapchatExportInProgress = false
     private(set) var linkedInApplePopup: LinkedInApplePopupController?
     var openSocialLink: ((URL) -> Void)?
     var accessRestriction: (() -> Bool)?
@@ -1403,6 +1406,29 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // Only the foreground, policy-verified chat can acquire the native
             // responder. Background services keep Snapchat's real away shield.
             webView.becomeFirstResponder()
+        case "snapchatExport":
+            guard service == .snapchat, frame.isMainFrame,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  let webView = message.webView,
+                  SnapchatMediaPolicy.isTrustedDocument(webView.url),
+                  playbackServiceIsVisible, !playbackIsBackgrounded,
+                  hasRecentConfirmedAccess, accessRestriction?() != true,
+                  !snapchatExportInProgress,
+                  let requestID = body["requestID"] as? String, UUID(uuidString: requestID) != nil,
+                  let documentID = body["documentID"] as? String,
+                  let mimeType = body["mimeType"] as? String,
+                  SnapchatMediaPolicy.exportMIMETypes.contains(mimeType),
+                  let encoded = body["base64"] as? String,
+                  encoded.utf8.count <= SnapchatMediaPolicy.maximumEncodedBytes,
+                  let data = Data(base64Encoded: encoded), !data.isEmpty,
+                  data.count <= SnapchatMediaPolicy.maximumMediaBytes else { return }
+            snapchatExportInProgress = true
+            Task { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                defer { self.snapchatExportInProgress = false }
+                await self.saveSnapchatMedia(data, mimeType: mimeType, requestID: requestID,
+                                            documentID: documentID, in: webView)
+            }
         case "chromeColor":
             guard service == .snapchat, frame.isMainFrame,
                   let rgb = body["rgb"] as? [Double], rgb.count == 3,
@@ -2441,6 +2467,94 @@ extension SocialWebViewStore: WKNavigationDelegate {
     }
 }
 
+enum SnapchatMediaPolicy {
+    static let maximumMediaBytes = 32 * 1024 * 1024
+    static let maximumEncodedBytes = ((maximumMediaBytes + 2) / 3) * 4
+    static let exportMIMETypes: Set<String> = ["image/png"]
+
+    static func isTrustedDocument(_ url: URL?) -> Bool {
+        guard let url, url.scheme?.lowercased() == "https", url.port == nil || url.port == 443,
+              let host = url.host, SocialService.snapchat.isCanonicalAppHost(host) else { return false }
+        return url.path == "/web" || url.path.hasPrefix("/web/")
+    }
+
+    static func isTrustedCapture(originHost: String, frameURL: URL?, topURL: URL?) -> Bool {
+        isTrustedDocument(frameURL) && isTrustedDocument(topURL)
+            && frameURL?.host?.lowercased() == originHost.lowercased()
+            && topURL?.host?.lowercased() == originHost.lowercased()
+    }
+
+    @MainActor
+    static func authorizeCapture(_ type: WKMediaCaptureType,
+        status: (AVMediaType) -> AVAuthorizationStatus,
+        request: (AVMediaType) async -> Bool) async -> Bool {
+        let mediaTypes: [AVMediaType]
+        switch type {
+        case .camera: mediaTypes = [.video]
+        case .microphone: mediaTypes = [.audio]
+        case .cameraAndMicrophone: mediaTypes = [.video, .audio]
+        @unknown default: return false
+        }
+        for mediaType in mediaTypes {
+            switch status(mediaType) {
+            case .authorized: break
+            case .notDetermined:
+                guard await request(mediaType) else { return false }
+            default: return false
+            }
+        }
+        return true
+    }
+
+    static func writeToPhotoLibrary(_ data: Data, mimeType: String) async throws {
+        try await PHPhotoLibrary.shared().performChanges {
+            let options = PHAssetResourceCreationOptions()
+            options.uniformTypeIdentifier = UTType(mimeType: mimeType)?.identifier
+            PHAssetCreationRequest.forAsset().addResource(
+                with: .photo, data: data, options: options)
+        }
+    }
+}
+
+extension SocialWebViewStore {
+    private func saveSnapchatMedia(_ data: Data, mimeType: String, requestID: String,
+                                   documentID: String, in webView: WKWebView) async {
+        func complete(_ success: Bool, _ detail: String = "Could not save. Try again") async {
+            _ = try? await webView.callAsyncJavaScript(
+                "window.__vigilCompleteSnapchatExport?.(id, success, detail);",
+                arguments: ["id": requestID, "success": success, "detail": detail], in: nil, contentWorld: .page)
+        }
+        func stillAllowed() async -> Bool {
+            guard playbackServiceIsVisible, !playbackIsBackgrounded,
+                  accessRestriction?() != true, SnapchatMediaPolicy.isTrustedDocument(webView.url),
+                  Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: mainDocumentIDs[.snapchat]) else { return false }
+            // The first Photos authorization sheet can outlive the normal
+            // ten-second access receipt. Recheck the real policy when needed.
+            if !hasRecentConfirmedAccess, !(await confirmServiceAccess()) { return false }
+            guard playbackServiceIsVisible, !playbackIsBackgrounded, accessRestriction?() != true,
+                  Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: mainDocumentIDs[.snapchat]) else { return false }
+            return (try? await webView.callAsyncJavaScript(
+                "return window.__vigilValidateSnapchatExport?.(id) === true;",
+                arguments: ["id": requestID], in: nil, contentWorld: .page)) as? Bool == true
+        }
+        guard await stillAllowed() else { await complete(false); return }
+        guard let image = UIImage(data: data), image.size.width > 0, image.size.height > 0,
+              image.size.width * image.size.height <= 80_000_000 else { await complete(false); return }
+        let verdict = await resolvedMediaClassifier().classify(imageData: data)
+        guard unclassifiedMediaPolicy.resolve(verdict) == .safe else { await complete(false); return }
+        let status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        let authorization = status == .notDetermined ? await PHPhotoLibrary.requestAuthorization(for: .addOnly) : status
+        guard authorization == .authorized || authorization == .limited else {
+            await complete(false, "Allow adding photos in Settings"); return
+        }
+        guard await stillAllowed() else { await complete(false); return }
+        do {
+            try await SnapchatMediaPolicy.writeToPhotoLibrary(data, mimeType: mimeType)
+            await complete(true)
+        } catch { await complete(false) }
+    }
+}
+
 extension SocialWebViewStore: WKUIDelegate {
     func webView(
         _ webView: WKWebView,
@@ -2451,11 +2565,34 @@ extension SocialWebViewStore: WKUIDelegate {
     ) {
         guard let service = service(for: webView),
               service.isCanonicalAppHost(origin.host),
+              origin.protocol.lowercased() == "https",
+              origin.port == 0 || origin.port == 443,
               frame.isMainFrame else {
             decisionHandler(.deny)
             return
         }
-        decisionHandler(.prompt)
+        guard service == .snapchat else { decisionHandler(.prompt); return }
+        guard SnapchatMediaPolicy.isTrustedCapture(originHost: origin.host,
+                frameURL: frame.request.url, topURL: webView.url),
+              playbackServiceIsVisible, !playbackIsBackgrounded,
+              accessRestriction?() != true else { decisionHandler(.deny); return }
+        // iOS remembers each system authorization. Asking WebKit to .prompt
+        // instead repeats the separate website alert on every camera reopen.
+        Task { [weak self, weak webView] in
+            guard await SnapchatMediaPolicy.authorizeCapture(type,
+                status: { AVCaptureDevice.authorizationStatus(for: $0) },
+                request: { await AVCaptureDevice.requestAccess(for: $0) }) else {
+                decisionHandler(.deny); return
+            }
+            guard let self, let webView,
+                  self.playbackServiceIsVisible, !self.playbackIsBackgrounded,
+                  self.accessRestriction?() != true,
+                  SnapchatMediaPolicy.isTrustedCapture(originHost: origin.host,
+                    frameURL: frame.request.url, topURL: webView.url) else {
+                decisionHandler(.deny); return
+            }
+            decisionHandler(.grant)
+        }
     }
 
     func webView(

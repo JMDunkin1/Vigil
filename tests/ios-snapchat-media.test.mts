@@ -13,7 +13,7 @@ assert.ok(bootstrap);
 
 type Constraints = Record<string, unknown>;
 function harness({ width = 390, hostname = "www.snapchat.com", pathname = "/web/", iframe = false,
-  resizeMode = true, zoom = true, zoomFails = false, denied = false } = {}) {
+  resizeMode = true, zoom = true, zoomFails = false, denied = false, previewMode = "absent" } = {}) {
   const calls: Constraints[] = [];
   const zoomCalls: Constraints[] = [];
   const permissionError = new Error("Permission denied");
@@ -40,10 +40,18 @@ function harness({ width = 390, hostname = "www.snapchat.com", pathname = "/web/
   const window: { top?: unknown } = {};
   window.top = iframe ? {} : window;
   const location = { hostname, pathname };
+  const preview = new EventTarget() as EventTarget & {
+    muted: boolean; playsInline: boolean; srcObject: unknown; pauses: number;
+    play: () => Promise<void>; pause: () => void;
+  };
+  preview.pauses = 0;
+  preview.play = async () => { if (previewMode === "rejected") throw new Error("Preview unavailable"); };
+  preview.pause = () => { preview.pauses += 1; };
   const context = { window, navigator: { mediaDevices: devices }, location,
-    matchMedia: () => ({ matches: width <= 600 }) };
+    matchMedia: () => ({ matches: width <= 600 }), setTimeout, clearTimeout,
+    ...(previewMode === "absent" ? {} : { document: { createElement: () => preview } }) };
   runInNewContext(bootstrap!, context);
-  return { devices, original, calls, zoomCalls, stream, permissionError, location,
+  return { devices, original, calls, zoomCalls, stream, permissionError, location, preview,
     reinstall() { runInNewContext(bootstrap!, context); } };
 }
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
@@ -59,7 +67,9 @@ for (const width of [320, 390, 430]) for (const resizeMode of [false, true]) {
   assert.deepEqual(actual.audio, request.audio);
   assert.deepEqual(actual.video.deviceId, request.video.deviceId);
   assert.deepEqual(actual.video.frameRate, request.video.frameRate);
-  assert.equal(actual.video.aspectRatio, undefined);
+  assert.deepEqual(actual.video.aspectRatio, { ideal: 4 / 3 });
+  assert.deepEqual(actual.video.width, { ideal: 1920 });
+  assert.deepEqual(actual.video.height, { ideal: 1440 });
   assert.equal(actual.video.facingMode, undefined, "An explicit camera must not be replaced");
   assert.deepEqual(actual.video.advanced, [{ facingMode: "environment" }]);
   assert.deepEqual(actual.video.resizeMode, resizeMode ? { ideal: "none" } : undefined);
@@ -102,4 +112,22 @@ assert.equal(desktop.calls[0], desktopRequest); assert.equal(desktop.zoomCalls.l
 const changedRoute = harness(); changedRoute.location.pathname = "/discover";
 await changedRoute.devices.getUserMedia(desktopRequest);
 assert.equal(changedRoute.calls[0], desktopRequest);
-console.log("Snapchat uncropped camera: sensor preferences, selected devices, audio, zoom fallback, permission denial, scope and idempotence passed.");
+const delayed = harness({ previewMode: "manual" });
+let returned = false;
+const waitingForFrame = delayed.devices.getUserMedia({ video: true }).then(value => { returned = true; return value; });
+await new Promise(resolve => setImmediate(resolve));
+assert.equal(returned, false, "Do not let Snapchat cache the pre-frame landscape dimensions");
+assert.equal(delayed.preview.srcObject, delayed.stream);
+assert.equal(delayed.preview.muted && delayed.preview.playsInline, true);
+delayed.preview.dispatchEvent(new Event("loadedmetadata"));
+await Promise.resolve();
+assert.equal(returned, false, "Metadata alone is too early on iOS");
+delayed.preview.dispatchEvent(new Event("loadeddata"));
+assert.equal(await waitingForFrame, delayed.stream, "Hand Snapchat its original stream after the first frame");
+assert.equal(delayed.preview.srcObject, null);
+assert.equal(delayed.preview.pauses, 1);
+assert.equal(delayed.calls.length, 1, "A preview consumer must never acquire another stream");
+const failedPreview = harness({ previewMode: "rejected" });
+assert.equal(await failedPreview.devices.getUserMedia({ video: true }), failedPreview.stream);
+assert.equal(failedPreview.preview.srcObject, null, "Optional preview failure releases its consumer");
+console.log("Snapchat portrait sensor camera: sensor preferences, selected devices, audio, zoom fallback, permission denial, scope and idempotence passed.");

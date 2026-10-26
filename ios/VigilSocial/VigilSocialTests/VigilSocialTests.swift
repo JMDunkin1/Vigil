@@ -4,6 +4,8 @@ import JavaScriptCore
 import UIKit
 import SwiftUI
 import WebKit
+import AVFoundation
+import Photos
 @testable import VigilSocial
 
 // Unsigned simulator fixtures cannot read the device Keychain. Keep fixture
@@ -1703,6 +1705,265 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatCameraPermissionIsRememberedAndConfinedToChat() async throws {
+        for host in ["www.snapchat.com", "snapchat.com", "web.snapchat.com"] {
+            let url = URL(string: "https://\(host)/web/fixture-conversation")!
+            XCTAssertTrue(SnapchatMediaPolicy.isTrustedCapture(originHost: host, frameURL: url, topURL: url))
+            XCTAssertFalse(SnapchatMediaPolicy.isTrustedCapture(originHost: "accounts.snapchat.com", frameURL: url, topURL: url))
+        }
+        for string in ["https://accounts.snapchat.com/web/", "http://www.snapchat.com/web/",
+                       "https://www.snapchat.com:444/web/", "https://www.snapchat.com/spotlight/",
+                       "https://www.snapchat.com/webcam", "https://www.snapchat.com.evil.example/web/"] {
+            XCTAssertFalse(SnapchatMediaPolicy.isTrustedDocument(URL(string: string)), string)
+        }
+        var permissions: [AVMediaType: AVAuthorizationStatus] = [:]
+        var requests: [AVMediaType] = []
+        for _ in 0..<4 {
+            let granted = await SnapchatMediaPolicy.authorizeCapture(.cameraAndMicrophone,
+                status: { permissions[$0] ?? .notDetermined }, request: {
+                    requests.append($0); permissions[$0] = .authorized; return true
+                })
+            XCTAssertTrue(granted)
+        }
+        XCTAssertEqual(requests, [.video, .audio], "Reopening must reuse both system decisions")
+        for status in [AVAuthorizationStatus.denied, .restricted] {
+            let granted = await SnapchatMediaPolicy.authorizeCapture(.camera,
+                status: { _ in status }, request: { _ in XCTFail("Never reprompt after denial"); return true })
+            XCTAssertFalse(granted)
+        }
+        let denied = await SnapchatMediaPolicy.authorizeCapture(.cameraAndMicrophone,
+            status: { _ in .notDetermined }, request: { _ in false })
+        XCTAssertFalse(denied)
+        requests = []
+        let cameraOnly = await SnapchatMediaPolicy.authorizeCapture(.camera,
+            status: { _ in .notDetermined }, request: { requests.append($0); return true })
+        XCTAssertTrue(cameraOnly)
+        XCTAssertEqual(requests, [.video], "A photo must not ask for microphone permission")
+    }
+
+    @MainActor
+    func testSnapchatCameraRollWritesARealPortraitPhotoWithAddOnlyPermission() async throws {
+        let authorization = PHPhotoLibrary.authorizationStatus(for: .addOnly)
+        guard authorization == .authorized || authorization == .limited else {
+            throw XCTSkip("Grant photos-add to the simulator fixture app before this test")
+        }
+        XCTAssertNotNil(Bundle.main.object(forInfoDictionaryKey: "NSPhotoLibraryAddUsageDescription"))
+        let data = UIGraphicsImageRenderer(size: CGSize(width: 90, height: 120)).pngData { context in
+            UIColor.blue.setFill(); context.fill(CGRect(x: 0, y: 0, width: 90, height: 120))
+            UIColor.yellow.setFill(); context.fill(CGRect(x: 0, y: 0, width: 10, height: 120))
+        }
+        try await SnapchatMediaPolicy.writeToPhotoLibrary(data, mimeType: "image/png")
+    }
+
+    @MainActor
+    func testSnapchatCameraRollBridgeSavesTheOpenedPhoto() async throws {
+        guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
+            throw XCTSkip("Grant photos-add to the simulator fixture app before this test")
+        }
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
+            websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 780)
+        let window = UIWindow(frame: webView.bounds)
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("document.documentElement.dataset.vigilPageVerdict === 'safe'", in: webView)
+        _ = try await webView.callAsyncJavaScript("globalThis.fetch=async url=>({status:200,url}); return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        let allowed = await store.confirmServiceAccess()
+        XCTAssertTrue(allowed)
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        await store.prepareForegroundInteraction()
+        _ = try await webView.evaluateJavaScript("""
+            fixtureOpenSnap();
+            const c=document.createElement('canvas');c.width=90;c.height=120;
+            const g=c.getContext('2d');g.fillStyle='#84b4d4';g.fillRect(0,0,90,120);
+            document.getElementById('fixture-snap-image').src=c.toDataURL('image/png');
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-export') && document.getElementById('fixture-snap-image').dataset.vigilMediaVerdict === 'safe'", in: webView)
+        webView.becomeFirstResponder()
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-export').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-export').textContent === 'Saved to Camera Roll'", in: webView)
+        await store.handleSceneActivity(false, isServiceVisible: false)
+        withExtendedLifetime(store) {}
+    }
+
+    @MainActor
+    func testSnapchatCameraRollExportKeepsPixelsAndRejectsShieldedOrChangedMedia() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let host = UIViewController(); window.rootViewController = host
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatMobileInstalled === true", in: webView)
+        _ = try await webView.evaluateJavaScript("""
+            window.fixtureExports = [];
+            window.__vigilBridge = payload => { if (payload.type === 'snapchatExport') fixtureExports.push(payload); };
+            document.documentElement.dataset.vigilPageVerdict = 'safe';
+            fixtureOpenSnap();
+            const canvas = document.createElement('canvas'); canvas.width=90; canvas.height=120;
+            const context=canvas.getContext('2d'); context.fillStyle='#1256ab'; context.fillRect(0,0,90,120);
+            context.fillStyle='#ffee00'; context.fillRect(0,0,10,120);
+            const photo=document.getElementById('fixture-snap-image');
+            photo.src=canvas.toDataURL('image/png'); photo.dataset.vigilMediaVerdict='safe';
+            window.fixtureOriginalPNG=photo.src;
+            const sticker=document.createElement('canvas');sticker.width=90;sticker.height=120;
+            sticker.getContext('2d').fillStyle='#ff00ff';sticker.getContext('2d').fillRect(40,55,10,10);
+            const overlay=document.createElement('img');overlay.id='fixture-caption-layer';
+            overlay.src=sticker.toDataURL('image/png');overlay.dataset.vigilMediaVerdict='safe';
+            overlay.style.cssText='position:absolute;inset:0;width:100%;height:100%';
+            document.querySelector('.b2f4R').appendChild(overlay);
+            void 0;
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-export') && document.getElementById('fixture-snap-image').complete && document.getElementById('fixture-caption-layer').complete", in: webView)
+        let buttonReachable = try await webView.evaluateJavaScript("""
+            (()=>{ const b=document.querySelector('.vigil-snap-export'),r=b.getBoundingClientRect();
+              return b.textContent==='Save to Camera Roll' && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)); })()
+            """) as? Bool
+        XCTAssertEqual(buttonReachable, true)
+        webView.becomeFirstResponder()
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-export').click()")
+        try await waitForJavaScriptCondition("fixtureExports.length === 1", in: webView)
+        let exported = try await webView.evaluateJavaScript("fixtureExports[0].base64") as? String
+        let data = try XCTUnwrap(exported.flatMap { Data(base64Encoded: $0) })
+        let decoded = try XCTUnwrap(UIImage(data: data))
+        XCTAssertEqual(decoded.size, CGSize(width: 90, height: 120))
+        var pixels = [UInt8](repeating: 0, count: 90 * 120 * 4)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: 90, height: 120, bitsPerComponent: 8,
+            bytesPerRow: 360, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.draw(try XCTUnwrap(decoded.cgImage), in: CGRect(x: 0, y: 0, width: 90, height: 120))
+        XCTAssertEqual(Array(pixels[0..<4]), [255, 238, 0, 255], "Export retains the left sensor edge")
+        XCTAssertEqual(Array(pixels[356..<360]), [18, 86, 171, 255], "Export retains the right sensor edge")
+        XCTAssertEqual(Array(pixels[21780..<21784]), [255, 0, 255, 255], "Export includes Snapchat's separate caption/sticker layer")
+        let valid = try await webView.evaluateJavaScript("window.__vigilValidateSnapchatExport(fixtureExports[0].requestID)") as? Bool
+        XCTAssertEqual(valid, true)
+        _ = try await webView.evaluateJavaScript("""
+            document.getElementById('fixture-snap-image').src=fixtureMediaImage(100,100);
+            window.fixtureStaleExport=window.__vigilValidateSnapchatExport(fixtureExports[0].requestID);
+            window.__vigilCompleteSnapchatExport(fixtureExports[0].requestID,false,'Allow adding photos in Settings');
+            """)
+        let stale = try await webView.evaluateJavaScript("fixtureStaleExport") as? Bool
+        let failure = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-export').textContent") as? String
+        XCTAssertEqual(stale, false)
+        XCTAssertEqual(failure, "Allow adding photos in Settings")
+        for protection in ["shield", "screenshot", "blur", "sensitive", "unknown", "page", "overlay"] {
+            _ = try await webView.evaluateJavaScript("""
+                document.getElementById('fixture-snap-image').src=fixtureOriginalPNG;
+                document.getElementById('fixture-snap-image').dataset.vigilMediaVerdict='safe';
+                document.getElementById('fixture-caption-layer').dataset.vigilMediaVerdict='safe';
+                document.documentElement.dataset.vigilPageVerdict='safe';
+                document.querySelector('.ecBYF').classList.remove('ATeie');
+                document.querySelector('.ecBYF>.ejVI4').style.display='none';
+                document.querySelector('.ecBYF>.eNF_J').style.display='none';
+                if ('\(protection)'==='shield') document.querySelector('.ecBYF>.ejVI4').style.display='grid';
+                if ('\(protection)'==='screenshot') document.querySelector('.ecBYF>.eNF_J').style.display='grid';
+                if ('\(protection)'==='blur') document.querySelector('.ecBYF').classList.add('ATeie');
+                if (['sensitive','unknown'].includes('\(protection)')) document.getElementById('fixture-snap-image').dataset.vigilMediaVerdict='\(protection)';
+                if ('\(protection)'==='page') document.documentElement.dataset.vigilPageVerdict='sensitive';
+                if ('\(protection)'==='overlay') document.getElementById('fixture-caption-layer').dataset.vigilMediaVerdict='unknown';
+                document.querySelector('.vigil-snap-export').click();
+                """)
+            let count = try await webView.evaluateJavaScript("fixtureExports.length") as? Int
+            XCTAssertEqual(count, 1, protection)
+        }
+        _ = try await webView.evaluateJavaScript("""
+            document.getElementById('fixture-caption-layer').dataset.vigilMediaVerdict='safe';
+            document.querySelector('.vigil-snap-export').click();
+            """)
+        try await waitForJavaScriptCondition("fixtureExports.length === 2", in: webView)
+        _ = try await webView.evaluateJavaScript("window.__vigilCompleteSnapchatExport(fixtureExports[1].requestID,true,'')")
+        let completed = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-export').textContent === 'Saved to Camera Roll' && !document.querySelector('.vigil-snap-export').disabled") as? Bool
+        XCTAssertEqual(completed, true, "A failed save must be retryable and successful writes confirmed")
+    }
+
+    @MainActor
+    func testSnapchatPortraitCaptureKeepsTheWholeSensorFrame() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: #"""
+            Object.defineProperty(navigator, 'mediaDevices', { value: {
+              getSupportedConstraints: () => ({ resizeMode: true }),
+              getUserMedia: async constraints => {
+                window.fixtureCameraRequest=constraints;
+                // Model WebKit 323550: portrait requests yield landscape frames;
+                // primary-orientation requests yield upright portrait frames.
+                const primary=constraints.video.width.ideal>constraints.video.height.ideal;
+                const canvas=document.createElement('canvas');canvas.width=primary?900:1200;canvas.height=primary?1200:900;
+                const g=canvas.getContext('2d');g.fillStyle='#1256ab';g.fillRect(0,0,900,1200);
+                g.fillStyle='#ffee00';g.fillRect(0,0,108,1200);
+                g.fillStyle='#df635d';g.fillRect(792,0,108,1200);
+                window.fixtureSensorCanvas=canvas;
+                window.fixtureSensorStream=canvas.captureStream(5);
+                // A physical camera keeps delivering frames when the first
+                // consumer detaches. Keep this generated stream moving too.
+                window.fixtureSensorTimer=setInterval(()=>{g.fillStyle='#1256ab';g.fillRect(108,0,684,1200)},100);
+                return fixtureSensorStream;
+              }
+            }});
+            """#, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let host = UIViewController(); window.rootViewController = host
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatCameraInstalled === true", in: webView)
+        _ = try await webView.callAsyncJavaScript("""
+            fixtureOpenSnap();fixtureOpenReplyCamera();
+            document.documentElement.dataset.vigilPageVerdict='safe';
+            const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:406},height:{ideal:720}}});
+            const video=document.getElementById('local-video');video.dataset.vigilMediaVerdict='safe';
+            video.srcObject=stream;await video.play();
+            """, arguments: [:], in: nil, contentWorld: .page)
+        try await waitForJavaScriptCondition("document.getElementById('local-video').videoHeight === 1200", in: webView)
+        for width in [320, 390, 430] {
+            webView.frame.size.width = CGFloat(width)
+            try await waitForJavaScriptCondition("innerWidth === \(width)", in: webView)
+            let result = try await webView.callAsyncJavaScript("""
+                await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+                fixtureCaptureReply();
+                const box=document.querySelector('.AEZEl').getBoundingClientRect();
+                return [fixtureCapturedDimensions[0]===900,fixtureCapturedDimensions[1]===1200,
+                  Math.abs(box.width-innerWidth)<1,Math.abs(box.height-innerHeight)<1,
+                  getComputedStyle(document.getElementById('local-video')).objectFit==='contain',
+                  fixtureCapturedPixels.every((v,i)=>Math.abs(v-[255,238,0,255,223,99,93,255][i])<=3),
+                  getComputedStyle(document.getElementById('local-video')).visibility==='visible'];
+                """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+            XCTAssertEqual(result, Array(repeating: true, count: 7), "\(width)px must retain both portrait camera edges")
+            if width == 390 {
+                let snapshot = try await webView.takeSnapshot(configuration: nil)
+                let attachment = XCTAttachment(image: snapshot)
+                attachment.name = "Snapchat portrait camera full frame"
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
+        }
+        _ = try await webView.evaluateJavaScript("clearInterval(fixtureSensorTimer);fixtureSensorStream.getTracks().forEach(track=>track.stop())")
+    }
+
+    @MainActor
     func testSnapchatSnapViewerAndReplyCameraUsePhoneFrame() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: #"""
@@ -1741,7 +2002,7 @@ final class VigilSocialTests: XCTestCase {
                     const r = reply.getBoundingClientRect();
                     const target = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
                     return [player.width >= innerWidth-1, player.height >= 700,
-                      getComputedStyle(document.querySelector('.ChLAv')).visibility === 'hidden',
+                      getComputedStyle(document.querySelector('.ChLAv')).display === 'none',
                       reply.contains(target), document.documentElement.scrollWidth <= innerWidth];
                     """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
                 XCTAssertEqual(viewer, Array(repeating: true, count: 5), "\(width)px, \(split)")
@@ -1781,7 +2042,7 @@ final class VigilSocialTests: XCTestCase {
                 const r = close.getBoundingClientRect();
                 return [Math.abs(box.width-innerWidth)<1 && Math.abs(box.height-innerHeight)<1,
                   getComputedStyle(video).objectFit === 'contain',
-                  !fixtureCameraRequest.video.aspectRatio && fixtureCameraRequest.audio === false,
+                  Math.abs(fixtureCameraRequest.video.aspectRatio.ideal - 4/3)<.001 && fixtureCameraRequest.audio === false,
                   fixtureCameraRequest.video.deviceId.exact === 'selected-camera',
                   close.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))];
                 """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
@@ -1810,7 +2071,7 @@ final class VigilSocialTests: XCTestCase {
     .NvRM8{position:relative}.MOJCa{position:absolute;inset:0;z-index:1;width:100%;height:100%;background:transparent}.MOJCa .IxaB_{position:absolute;display:flex;flex-direction:column;gap:8px}.MOJCa :is(.DPxkw,.c6OV2){background:var(--sigMain);border-radius:10px;box-shadow:0 0 8px #0002}.DPxkw ul{display:flex;gap:2px;margin:3px;padding:0;list-style:none}.DPxkw button{padding:0;width:28px;height:32px}.lF7xe{display:flex;align-items:center;gap:10px;padding:12px;color:var(--sigTextSecondary);cursor:pointer}.Hts9j{border-bottom:.5px solid var(--sigDivider)}.oqVsN{margin:14px;padding:12px;border:1px solid var(--sigDivider);border-radius:10px;position:relative}.ZvWBE{position:absolute;top:-6px;right:-6px;min-width:22px;min-height:22px;padding:0;background:var(--sigMain)}.gFryU{height:36px;display:flex;background:var(--sigMain);border-radius:30px;padding:0 8px;gap:3px}.gPAXk{height:36px}.NcaQH{height:36px;border:0;background:none;padding:2px;display:flex;align-items:center}
     /* Media shell observed in client a4b70008: the secondary grid track and
        desktop lightbox gutters are deliberately retained to reproduce the bug. */
-    .S4e9r{position:relative;z-index:98;border-top:12px solid var(--sigMain);background:var(--sigMain)}.Mn1n9{grid-area:secondary}.ecBYF{box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;position:absolute;inset:0;gap:12px;align-items:stretch}.RdKti{display:flex;justify-content:center;min-height:0;height:100%;width:auto}.vDdE2{position:relative;display:flex;justify-content:center;align-items:center;margin:0 40px;padding:20px 0 40px;max-height:100%;min-width:0;overflow:hidden}.b2f4R{width:100%;height:100%;min-width:0}.b2f4R img{width:100%;height:100%;object-fit:contain}.QQxLo{height:100%;display:flex;width:36px;align-items:center;flex-shrink:0}.Z8KwB{margin-inline-start:2vh}.fOsry{margin-inline-end:2vh}.hRnph{background:#3338;color:#fff;border-radius:50%;width:36px;height:36px}.ATeie img,.ATeie video{filter:blur(10px)}.ecBYF>.ejVI4,.ecBYF>.eNF_J{position:absolute;inset:0;z-index:10;background:#888;display:grid;place-items:center}.fixture-snap-toolbar{display:flex;justify-content:space-between;color:#fff;background:#222;flex-shrink:0;height:48px}.fixture-snap-toolbar button{min-width:60px}
+    .S4e9r{position:relative;z-index:98;border-top:12px solid var(--sigMain);background:var(--sigMain)}.Mn1n9{grid-area:secondary}.ecBYF{box-sizing:border-box;width:100%;height:100%;display:flex;flex-direction:column;position:absolute;inset:0;gap:12px;align-items:stretch}.RdKti{display:flex;justify-content:center;min-height:0;height:100%;width:auto}.vDdE2{position:relative;display:flex;justify-content:center;align-items:center;margin:0 40px;padding:20px 0 40px;max-height:100%;min-width:0;overflow:hidden}.b2f4R{width:100%;height:100%;min-width:0}.b2f4R img{object-fit:contain}.IbYNR{position:relative;display:flex;overflow:hidden;max-height:100%;justify-content:center;width:100%;height:unset}.IbYNR .dCE9D{position:relative;height:auto;margin:0;width:fit-content;max-height:100%}.QQxLo{height:100%;display:flex;width:36px;align-items:center;flex-shrink:0}.Z8KwB{margin-inline-start:2vh}.fOsry{margin-inline-end:2vh}.hRnph{background:#3338;color:#fff;border-radius:50%;width:36px;height:36px}.ATeie img,.ATeie video{filter:blur(10px)}.ecBYF>.ejVI4,.ecBYF>.eNF_J{position:absolute;inset:0;z-index:10;background:#888;display:grid;place-items:center}.fixture-snap-toolbar{display:flex;justify-content:space-between;color:#fff;background:#222;flex-shrink:0;height:48px}.fixture-snap-toolbar button{min-width:60px}
     .fixture-camera-backdrop{position:fixed;inset:0;z-index:210;display:flex;align-items:center;justify-content:center;background:#0008}.AEZEl{height:90%;display:flex;align-items:center;justify-content:center;padding:0;aspect-ratio:9/16}.acEGc{height:100%;max-width:100%;display:flex;align-items:center;justify-content:center;aspect-ratio:9/16}.aTkGG{width:100%;aspect-ratio:9/16}.VZx_k{display:flex;align-items:center;justify-content:center;width:100%;height:100%}.BN1L1{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;background:#000;border-radius:15px}.Nuu9e{display:flex;position:relative;width:100%;height:100%;aspect-ratio:9/16}.CYQZP{position:relative;width:100%;height:100%}.lnAeT{width:100%;height:100%;object-fit:cover}.MQv99{position:absolute;top:0;width:100%;z-index:1;display:flex;justify-content:space-between}.MQv99 button,.ph8Kn button{min-width:48px;min-height:48px;color:white;background:#2229}.ph8Kn{position:absolute;bottom:0;width:100%;height:90px;display:flex;justify-content:center;align-items:center;gap:12px}
     </style></head><body>
     <div class="Fpg8t" id="shell"><aside class="BL7do">
@@ -1850,7 +2111,7 @@ final class VigilSocialTests: XCTestCase {
       const grid=document.querySelector('._XMCw');
       grid.style.cssText=split==='rows'?'grid-template-areas:"secondary" "main";grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px':'grid-template-areas:"main secondary";grid-template-columns:minmax(0,500px) minmax(60%,1fr);grid-template-rows:minmax(0,1fr);gap:8px';
       document.querySelector('.ChLAv').style.gridArea='main';
-      grid.insertAdjacentHTML('beforeend',`<div class="S4e9r Mn1n9"><div class="ecBYF"><div class="fixture-snap-toolbar"><button id="fixture-close-snap" onclick="fixtureCloseSnap()">Back</button><span>Alex</span><button id="fixture-reply-snap" onclick="fixtureOpenReplyCamera()">Reply</button></div><div class="RdKti" aria-label="media content"><div class="QQxLo Z8KwB"><button class="hRnph" aria-label="previous" onclick="window.fixturePrevious=true">❮</button></div><div class="vDdE2 hJysT" style="aspect-ratio:${width}/${height}"><div class="b2f4R"><img id="fixture-snap-image" alt="Fictional snap" src="${fixtureMediaImage(width,height)}"></div></div><div class="QQxLo fOsry"><button class="hRnph" aria-label="next" onclick="window.fixtureNext=true">❯</button></div></div><div class="ejVI4" style="display:none">Click to view media</div><div class="eNF_J" style="display:none">Screenshot privacy screen</div></div></div>`);
+      grid.insertAdjacentHTML('beforeend',`<div class="S4e9r Mn1n9"><div class="ecBYF"><div class="fixture-snap-toolbar"><button id="fixture-close-snap" onclick="fixtureCloseSnap()">Back</button><span>Alex</span><button id="fixture-reply-snap" onclick="fixtureOpenReplyCamera()">Reply</button></div><div class="RdKti" aria-label="media content"><div class="QQxLo Z8KwB"><button class="hRnph" aria-label="previous" onclick="window.fixturePrevious=true">❮</button></div><div class="vDdE2 hJysT" style="aspect-ratio:${width}/${height}"><div class="b2f4R IbYNR zsqlD" style="aspect-ratio:9/16"><img id="fixture-snap-image" class="dCE9D" style="width:180px;height:320px" alt="Fictional snap" src="${fixtureMediaImage(width,height)}"></div></div><div class="QQxLo fOsry"><button class="hRnph" aria-label="next" onclick="window.fixtureNext=true">❯</button></div></div><div class="ejVI4" style="display:none">Click to view media</div><div class="eNF_J" style="display:none">Screenshot privacy screen</div></div></div>`);
     }
     function fixtureCloseSnap(){document.querySelector('._XMCw > .S4e9r')?.remove();document.querySelector('._XMCw').style.cssText='';document.querySelector('.ChLAv').style.gridArea='1/1'}
     function fixtureOpenReplyCamera(){

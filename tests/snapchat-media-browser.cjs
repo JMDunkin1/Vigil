@@ -42,7 +42,8 @@ async function main() {
         const player=rect('.b2f4R'),image=document.getElementById('fixture-snap-image');
         const scale=Math.min(player.width/${size[0]},player.height/${size[1]});
         return {width:player.width,height:player.height,photoWidth:${size[0]}*scale,
-          chatHidden:getComputedStyle(document.querySelector('.ChLAv')).visibility==='hidden',
+          chatHidden:getComputedStyle(document.querySelector('.ChLAv')).display==='none',
+          imageWidth:image.getBoundingClientRect().width,imageHeight:image.getBoundingClientRect().height,
           fit:getComputedStyle(image).objectFit,overflow:document.documentElement.scrollWidth>innerWidth};
       })()`);
       assert.ok(geometry.width>=width-1,'snap player should use the phone width');
@@ -50,6 +51,7 @@ async function main() {
       assert.ok(geometry.photoWidth>=Math.min(width,732*size[0]/size[1])-1,
         'photo should use all available space while retaining its full frame');
       assert.equal(geometry.chatHidden,true,'chat must not share the viewing area');
+      assert.ok(geometry.imageWidth>=width-1 && geometry.imageHeight>=700,'real player inline dimensions must expand too');
       assert.equal(geometry.fit,'contain','portrait and landscape snaps keep their complete frame');
       assert.equal(geometry.overflow,false);
       await tap('[aria-label=next]'); assert.equal(await run('fixtureNext'),true);
@@ -81,7 +83,8 @@ async function main() {
   await run(`navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:406},height:{ideal:720},aspectRatio:{exact:9/16},deviceId:{exact:'selected-camera'}}}).then(stream=>{document.getElementById('local-video').srcObject=stream})`);
   await run(`new Promise(resolve=>{const v=document.getElementById('local-video');if(v.videoWidth)resolve();else v.addEventListener('loadeddata',()=>resolve(),{once:true})})`);
   const request = await run('fixtureConstraints');
-  assert.equal(request.video.aspectRatio,undefined,'desktop aspect ratio must not crop acquisition');
+  assert.deepEqual(request.video.aspectRatio,{ideal:4/3},'request the full sensor in primary orientation, without an exact crop');
+  assert.deepEqual([request.video.width,request.video.height],[{ideal:1920},{ideal:1440}]);
   assert.equal(request.audio,false); assert.deepEqual(request.video.deviceId,{exact:'selected-camera'});
   for (const [width,height] of [[320,780],[390,780],[430,780],[390,420]]) {
     win.setContentSize(width,height); await settle();
@@ -103,7 +106,7 @@ async function main() {
   await tap('#fixture-close-camera'); await settle();
   assert.equal(await run(`document.querySelector('#shell').dataset.vigilSnapMedia`),'viewer','closing camera returns to full snap');
   await tap('#fixture-close-snap'); await settle();
-  assert.equal(await run(`getComputedStyle(document.querySelector('.ChLAv')).visibility`),'visible');
+  assert.equal(await run(`getComputedStyle(document.querySelector('.ChLAv')).display`),'block');
   assert.equal(await run(`document.querySelector('#shell').hasAttribute('data-vigil-snap-media')`),false);
   // Desktop retains its split viewer, camera crop, and native sizing.
   win.setContentSize(1100,780); await settle();

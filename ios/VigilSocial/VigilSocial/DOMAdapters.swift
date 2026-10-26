@@ -144,7 +144,10 @@ enum DOMAdapters {
       const getUserMedia = devices.getUserMedia.bind(devices);
       // The desktop client requests 406x720 or an exact 9:16 stream. On a
       // phone that can crop the sensor before either preview or capture sees
-      // it. Prefer a full sensor mode; keep the chosen camera, mic, frame rate,
+      // it. WebKit constraints use the sensor's primary (landscape) orientation:
+      // 1920x1440 becomes 1440x1920 once upright camera frames arrive. Asking
+      // for 1440x1920 instead can produce landscape output on iOS. Keep the
+      // full 4:3 sensor, chosen camera, mic, frame rate,
       // permissions, and Snapchat's original stream/capture lifecycle.
       const uncropped = video => {
         const result = { ...video };
@@ -157,7 +160,8 @@ enum DOMAdapters {
             || !/^\/web(?:\/|$)/.test(location.pathname)) return getUserMedia(constraints);
         const video = uncropped(constraints.video === true ? {} : constraints.video);
         video.width = { ideal: 1920 };
-        video.height = { ideal: 1920 };
+        video.height = { ideal: 1440 };
+        video.aspectRatio = { ideal: 4 / 3 };
         if (!video.deviceId && !video.facingMode) video.facingMode = { ideal: 'user' };
         if (devices.getSupportedConstraints?.().resizeMode) video.resizeMode = { ideal: 'none' };
         const stream = await getUserMedia({ ...constraints, video });
@@ -169,6 +173,30 @@ enum DOMAdapters {
               await track.applyConstraints({ ...current, advanced: [...(current.advanced || []), { zoom: zoom.min }] });
             }
           } catch (_) { /* Optional zoom support must not discard a usable stream. */ }
+        }
+        // iOS initially reports unrotated sensor dimensions. Let one real
+        // frame arrive before Snapchat caches sizes for capture or lenses.
+        // This detached consumer never acquires another stream or stops tracks.
+        if (typeof document !== 'undefined') {
+          const preview = document.createElement('video');
+          preview.muted = true; preview.playsInline = true;
+          await new Promise(resolve => {
+            let finished = false;
+            const finish = () => {
+              if (finished) return;
+              finished = true; clearTimeout(timeout);
+              preview.removeEventListener('loadeddata', finish);
+              preview.removeEventListener('error', finish);
+              preview.pause(); preview.srcObject = null; resolve();
+            };
+            const timeout = setTimeout(finish, 2000);
+            preview.addEventListener('loadeddata', finish, { once: true });
+            preview.addEventListener('error', finish, { once: true });
+            try {
+              preview.srcObject = stream;
+              Promise.resolve(preview.play()).catch(finish);
+            } catch (_) { finish(); }
+          });
         }
         return stream;
       };
@@ -5522,13 +5550,13 @@ enum DOMAdapters {
             grid-template-rows: minmax(0, 1fr) !important;
             gap: 0 !important; height: 100% !important;
           }
-          [data-vigil-snap-media="viewer"] ._XMCw > .ChLAv { visibility: hidden; }
+          [data-vigil-snap-media="viewer"] ._XMCw > .ChLAv { display: none !important; }
           [data-vigil-snap-media="viewer"] ._XMCw > .S4e9r:has(.ecBYF) {
             grid-area: main !important; position: relative !important;
             inset: auto !important; width: 100% !important; height: 100% !important;
             max-width: none !important; min-height: 0; box-sizing: border-box;
             border: 0 !important; padding: 0 !important; margin: 0 !important;
-            transform: none !important; animation: none !important;
+            transform: none !important; animation: none !important; clip-path: none !important;
             background: #000;
           }
           [data-vigil-snap-media="viewer"] .ecBYF {
@@ -5539,7 +5567,16 @@ enum DOMAdapters {
             width: 100% !important; height: 100% !important;
             margin: 0 !important; padding: 0 !important; aspect-ratio: auto !important;
           }
-          [data-vigil-snap-media="viewer"] .b2f4R { width: 100% !important; height: 100% !important; }
+          [data-vigil-snap-media="viewer"] .b2f4R {
+            width: 100% !important; height: 100% !important; aspect-ratio: auto !important;
+            max-width: 100% !important; max-height: 100% !important;
+          }
+          /* The real player layers carry inline desktop pixel dimensions.
+             Sizing just b2f4R leaves those layers tiny inside a large black box. */
+          [data-vigil-snap-media="viewer"] .b2f4R :is(.JGXlA, .dCE9D) {
+            width: 100% !important; height: 100% !important;
+            max-width: 100% !important; max-height: 100% !important;
+          }
           [data-vigil-snap-media="viewer"] .b2f4R :is(img, video) { object-fit: contain !important; }
           [data-vigil-snap-media="viewer"] .QQxLo {
             position: absolute; top: 8px; width: 44px; height: 44px; margin: 0; z-index: 1;
@@ -5572,6 +5609,14 @@ enum DOMAdapters {
             width: 100% !important; height: 100% !important; max-width: none; max-height: none;
             padding: 0 !important; inset: auto; border-radius: 0; aspect-ratio: auto;
           }
+          .vigil-snap-export {
+            position: absolute; inset-inline-start: 12px; bottom: 60px; z-index: 2;
+            max-width: calc(100% - 24px); min-height: 44px; padding: 10px 14px;
+            border: 1px solid #ffffff70; border-radius: 24px;
+            background: #181818; color: #fff; font: 600 14px/1.3 -apple-system, sans-serif;
+            touch-action: manipulation;
+          }
+          .vigil-snap-export:disabled { opacity: .7; }
         }
         @media (min-width: 601px) { .vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat { display: none; } }
       `;
@@ -5612,6 +5657,79 @@ enum DOMAdapters {
       const set = (element, name, value) => {
         if (element.getAttribute(name) !== value) element.setAttribute(name, value);
       };
+      // Export only the currently displayed, policy-approved photo. Never
+      // screenshot the page, capture a live camera, or remove privacy shields.
+      let pendingExport = null;
+      const exportLayers = surface => [...surface.querySelectorAll('.b2f4R img, .b2f4R video, .BN1L1 img, .BN1L1 video')]
+        .filter(media => !media.srcObject && renderVisible(media) && (media.currentSrc || media.src));
+      const exportMedia = surface => {
+        const media = exportLayers(surface)[0];
+        return media instanceof HTMLImageElement && media.dataset.vigilMediaVerdict === 'safe' ? media : null;
+      };
+      const exportAllowed = (surface, media) => surface.isConnected && document.hasFocus()
+        && document.visibilityState === 'visible' && document.documentElement.dataset.vigilPageVerdict === 'safe'
+        && !surface.matches('.ATeie') && !surface.querySelector('.ATeie')
+        && ![...surface.querySelectorAll('.ejVI4, .eNF_J')].some(renderVisible)
+        && exportMedia(surface) === media && exportLayers(surface).every(layer =>
+          layer.dataset.vigilMediaVerdict === 'safe' && !/blur\(/.test(getComputedStyle(layer).filter));
+      window.__vigilValidateSnapchatExport = id => Boolean(pendingExport?.id === id
+        && exportAllowed(pendingExport.surface, pendingExport.media)
+        && JSON.stringify(exportLayers(pendingExport.surface).map(layer => layer.currentSrc || layer.src)) === pendingExport.sources);
+      window.__vigilCompleteSnapchatExport = (id, success, detail) => {
+        if (pendingExport?.id !== id) return;
+        const { button } = pendingExport;
+        clearTimeout(pendingExport.timeout);
+        pendingExport = null;
+        button.disabled = false;
+        button.textContent = success ? 'Saved to Camera Roll' : (detail || 'Could not save. Try again');
+      };
+      const installExport = surface => {
+        const existing = surface.querySelector('.vigil-snap-export');
+        const hasPhoto = exportLayers(surface)[0] instanceof HTMLImageElement;
+        if (existing) { existing.hidden = !hasPhoto; return; }
+        if (!hasPhoto || typeof window.__vigilBridge !== 'function') return;
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'vigil-snap-export';
+        button.textContent = 'Save to Camera Roll'; button.setAttribute('aria-live', 'polite');
+        button.addEventListener('click', async event => {
+          event.preventDefault(); event.stopPropagation();
+          if (pendingExport) return;
+          const media = exportMedia(surface);
+          if (!media || !exportAllowed(surface, media)) {
+            button.textContent = 'Open the photo to save it'; return;
+          }
+          const id = crypto.randomUUID();
+          pendingExport = { id, surface, media, button,
+            sources: JSON.stringify(exportLayers(surface).map(layer => layer.currentSrc || layer.src)),
+            timeout: setTimeout(() => window.__vigilCompleteSnapchatExport(id, false, 'Save timed out. Try again'), 60000) };
+          button.disabled = true; button.textContent = 'Saving…';
+          try {
+            // Chat Snaps can have separate caption/sticker image layers.
+            // Compose their original pixels, including the complete frame.
+            const canvas = document.createElement('canvas');
+            canvas.width = media.naturalWidth; canvas.height = media.naturalHeight;
+            if (!canvas.width || !canvas.height || canvas.width * canvas.height > 80_000_000) throw new Error('Image unavailable');
+            const context = canvas.getContext('2d');
+            for (const layer of exportLayers(surface)) {
+              if (!(layer instanceof HTMLImageElement) || !layer.complete || !layer.naturalWidth) throw new Error('Image unavailable');
+              const scale = Math.min(canvas.width / layer.naturalWidth, canvas.height / layer.naturalHeight);
+              const width = layer.naturalWidth * scale, height = layer.naturalHeight * scale;
+              context.drawImage(layer, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+            }
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+            if (!blob) throw new Error('Media unavailable');
+            if (blob.type !== 'image/png' || !blob.size || blob.size > 32 * 1024 * 1024) throw new Error('Unsupported media');
+            const dataURL = await new Promise((resolve, reject) => {
+              const reader = new FileReader(); reader.onload = () => resolve(reader.result);
+              reader.onerror = reject; reader.readAsDataURL(blob);
+            });
+            if (!window.__vigilValidateSnapchatExport(id)) throw new Error('Media changed');
+            window.__vigilBridge({ type: 'snapchatExport', requestID: id, mimeType: blob.type,
+              base64: dataURL.slice(dataURL.indexOf(',') + 1) });
+          } catch (_) { window.__vigilCompleteSnapchatExport(id, false, 'Could not save. Try again'); }
+        });
+        surface.appendChild(button);
+      };
       const reconcile = () => {
         scheduled = false;
         const search = document.querySelector('[data-testid="app.feed.Search"], .BL7do .yC1EG input[role="searchbox"]');
@@ -5650,6 +5768,8 @@ enum DOMAdapters {
         const camera = document.querySelector('.AEZEl .BN1L1');
         if (viewer || camera) set(shell, 'data-vigil-snap-media', camera ? 'camera' : 'viewer');
         else shell.removeAttribute('data-vigil-snap-media');
+        if (viewer) installExport(viewer.closest('.ecBYF'));
+        for (const preview of document.querySelectorAll('.BN1L1:has(img)')) installExport(preview);
         if (detail) preferredPanel = 'feed';
         // Hiding the formerly focused feed can leave embedded WebKit without
         // a native responder. Ask the host to restore real focus for this chat;
@@ -5778,7 +5898,7 @@ enum DOMAdapters {
       };
       new MutationObserver(schedule).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true,
-        attributeFilter: ['class', 'style', 'data-testid', 'theme', 'dir', 'data-vigil-page-verdict']
+        attributeFilter: ['class', 'style', 'src', 'data-testid', 'theme', 'dir', 'data-vigil-page-verdict', 'data-vigil-media-verdict']
       });
       addEventListener('resize', schedule);
       addEventListener('popstate', schedule);

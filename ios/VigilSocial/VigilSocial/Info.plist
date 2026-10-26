@@ -49,6 +49,8 @@
     <string>Use the microphone when you choose voice search, recording, or calling in $(SOCIAL_APP_NAME).</string>
     <key>NSPhotoLibraryUsageDescription</key>
     <string>Choose photos and videos to upload in $(SOCIAL_APP_NAME).</string>
+    <key>NSPhotoLibraryAddUsageDescription</key>
+    <string>Save a photo to your Camera Roll when you choose Save to Camera Roll.</string>
     <key>VigilService</key>
     <string>$(VIGIL_SERVICE)</string>
     <key>VigilUnclassifiedMediaPolicy</key>
