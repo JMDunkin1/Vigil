@@ -477,6 +477,57 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testNativeLauncherRetainsColdRequestsAndExistingServiceSessions() throws {
+        let suite = "VigilNativeLauncher.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let launcher = SocialLauncherShortcut()
+        launcher.open(.youtube)
+        let container = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false,
+                                             commitmentStorage: FixtureSocialCommitmentStorage())
+        launcher.consumeService(in: container)
+        XCTAssertEqual(container.selectedService, .youtube)
+        XCTAssertNil(launcher.pendingService)
+        let youtube = container.store(for: .youtube)
+        let page = youtube.webView(for: .youtube)
+        for service in SocialService.allCases {
+            launcher.open(service)
+            launcher.consumeService(in: container)
+            XCTAssertEqual(container.selectedService, service)
+            XCTAssertNil(launcher.pendingService)
+        }
+        launcher.open(.youtube)
+        launcher.consumeService(in: container)
+        XCTAssertTrue(container.store(for: .youtube) === youtube)
+        XCTAssertTrue(youtube.webView(for: .youtube) === page)
+    }
+
+    @MainActor
+    func testNativeLauncherCannotBypassCommitmentsOrFixedServiceScope() throws {
+        let suite = "VigilNativeLauncherRestrictions.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let launcher = SocialLauncherShortcut()
+        let combined = SocialContainerStore(defaults: defaults, combined: true, loadInitialPages: false,
+                                            commitmentStorage: FixtureSocialCommitmentStorage())
+        XCTAssertTrue(combined.preferences.beginSocialLock(instagramOnly: false, until: nil))
+        for service in SocialService.allCases {
+            launcher.open(service)
+            launcher.consumeService(in: combined)
+            XCTAssertNil(combined.selectedService)
+            XCTAssertNil(launcher.pendingService)
+        }
+        XCTAssertTrue(combined.stores.isEmpty)
+        let fixed = SocialContainerStore(defaults: defaults, combined: false, loadInitialPages: false,
+                                         commitmentStorage: FixtureSocialCommitmentStorage())
+        let other = try XCTUnwrap(SocialService.allCases.first { $0 != fixed.initialService })
+        launcher.open(other)
+        launcher.consumeService(in: fixed)
+        XCTAssertEqual(fixed.selectedService, fixed.initialService)
+        XCTAssertNil(fixed.stores[other])
+    }
+
+    @MainActor
     func testAppsShortcutReturnsToLauncherAndPreservesServiceSessions() throws {
         let suite = "VigilShortcutRegression.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

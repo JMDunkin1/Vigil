@@ -163,7 +163,7 @@ enum InstagramSingleReelPolicy {
     }
 }
 
-enum SocialService: String, CaseIterable, Identifiable {
+enum SocialService: String, CaseIterable, Identifiable, Sendable {
     case instagram
     case youtube
     case snapchat

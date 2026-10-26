@@ -1,6 +1,7 @@
 import SwiftUI
 import SafariServices
 import Combine
+import AppIntents
 
 @main
 struct VigilSocialApp: App {
@@ -42,6 +43,9 @@ struct VigilSocialApp: App {
             }
                 .onChange(of: launcherShortcut.pending, initial: true) { _, pending in
                     if pending { launcherShortcut.consume(in: container) }
+                }
+                .onChange(of: launcherShortcut.pendingService, initial: true) { _, service in
+                    if service != nil { launcherShortcut.consumeService(in: container) }
                 }
                 .task {
                     let store = container
@@ -86,6 +90,7 @@ final class SocialAppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        VigilAppShortcuts.updateAppShortcutParameters()
         if Bundle.main.object(forInfoDictionaryKey: "VigilService") as? String == "all" {
             application.shortcutItems = [UIApplicationShortcutItem(
                 type: SocialLauncherShortcut.type, localizedTitle: "Apps",
@@ -145,6 +150,17 @@ final class SocialLauncherShortcut: ObservableObject {
     static let shared = SocialLauncherShortcut()
     static let type = "tech.caseline.vigil.apps"
     @Published private(set) var pending = false
+    @Published private(set) var pendingService: SocialService?
+
+    func open(_ service: SocialService) { pendingService = service }
+
+    func consumeService(in container: SocialContainerStore) {
+        guard let service = pendingService else { return }
+        pendingService = nil
+        // Use the same migration, commitment and service checks as a Home
+        // Screen URL. A native shortcut grants no browsing or playback time.
+        container.open(URL(string: "vigilsocial://\(service.rawValue)")!)
+    }
 
     @discardableResult
     func handle(_ shortcut: UIApplicationShortcutItem) -> Bool {
@@ -157,5 +173,46 @@ final class SocialLauncherShortcut: ObservableObject {
         guard pending, container.isCombined else { return }
         container.showHome()
         pending = false
+    }
+}
+
+extension SocialService: AppEnum {
+    static var typeDisplayRepresentation: TypeDisplayRepresentation { "App" }
+    static var caseDisplayRepresentations: [SocialService: DisplayRepresentation] {
+        [ .instagram: "Instagram", .youtube: "YouTube", .snapchat: "Snapchat",
+          .linkedin: "LinkedIn", .facebook: "Facebook", .x: "X",
+          .tiktok: "TikTok", .reddit: "Reddit" ]
+    }
+}
+
+// A single Vigil-owned action avoids Safari's icon attribution for Open URLs.
+// iOS still owns any Shortcuts completion indicator shown in Dynamic Island.
+struct OpenVigilServiceIntent: AppIntent {
+    static var title: LocalizedStringResource { "Open Vigil App" }
+    static var description: IntentDescription {
+        "Open an app in Vigil with its existing restrictions and session."
+    }
+    static var openAppWhenRun: Bool { true }
+    @available(iOS 26.0, *)
+    static var supportedModes: IntentModes { .foreground }
+
+    @Parameter(title: "App") var service: SocialService
+
+    static var parameterSummary: some ParameterSummary {
+        Summary("Open \(\.$service) in Vigil")
+    }
+
+    @MainActor
+    func perform() async throws -> some IntentResult {
+        SocialLauncherShortcut.shared.open(service)
+        return .result()
+    }
+}
+
+struct VigilAppShortcuts: AppShortcutsProvider {
+    static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: OpenVigilServiceIntent(),
+                    phrases: ["Open \(\.$service) in \(.applicationName)"],
+                    shortTitle: "Open App", systemImageName: "square.grid.2x2")
     }
 }
