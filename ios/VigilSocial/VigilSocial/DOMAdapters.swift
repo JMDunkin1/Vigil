@@ -1920,22 +1920,25 @@ enum DOMAdapters {
       // Cache the complete native gesture state, including scrolling sheets.
       let nativeScrollState = '';
       const nativeGestureRegion = (node, requireForeground = false) => {
-        if (!(node instanceof Element) || !node.isConnected || node.closest('[hidden], [aria-hidden="true"]')) return null;
+        if (!(node instanceof Element) || !activeModal(node)) return null;
         const style = getComputedStyle(node);
         if (style.display === 'none' || style.visibility === 'hidden') return null;
         const box = node.getBoundingClientRect(), viewport = window.visualViewport;
-        const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
-        const left = (box.left - (viewport?.offsetLeft || 0)) / width;
-        const top = (box.top - (viewport?.offsetTop || 0)) / height;
+        const width = innerWidth, height = innerHeight;
+        // The keyboard shrinks visualViewport.height without shrinking the
+        // native WebView. Use its width to account for pinch scale on both axes.
+        const scale = width / (viewport?.width || width);
+        const left = (box.left - (viewport?.offsetLeft || 0)) * scale / width;
+        const top = (box.top - (viewport?.offsetTop || 0)) * scale / height;
         if (requireForeground) {
-          const x = Math.max(0, Math.min(width - 1, box.left + box.width / 2));
-          const y = Math.max(0, Math.min(height - 1, box.top + box.height / 2));
+          const x = Math.max(0, Math.min((viewport?.width || width) - 1, box.left + box.width / 2));
+          const y = Math.max(0, Math.min((viewport?.height || height) - 1, box.top + box.height / 2));
           const foreground = document.elementFromPoint(x, y);
           if (!foreground || (foreground !== node && !node.contains(foreground))) return null;
         }
         return box.width > 0 && box.height > 0 && left < 1 && top < 1
-          && left + box.width / width > 0 && top + box.height / height > 0
-          ? [left, top, box.width / width, box.height / height] : null;
+          && left + box.width * scale / width > 0 && top + box.height * scale / height > 0
+          ? [left, top, box.width * scale / width, box.height * scale / height] : null;
       };
       const reportNativeScrollLock = (locked, force = false) => {
         const sheets = locked ? [...document.querySelectorAll(
@@ -1956,8 +1959,12 @@ enum DOMAdapters {
       };
       const style = document.createElement('style');
       style.textContent = `
-        html[data-vigil-single-reel]:not(:has([data-vigil-instagram-comments-sheet="true"])),
-        html[data-vigil-single-reel] body *:where(:not([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-comments-sheet="true"] *)) {
+        html[data-vigil-single-reel]:not(:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"])),
+        html[data-vigil-single-reel] body *:where(:not(
+          [data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-comments-sheet="true"] *,
+          [data-vigil-instagram-recipient-sheet="true"], [data-vigil-instagram-recipient-sheet="true"] *,
+          :has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"])
+        )) {
           touch-action: pinch-zoom !important;
           overscroll-behavior: none !important;
         }
@@ -1980,7 +1987,11 @@ enum DOMAdapters {
         }
         html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"],
         html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] * {
+          touch-action: auto !important;
           overscroll-behavior-y: contain !important;
+        }
+        html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] {
+          overflow-y: auto !important;
         }
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"],
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] * {
@@ -2033,6 +2044,9 @@ enum DOMAdapters {
       };
       const syncRoute = () => {
         const route = mediaRoute(location.href);
+        // Closing a comments/post portal can return the original media to its
+        // article without changing the item URL. Keep observing the live page.
+        if (route && modalContext && !activeModal(modalContext)) modalContext = null;
         if (route && !modalContext) {
           const modal = foregroundModal(sharedIntent?.origin);
           if (!sharedIntent?.origin || !modal?.contains(sharedIntent.origin)) modalContext = modal;
@@ -2201,9 +2215,17 @@ enum DOMAdapters {
           else dialog.removeAttribute('data-vigil-instagram-recipient-sheet');
         }
       };
+      const commentsDismissControl = target => {
+        if (!document.querySelector('[data-vigil-instagram-comments-sheet="true"]')) return false;
+        const control = target?.closest?.('button, [role="button"], a[href]');
+        if (!control) return false;
+        return [control, ...control.querySelectorAll('[aria-label], title')].some(node =>
+          /^(close|dismiss|back)( comments)?$/i.test(String(node.getAttribute('aria-label') || node.getAttribute('title')
+            || (node === control || node.tagName.toLowerCase() === 'title' ? node.textContent : '') || '').trim()));
+      };
       const inSheet = target => target instanceof Element && (Boolean(target.closest(
         '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
-      )) || Boolean(recipientSheet(target)));
+      )) || Boolean(recipientSheet(target)) || commentsDismissControl(target));
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (!node.isConnected) { lockedScroll.delete(node); return; }
         if (node.scrollTop !== position) node.scrollTop = position;
@@ -2376,6 +2398,23 @@ enum DOMAdapters {
             });
           const media = pinnedVideo?.isConnected ? pinnedVideo : candidates[0];
           pinnedCard = media ? cardFor(media) : null;
+        }
+        // Opening comments can move the selected video out of its article
+        // while retaining the article in the page. Preserve that exact source
+        // in a single-media wrapper; never transfer a carousel or authorize
+        // another video's source through the move.
+        if (pinnedVideo?.isConnected && pinnedCard && !postCarousel
+            && pinnedSource && mediaSource(pinnedVideo) === pinnedSource) {
+          const remembered = mediaSources.get(pinnedVideo), movedCard = cardFor(pinnedVideo);
+          const routes = [...movedCard.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
+          const media = [...(movedCard.matches('video, img') ? [movedCard] : []),
+            ...movedCard.querySelectorAll('video, img')].filter(contentMedia);
+          if (movedCard !== pinnedCard && remembered && !remembered.rejected && remembered.source === pinnedSource
+              && routes.every(route => route.id === pinnedID && route.kind === pinnedKind)
+              && media.length === 1 && media[0] === pinnedVideo) {
+            pinnedCard = movedCard;
+            remembered.card = movedCard;
+          }
         }
         if (pinnedCard && !postLayoutCaptured) {
           postCarousel = capturePostCarousel(pinnedCard);
@@ -7077,11 +7116,13 @@ enum DOMAdapters {
         return null;
       };
       const nestedCommentPanel = (dialog, heading, composer, largeMedia) => {
-        if (!heading || !composer || !largeMedia) return null;
+        if (!heading || !largeMedia) return null;
         let candidate = heading.parentElement;
         let depth = 0;
         while (candidate && candidate !== dialog && depth < 12) {
-          if (candidate.contains(composer) && !candidate.contains(largeMedia)) return candidate;
+          const box = candidate.getBoundingClientRect();
+          const containsComments = composer ? candidate.contains(composer) : box.width >= 180 && box.height >= 160;
+          if (containsComments && !candidate.contains(largeMedia)) return candidate;
           candidate = candidate.parentElement;
           depth += 1;
         }

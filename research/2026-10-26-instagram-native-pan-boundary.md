@@ -79,3 +79,10 @@ the device; the user's swipe result remains the final containment check.
 
 The refreshed runtime social-build checks, 48 native route probes, and two
 story-position regressions also passed.
+
+## User confirmation and comments follow-up
+
+The user subsequently confirmed that the installed native boundary stopped
+advancing into another Reel/post. They then reported that comments could not
+scroll or close. The scoped comments repair and its validation are recorded in
+[the comments follow-up](2026-10-26-instagram-comments-gesture-boundary.md).

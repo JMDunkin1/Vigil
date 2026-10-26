@@ -1330,9 +1330,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard service == .instagram, frame.isMainFrame,
                   let locked = body["locked"] as? Bool,
                   let webView = message.webView else { return }
-            setInstagramReelScrollLocked(locked, in: webView)
-            instagramSharedItemPanGuard?.scrollingRegions = Self.instagramGestureRegions(body["scrollingRegions"])
-            instagramSharedItemPanGuard?.carouselRegions = Self.instagramGestureRegions(body["carouselRegions"])
+            setInstagramReelScrollLocked(locked, in: webView,
+                scrollingRegions: Self.instagramGestureRegions(body["scrollingRegions"]),
+                carouselRegions: Self.instagramGestureRegions(body["carouselRegions"]))
         case "documentReady":
             guard frame.isMainFrame,
                   let documentID = body["documentID"] as? String,
@@ -1936,11 +1936,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // The item guard owns an open Direct viewer even if the underlying
             // adapter briefly reports feed/unknown while React remounts it.
             if instagramSharedViewerScrollLocked || surface.route == "reels" {
-                webView.scrollView.isScrollEnabled = false
-                instagramSharedItemPanGuard?.isEnabled = true
+                updateInstagramPanBoundary(locked: true, in: webView)
             } else if !["modal", "directThread"].contains(surface.route) {
-                webView.scrollView.isScrollEnabled = true
-                instagramSharedItemPanGuard?.isEnabled = false
+                updateInstagramPanBoundary(locked: false, in: webView)
             }
             // WebKit supplies the same interactive back/forward transition as
             // Safari. Route-gating it keeps center-screen carousels, Stories,
@@ -1960,19 +1958,28 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
-    func setInstagramReelScrollLocked(_ locked: Bool, in webView: WKWebView) {
+    func setInstagramReelScrollLocked(_ locked: Bool, in webView: WKWebView,
+                                      scrollingRegions: [CGRect] = [], carouselRegions: [CGRect] = []) {
         guard webViews[.instagram] === webView else { return }
         instagramSharedViewerScrollLocked = locked
+        instagramSharedItemPanGuard?.scrollingRegions = locked ? scrollingRegions : []
+        instagramSharedItemPanGuard?.carouselRegions = locked ? carouselRegions : []
+        updateInstagramPanBoundary(locked: locked, in: webView)
+    }
+
+    private func updateInstagramPanBoundary(locked: Bool, in webView: WKWebView) {
         instagramSharedItemPanGuard?.isEnabled = locked
         if !locked {
             instagramSharedItemPanGuard?.scrollingRegions = []
             instagramSharedItemPanGuard?.carouselRegions = []
         }
-        // CSS touch-action does not reliably stop the WKWebView's native
-        // UIScrollView pan recognizer on iOS. Lock that recognizer at the host
-        // view while a shared Reel is pinned, and restore it when the viewer
-        // closes so the Direct thread keeps its normal scrolling.
-        webView.scrollView.isScrollEnabled = !locked
+        // Comments can use the root WK scroll view. Keep it available when a
+        // foreground exception exists; the parent pan boundary still rejects
+        // every swipe that starts in the Reel behind that exception.
+        let allowsForegroundScrolling = instagramSharedItemPanGuard.map {
+            !$0.scrollingRegions.isEmpty || !$0.carouselRegions.isEmpty
+        } ?? false
+        webView.scrollView.isScrollEnabled = !locked || allowsForegroundScrolling
     }
 
     private func synchronizeInstagramSharedItem(in webView: WKWebView?) {

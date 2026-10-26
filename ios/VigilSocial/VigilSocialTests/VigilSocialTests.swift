@@ -400,6 +400,28 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramCommentsCanUseRootScrollingWhileBackgroundPansStayBlocked() {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
+        let webView = store.webView(for: .instagram)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let boundary = webView.gestureRecognizers?.compactMap { $0 as? InstagramSharedItemPanGuard }.first
+        store.setInstagramReelScrollLocked(true, in: webView,
+            scrollingRegions: [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)])
+        XCTAssertTrue(webView.scrollView.isScrollEnabled, "Comments must be able to use WebKit's root scroll recognizer")
+        XCTAssertEqual(boundary?.isEnabled, true)
+        XCTAssertEqual(boundary?.blocksPan(from: CGPoint(x: 100, y: 700), translation: CGPoint(x: 0, y: -100)), false)
+        XCTAssertEqual(boundary?.blocksPan(from: CGPoint(x: 100, y: 200), translation: CGPoint(x: 0, y: -100)), true)
+        for route in ["modal", "reels", "directThread"] {
+            store.setSurface(SocialSurfaceState(route: route, refreshEligible: false, blocksRefresh: true), for: .instagram)
+            XCTAssertTrue(webView.scrollView.isScrollEnabled, "A \(route) refresh cannot disable comments scrolling")
+            XCTAssertEqual(boundary?.isEnabled, true)
+        }
+        store.setInstagramReelScrollLocked(true, in: webView)
+        XCTAssertFalse(webView.scrollView.isScrollEnabled, "Closing comments restores the strict root lock")
+        XCTAssertEqual(boundary?.blocksPan(from: CGPoint(x: 100, y: 700), translation: CGPoint(x: 0, y: -100)), true)
+    }
+
+    @MainActor
     func testInstagramNativeGestureStateReplaysAfterDocumentBinding() async throws {
         let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
         controller.add(bridge, name: "vigil")
@@ -432,8 +454,67 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(message?["locked"] as? Bool, true)
         XCTAssertEqual(SocialWebViewStore.instagramGestureRegions(message?["scrollingRegions"]).count, 1,
                        "Only the comments rectangle yields native panning; the underlying Reel stays locked")
+        _ = try await webView.evaluateJavaScript(#"""
+          document.querySelector('[data-vigil-instagram-comments-sheet]').style.top='200px';
+          Object.defineProperty(window,'visualViewport',{configurable:true,value:{width:innerWidth,height:300,offsetTop:0,offsetLeft:0}});
+          window.__vigilInstagramSharedItem.synchronizeNativeGestureGuard();true;
+          """#)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let keyboardMessage = bridge.messages.last { $0["type"] as? String == "reelScrollLock" }
+        let keyboardRegion = try XCTUnwrap(SocialWebViewStore.instagramGestureRegions(keyboardMessage?["scrollingRegions"]).first)
+        XCTAssertEqual(keyboardRegion.minY, 200.0 / 844.0, accuracy: 0.01,
+                       "A shorter visual viewport must not stretch comments exceptions over the native view")
         webView.navigationDelegate = nil
         controller.removeScriptMessageHandler(forName: "vigil")
+    }
+
+    @MainActor
+    func testInstagramCommentsWithoutTextareaKeepScrollingAndExternalCloseControl() async throws {
+        let webView = try await instagramRepairFixture(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+          html,body{margin:0}body{min-height:2000px}#viewer{position:fixed;inset:0}video{width:390px;height:320px}
+          #comments{position:absolute;bottom:0;width:390px;height:360px}
+          #list{height:240px;overflow-y:auto}#rows{height:1500px}
+          #close{position:fixed;top:330px;right:8px}
+          </style><script>window.fetch=async()=>({ok:true,json:async()=>({})});window.commentMoves=0;window.closes=0;</script>
+          </head><body><div role="dialog" id="viewer"><video id="video"></video>
+          <section id="comments"><h2>Comments</h2><div id="list" role="list"><div id="rows">Comments list</div></div>
+          <div role="textbox" contenteditable="true">Add a comment</div></section>
+          <button id="close" aria-label="Close comments">Close</button>
+          <button id="next" aria-label="Next reel">Next</button></div>
+          <script>
+          document.getElementById('list').onpointermove=()=>window.commentMoves++;
+          document.getElementById('close').onpointerup=()=>{window.closes++;document.getElementById('comments').hidden=true;};
+          </script></body></html>
+          """#, path: "/reel/Shared123/")
+        try await waitForJavaScriptCondition("document.getElementById('comments').dataset.vigilInstagramCommentsSheet === 'true'", in: webView)
+        let state = try await webView.evaluateJavaScript(#"""
+          (()=>{
+            const fire=(target,type,y)=>{const event=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:y});target.dispatchEvent(event);return event.defaultPrevented;};
+            const comments=document.getElementById('list');
+            fire(comments,'pointerdown',650);const commentsBlocked=fire(comments,'pointermove',500);fire(comments,'pointerup',500);
+            const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+            const video=document.getElementById('video');fire(video,'pointerdown',200);const reelBlocked=fire(video,'pointermove',50);fire(video,'pointerup',50);
+            fire(comments,'pointerdown',650);fire(comments,'pointerup',650);
+            document.scrollingElement.scrollTop=120;document.dispatchEvent(new Event('scroll'));
+            const backgroundStayedLocked=document.scrollingElement.scrollTop===0;
+            let commentsPanAllowed=true;
+            for(let node=comments;node;node=node.parentElement){
+              const action=getComputedStyle(node).touchAction;
+              if(action!=='auto'&&!action.includes('pan-y')&&!action.includes('manipulation'))commentsPanAllowed=false;
+            }
+            const panelScrolls=getComputedStyle(document.getElementById('comments')).overflowY==='auto';
+            const close=document.getElementById('close');fire(close,'pointerdown',350);fire(close,'pointerup',350);
+            fire(video,'pointerdown',200);document.dispatchEvent(new Event('scroll'));fire(video,'pointerup',200);
+            return {commentsWork:!commentsBlocked&&window.commentMoves===1,reelBlocked,nextBlocked:next.defaultPrevented,
+              backgroundStayedLocked,commentsPanAllowed,panelScrolls,backgroundRestored:document.scrollingElement.scrollTop===0,
+              closed:window.closes===1&&document.getElementById('comments').hidden,
+              visible:getComputedStyle(video).visibility==='visible'};
+          })()
+          """#) as? [String: Bool]
+        for key in ["commentsWork", "commentsPanAllowed", "panelScrolls", "backgroundStayedLocked", "backgroundRestored", "reelBlocked", "nextBlocked", "closed", "visible"] {
+            XCTAssertEqual(state?[key], true, key)
+        }
     }
 
     @MainActor
@@ -5086,7 +5167,7 @@ final class VigilSocialTests: XCTestCase {
               <style>html,body{margin:0;width:100%;height:100%}</style>
             </head><body>
               <main><article>
-                <video id="media" style="display:block;width:390px;height:520px"></video>
+                <video id="media" src="https://www.instagram.com/fixture-selected.mp4" style="display:block;width:390px;height:520px"></video>
                 <button id="open-comments" aria-label="Comments">Open comments</button>
               </article></main>
               <script>
@@ -5126,13 +5207,13 @@ final class VigilSocialTests: XCTestCase {
             baseURL: try XCTUnwrap(URL(string: "https://www.instagram.com/p/fixture/"))
         )
         await fulfillment(of: [loaded], timeout: 5)
-        _ = try await webView.evaluateJavaScript("document.getElementById('open-comments').click()")
+        _ = try await evaluateJavaScriptRetryingKnownGestureTransition("if(!document.getElementById('comments'))document.getElementById('open-comments').click();true;", in: webView)
         try await waitForJavaScriptCondition(
             "document.getElementById('comments')?.dataset.vigilInstagramCommentsSheet === 'true' && !document.getElementById('media').paused",
             in: webView
         )
 
-        let geometry = try await webView.evaluateJavaScript(
+        let geometry = try await evaluateJavaScriptRetryingKnownGestureTransition(
             """
             (() => {
               const rect = document.getElementById('comments').getBoundingClientRect();
@@ -5144,10 +5225,11 @@ final class VigilSocialTests: XCTestCase {
                 outerHeight: outer.getBoundingClientRect().height,
                 outerSheet: outer.dataset.vigilInstagramCommentsSheet || '',
                 playCalls: window.__vigilFixturePlayCalls,
-                playing: !document.getElementById('media').paused
+                playing: !document.getElementById('media').paused,
+                visible: getComputedStyle(document.getElementById('media')).visibility === 'visible'
               };
             })()
-            """
+            """, in: webView
         ) as? [String: Any]
         let top = try XCTUnwrap(geometry?["top"] as? Double)
         let bottom = try XCTUnwrap(geometry?["bottom"] as? Double)
@@ -5158,6 +5240,11 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(geometry?["outerSheet"] as? String, "")
         XCTAssertEqual(geometry?["playCalls"] as? Int, 1)
         XCTAssertEqual(geometry?["playing"] as? Bool, true)
+        XCTAssertEqual(geometry?["visible"] as? Bool, true, "Opening comments preserves the selected video's source and visibility")
+        _ = try await evaluateJavaScriptWithCompletion("document.querySelector('main article').append(document.getElementById('media'));document.getElementById('post-dialog').remove();true;", in: webView)
+        try await waitForJavaScriptCondition("document.getElementById('media').dataset.vigilSingleReelMedia === 'allowed' && getComputedStyle(document.getElementById('media')).visibility === 'visible'", in: webView)
+        _ = try await evaluateJavaScriptWithCompletion("document.getElementById('media').src='https://www.instagram.com/fixture-next.mp4';true;", in: webView)
+        try await waitForJavaScriptCondition("getComputedStyle(document.getElementById('media')).visibility === 'hidden'", in: webView)
     }
 
     @MainActor
