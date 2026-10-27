@@ -218,6 +218,8 @@ assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd),
 assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"src\/explicitContentPolicy\.ts"/u);
 assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"src\/browserBypassDomains\.ts"/u,
   "changes to the browser-bypass inventory must invalidate phone policy renewal receipts");
+assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"src\/redditAlternativeDomains\.ts"/u,
+  "changes to the alternative-community inventory must invalidate phone policy renewal receipts");
 
 const preparePhoneStart = phoneSuiteSource.indexOf("async function preparePhoneToolchain(requested)");
 const preparePhoneEnd = phoneSuiteSource.indexOf("export function iosSdkSupportsDevice", preparePhoneStart);

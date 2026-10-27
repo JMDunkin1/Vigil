@@ -181,7 +181,13 @@ if (removeTestUrlFilterService) {
   const enabledParsed = recordValue(parsePlist(enabledProfile), "enabled phone profile");
   assert.equal(enabledParsed.PayloadScope, "System", "phone restrictions and SafeSearch DNS must be installed at device scope");
   assert.ok(Array.isArray(enabledParsed.PayloadContent), "enabled phone profile payload content should be an array");
-  assert.equal(enabledParsed.PayloadContent.length, 4, "Level 1 must include release controls, baseline and supplemental web protection, and locked SafeSearch DNS");
+  const enabledPayloadTypes = enabledParsed.PayloadContent.map((item) => recordValue(item).PayloadType);
+  assert.equal(enabledPayloadTypes.filter((type) => type === "com.apple.applicationaccess").length, 1,
+    "Level 1 must retain release controls");
+  assert.equal(enabledPayloadTypes.filter((type) => type === "com.apple.dnsSettings.managed").length, 1,
+    "Level 1 must retain locked SafeSearch DNS");
+  assert.ok(enabledPayloadTypes.filter((type) => type === "com.apple.webcontent-filter").length >= 2,
+    "Level 1 must include baseline and supplemental web protection as the domain inventory grows");
   const enabledRestrictions = enabledParsed.PayloadContent
     .map((item) => recordValue(item, "enabled phone payload"))
     .find((payload) => payload.PayloadType === "com.apple.applicationaccess");

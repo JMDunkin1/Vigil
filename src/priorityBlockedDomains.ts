@@ -1,4 +1,5 @@
 import { BROWSER_BYPASS_BLOCKED_SITES } from "./browserBypassDomains.js";
+import { REDDIT_ALTERNATIVE_BLOCKED_SITES } from "./redditAlternativeDomains.js";
 
 /**
  * High-risk sites that deserve scarce Apple BuiltIn deny-list capacity.
@@ -223,12 +224,16 @@ export const DEFAULT_FILTER_BYPASS_BLOCKED_SITES = [
   "veepn.com",
   "vpnunlimited.com",
   "vyprvpn.com",
-  "zenmate.com"
+  "zenmate.com",
+  // Whole-site alternative-community bans, including federated server hosts.
+  // Append so growth cannot displace the existing primary priority inventory.
+  ...REDDIT_ALTERNATIVE_BLOCKED_SITES
 ] as const;
 
 /** Priority destinations that also require plain-HTTP enforcement. */
 export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
   ...BROWSER_BYPASS_BLOCKED_SITES,
+  ...REDDIT_ALTERNATIVE_BLOCKED_SITES,
   "go2offer-1.com",
   "r.go2offer-1.com",
   "anonymizer.net",

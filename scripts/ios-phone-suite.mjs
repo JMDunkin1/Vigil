@@ -63,6 +63,7 @@ const PHONE_SOURCE_FILES = [
   "src/contextualExplicitSearch.ts",
   "src/browserStaticProtection.ts",
   "src/browserBypassDomains.ts",
+  "src/redditAlternativeDomains.ts",
   "src/browserExtensionPages.ts",
   "src/explicitComicPolicy.ts",
   "src/explicitMediaContext.ts",
