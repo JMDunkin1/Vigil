@@ -520,6 +520,56 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramPlainCommentsHeadersOverrideSiteTouchLocksAndKeepAccessibleClose() async throws {
+        for heading in ["<h2>Comments</h2>", "<div><span>Comments</span></div>"] {
+            let webView = try await instagramRepairFixture("""
+              <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+              html,body{margin:0;height:100%;touch-action:none}
+              #viewer{position:fixed;inset:0;touch-action:pan-x}video{width:390px;height:700px}
+              #comments{position:absolute;bottom:0;width:390px;height:400px}
+              #list{height:270px;overflow-y:auto}#rows{height:1800px}
+              </style><script>window.fetch=async()=>({ok:true,json:async()=>({})});window.closes=0;window.moves=0;window.presses=0;</script>
+              </head><body><div role="dialog" id="viewer"><video id="media" src="/original.mp4"></video>
+              <button aria-label="Comments">Comments</button>
+              <section id="comments">\(heading)<div id="list"><div id="rows">Comments list</div></div>
+              <div role="textbox" contenteditable="true">Add a comment</div></section>
+              <span id="close-label" hidden>Close comments</span><button id="close" aria-labelledby="close-label">×</button>
+              <button id="next" aria-label="Next reel">Next</button></div>
+              <script>
+              document.getElementById('close').onpointerup=()=>{window.closes++;document.getElementById('comments').remove();};
+              document.getElementById('list').onpointermove=()=>window.moves++;
+              document.getElementById('media').onpointerdown=()=>window.presses++;
+              </script></body></html>
+              """, path: "/reel/Shared123/")
+            let state = try await webView.evaluateJavaScript(#"""
+              (()=>{
+                const fire=(target,type,y)=>{const event=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:y});target.dispatchEvent(event);return event.defaultPrevented;};
+                const comments=document.getElementById('comments'),list=document.getElementById('list');
+                const marked=comments.dataset.vigilInstagramCommentsSheet==='true';
+                let touchPath=true;
+                for(let node=list;node;node=node.parentElement){
+                  const action=getComputedStyle(node).touchAction;
+                  if(action!=='auto'&&!action.includes('pan-y')&&!action.includes('manipulation'))touchPath=false;
+                }
+                fire(list,'pointerdown',650);const commentsMove=fire(list,'pointermove',500);fire(list,'pointerup',500);
+                const media=document.getElementById('media');
+                fire(media,'pointerdown',200);const backgroundBlocked=fire(media,'pointermove',50);fire(media,'pointerup',50);
+                const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+                history.pushState({},'','/reel/Other456/');
+                const close=document.getElementById('close');fire(close,'pointerdown',300);fire(close,'pointerup',300);
+                return {marked,touchPath,commentsMove:!commentsMove&&window.moves===1,
+                  narrow:!document.getElementById('viewer').hasAttribute('data-vigil-instagram-comments-sheet'),
+                  backgroundBlocked:backgroundBlocked&&window.presses===0,nextBlocked:next.defaultPrevented,
+                  routeContained:location.pathname==='/reel/Shared123/',closed:window.closes===1};
+              })()
+              """#) as? [String: Bool]
+            for key in ["marked", "touchPath", "commentsMove", "narrow", "backgroundBlocked", "nextBlocked", "routeContained", "closed"] {
+                XCTAssertEqual(state?[key], true, "\(heading): \(key)")
+            }
+        }
+    }
+
+    @MainActor
     func testInstagramSharedViewerContainsCaptionPullsWithoutChangingPlayerLayout() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
@@ -5600,9 +5650,9 @@ final class VigilSocialTests: XCTestCase {
                 style="position:fixed;inset:0;width:390px;height:780px">
                 <video id="reel-video" style="display:block;width:390px;height:650px"></video>
                 <div id="description" style="position:absolute;left:12px;bottom:20px;width:280px;height:72px">
-                  <a href="/royaluser/">royaluser</a><span> The complete Reel description stays visible.</span>
+                  <span>Comments</span><a href="/royaluser/">royaluser</a><span> The complete Reel description stays visible.</span>
+                  <textarea aria-label="Add a comment" placeholder="Add a comment…"></textarea>
                 </div>
-                <textarea aria-label="Add a comment" placeholder="Add a comment…"></textarea>
               </section>
             </body></html>
             """#,

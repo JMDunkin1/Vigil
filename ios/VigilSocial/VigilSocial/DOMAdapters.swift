@@ -1959,8 +1959,14 @@ enum DOMAdapters {
         ) {
           touch-action: pan-x pinch-zoom !important;
         }
+        html[data-vigil-single-reel]:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]),
+        html[data-vigil-single-reel] body:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]),
+        html[data-vigil-single-reel] body *:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]),
         html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"],
         html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] * {
+          /* Instagram can restrict the ancestor path itself. An exception must
+             override that path as well as our own rule. Native and event pan
+             boundaries still contain every gesture starting in the Reel. */
           touch-action: auto !important;
           overscroll-behavior-y: contain !important;
         }
@@ -2193,9 +2199,13 @@ enum DOMAdapters {
         if (!document.querySelector('[data-vigil-instagram-comments-sheet="true"]')) return false;
         const control = target?.closest?.('button, [role="button"], a[href]');
         if (!control) return false;
-        return [control, ...control.querySelectorAll('[aria-label], title')].some(node =>
-          /^(close|dismiss|back)( comments)?$/i.test(String(node.getAttribute('aria-label') || node.getAttribute('title')
-            || (node === control || node.tagName.toLowerCase() === 'title' ? node.textContent : '') || '').trim()));
+        return [control, ...control.querySelectorAll('[aria-label], [aria-labelledby], title')].some(node => {
+          const labelledBy = String(node.getAttribute('aria-labelledby') || '').trim().split(/\s+/)
+            .map(id => document.getElementById(id)?.textContent || '').join(' ');
+          const label = node.getAttribute('aria-label') || labelledBy.trim() || node.getAttribute('title')
+            || (node === control || node.tagName.toLowerCase() === 'title' ? node.textContent : '') || '';
+          return /^(close|dismiss|back)( comments)?$/i.test(String(label).replace(/\s+/g, ' ').trim());
+        });
       };
       const inSheet = target => target instanceof Element && (Boolean(target.closest(
         '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
@@ -7223,6 +7233,8 @@ enum DOMAdapters {
       const commentComposerSelector = [
         'textarea[placeholder*="comment" i]',
         'input[placeholder*="comment" i]',
+        '[contenteditable="true"][aria-placeholder*="comment" i]',
+        '[contenteditable="true"][data-placeholder*="comment" i]',
         '[aria-label*="add a comment" i]'
       ].join(', ');
       const commentDetailSelector = [
@@ -7246,12 +7258,22 @@ enum DOMAdapters {
         }
         return null;
       };
-      const commentHeadingIn = (root) => {
+      const commentHeadingIn = (root, allowPlainHeading) => {
         let inspected = 0;
         for (const heading of root.querySelectorAll('h1, h2, h3, [role="heading"]')) {
           inspected += 1;
-          if (normalizedInstagramLabel(heading) === 'comments') return heading;
+          if (visibleInstagramElement(heading) && normalizedInstagramLabel(heading) === 'comments') return heading;
           if (inspected >= 12) break;
+        }
+        // Mobile variants use ordinary spans/divs for the sheet title. A
+        // Comments action button or caption alone is never a panel heading.
+        if (!allowPlainHeading) return null;
+        inspected = 0;
+        for (const heading of root.querySelectorAll('span, div')) {
+          if (++inspected > 256) break;
+          if (heading.childElementCount || !visibleInstagramElement(heading)
+              || heading.closest('button, a, [role="button"], [role="textbox"], [contenteditable="true"]')) continue;
+          if (normalizedInstagramLabel(heading) === 'comments') return heading;
         }
         return null;
       };
@@ -7261,7 +7283,8 @@ enum DOMAdapters {
         let depth = 0;
         while (candidate && candidate !== dialog && depth < 12) {
           const box = candidate.getBoundingClientRect();
-          const containsComments = composer ? candidate.contains(composer) : box.width >= 180 && box.height >= 160;
+          const containsComments = box.width >= 180 && box.height >= 160
+            && (!composer || candidate.contains(composer));
           if (containsComments && !candidate.contains(largeMedia)) return candidate;
           candidate = candidate.parentElement;
           depth += 1;
@@ -7271,10 +7294,12 @@ enum DOMAdapters {
       const instagramCommentSheetFor = (dialog) => {
         if (!(dialog instanceof Element) || !visibleInstagramElement(dialog)) return null;
         const ownLabel = normalizedInstagramLabel(dialog);
-        const heading = commentHeadingIn(dialog);
-        const composer = dialog.querySelector(commentComposerSelector);
+        const composer = dialog.querySelector(commentComposerSelector)
+          || [...dialog.querySelectorAll('[contenteditable="true"]')].slice(0, 16).find(editor =>
+            /^(add|write) a comment[.\u2026]*$/i.test(normalizedInstagramLabel(editor)));
         const explicitComments = ownLabel === 'comments' || ownLabel.startsWith('comments ');
         const hasCommentDetails = Boolean(dialog.querySelector(commentDetailSelector));
+        const heading = commentHeadingIn(dialog, Boolean(composer || hasCommentDetails));
         if (!explicitComments && !heading && !(composer && hasCommentDetails)) return null;
 
         // Some post variants put the media and comments inside one full-screen
