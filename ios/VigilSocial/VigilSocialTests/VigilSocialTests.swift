@@ -1779,6 +1779,128 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatMirrorAndOutgoingPhotoUseDecodedFrameDimensionsAcrossSwitches() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatCameraInstalled === true", in: webView)
+        _ = try await webView.callAsyncJavaScript(#"""
+            // Reduced from the public client's hidden mirror path: its canvas
+            // uses initial track settings and a three-argument mirrored draw.
+            // Generated moving pixels reproduce that algorithm, not a sensor.
+            fixtureOpenSnap(); fixtureOpenReplyCamera();
+            document.documentElement.dataset.vigilPageVerdict='safe';
+            window.fixtureSource=document.createElement('canvas');
+            window.fixturePaint=(width,height)=>{
+              fixtureSource.width=width;fixtureSource.height=height;
+              const g=fixtureSource.getContext('2d');
+              g.fillStyle='#1256ab';g.fillRect(0,0,width,height);
+              g.fillStyle='#ffee00';g.fillRect(0,0,12,height);
+              g.fillStyle='#df635d';g.fillRect(width-12,0,12,height);
+              g.fillStyle='#27b87b';g.fillRect(12,height-12,width-24,12);
+            };
+            fixturePaint(160,90);
+            window.fixtureRawStream=fixtureSource.captureStream(20);
+            const track=fixtureRawStream.getVideoTracks()[0];
+            const settings=track.getSettings.bind(track);
+            track.getSettings=()=>({...settings(),width:90,height:160,deviceId:'generated-local-camera'});
+            window.fixtureMirror=document.createElement('canvas');fixtureMirror.width=90;fixtureMirror.height=160;
+            fixtureMirror.style.cssText='position:absolute;opacity:0;pointer-events:none';
+            window.fixtureMirrorSource=document.createElement('video');
+            fixtureMirrorSource.muted=true;fixtureMirrorSource.autoplay=true;fixtureMirrorSource.playsInline=true;
+            fixtureMirrorSource.style.cssText='position:absolute;opacity:0;pointer-events:none;left:0;top:0';
+            fixtureMirrorSource.srcObject=fixtureRawStream;
+            document.body.append(fixtureMirror,fixtureMirrorSource);
+            window.fixtureMirrorContext=fixtureMirror.getContext('2d');fixtureMirrorContext.scale(-1,1);
+            window.fixtureDrawMirror=()=>fixtureMirrorContext.drawImage(fixtureMirrorSource,-fixtureMirror.width,0);
+            window.fixtureFrameTimer=setInterval(()=>{
+              fixtureSource.getContext('2d').fillStyle='#1256ab';
+              fixtureSource.getContext('2d').fillRect(12,0,fixtureSource.width-24,fixtureSource.height-12);
+              if(fixtureMirrorSource.readyState>=2)fixtureDrawMirror();
+            },50);
+            window.fixtureMirrorStream=fixtureMirror.captureStream(20);
+            const preview=document.getElementById('local-video');preview.dataset.vigilMediaVerdict='safe';
+            preview.srcObject=fixtureMirrorStream;
+            await fixtureMirrorSource.play();await preview.play();
+            """#, arguments: [:], in: nil, contentWorld: .page)
+        defer {
+            webView.evaluateJavaScript("clearInterval(fixtureFrameTimer);[fixtureRawStream,fixtureMirrorStream].forEach(s=>s.getTracks().forEach(t=>t.stop()))")
+        }
+        for (width, height) in [(160, 90), (90, 160), (120, 120), (160, 90)] {
+            _ = try await webView.evaluateJavaScript("fixturePaint(\(width),\(height))")
+            try await waitForJavaScriptCondition("fixtureMirrorSource.videoWidth===\(width) && fixtureMirrorSource.videoHeight===\(height)", in: webView)
+            _ = try await webView.evaluateJavaScript("fixtureDrawMirror()")
+            try await waitForJavaScriptCondition("document.getElementById('local-video').videoWidth===\(width) && document.getElementById('local-video').videoHeight===\(height)", in: webView)
+            let result = try await webView.callAsyncJavaScript(#"""
+                fixtureDrawMirror();
+                // Snapchat's actual shutter copies the mirror canvas when it
+                // exists, using that canvas's intrinsic dimensions, not CSS.
+                const outgoing=document.createElement('canvas');
+                outgoing.width=fixtureMirror.width;outgoing.height=fixtureMirror.height;
+                outgoing.getContext('2d').drawImage(fixtureMirror,0,0,outgoing.width,outgoing.height);
+                const blob=await new Promise(resolve=>outgoing.toBlob(resolve,'image/jpeg',.95));
+                const image=new Image();image.src=URL.createObjectURL(blob);await image.decode();
+                const encoded=document.createElement('canvas');encoded.width=image.naturalWidth;encoded.height=image.naturalHeight;
+                const g=encoded.getContext('2d');g.drawImage(image,0,0);URL.revokeObjectURL(image.src);
+                const pixel=(x,y)=>[...g.getImageData(x,y,1,1).data];
+                const near=(actual,expected)=>actual.every((v,i)=>Math.abs(v-expected[i])<=12);
+                return [encoded.width===fixtureMirrorSource.videoWidth,encoded.height===fixtureMirrorSource.videoHeight,
+                  near(pixel(2,2),[223,99,93,255]),near(pixel(encoded.width-3,2),[255,238,0,255]),
+                  near(pixel(encoded.width/2,encoded.height-3),[39,184,123,255]),
+                  fixtureRawStream.getVideoTracks()[0].readyState==='live'];
+                """#, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+            XCTAssertEqual(result, Array(repeating: true, count: 6), "\(width)x\(height): outgoing encoded photo must retain both edges and the bottom")
+        }
+    }
+
+    @MainActor
+    func testSnapchatCameraSwitchErrorDoesNotReplaceAnInteractiveCameraWithALoadFailure() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: """
+            window.healthReports=[];
+            window.__vigilBridge=value=>{if(value.type==='health')healthReports.push(value)};
+            """, injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration();configuration.userContentController=controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds);let host=UIViewController()
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        window.rootViewController=host;host.view.addSubview(webView);window.makeKeyAndVisible()
+        defer {window.isHidden=true}
+        Self.retainedCompanionValidationFixtures.append((window,webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.healthReports?.at(-1)?.state==='ready'", in: webView)
+        _ = try await webView.evaluateJavaScript("""
+            fixtureOpenReplyCamera();document.getElementById('shell').style.display='none';
+            document.querySelector('.BN1L1').insertAdjacentHTML('beforeend','<p id="camera-error">Failed to load the selected camera</p>');
+            """)
+        let cameraHealth = try await webView.callAsyncJavaScript("""
+            await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+            return healthReports.at(-1)?.state;
+            """, arguments: [:], in: nil, contentWorld: .page) as? String
+        XCTAssertEqual(cameraHealth,"ready","A local camera-switch error must not become a whole-page load failure")
+        let localErrorRetained = try await webView.evaluateJavaScript("document.getElementById('camera-error').textContent==='Failed to load the selected camera'") as? Bool
+        XCTAssertEqual(localErrorRetained,true,"Snapchat's real camera error must remain visible")
+        _ = try await webView.evaluateJavaScript("document.body.innerHTML='<h1>Something went wrong</h1><button>Try again</button>'")
+        try await waitForJavaScriptCondition("healthReports.at(-1)?.state==='degraded'", in: webView)
+    }
+
+    @MainActor
     func testSnapchatCameraPermissionIsRememberedAndConfinedToChat() async throws {
         for host in ["www.snapchat.com", "snapchat.com", "web.snapchat.com"] {
             let url = URL(string: "https://\(host)/web/fixture-conversation")!

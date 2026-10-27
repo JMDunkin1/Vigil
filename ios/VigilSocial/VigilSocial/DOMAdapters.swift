@@ -135,14 +135,45 @@ enum DOMAdapters {
 
     private static let snapchatCameraBootstrap = #"""
     (() => {
-      if (window !== window.top || window.__vigilSnapchatCameraInstalled
-          || !['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
-          || !/^\/web(?:\/|$)/.test(location.pathname)) return;
-      // Snapchat must receive WebKit's real camera list and MediaStreams.
-      // Its permission preflight and capture can overlap; replacing either
-      // with a document-gated native session can prevent the camera from opening.
-      // Keep camera permission handling in WKUIDelegate and presentation in CSS.
+      const trustedChat = () => location.protocol === 'https:' && (!location.port || location.port === '443')
+        && ['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+        && /^\/web(?:\/|$)/.test(location.pathname);
+      if (window !== window.top || window.__vigilSnapchatCameraInstalled || !trustedChat()) return;
       window.__vigilSnapchatCameraInstalled = true;
+      // Keep WebKit's capture/enumeration APIs, real tracks and device choices.
+      // Snapchat's Safari mirror canvas uses initial track settings, then draws
+      // decoded video at natural size. On iOS those sizes can differ or rotate:
+      // the resulting clipped canvas is also the source of the outgoing photo.
+      if (typeof CanvasRenderingContext2D === 'undefined') return;
+      const originalDraw = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function(source, ...args) {
+        const canvas = this.canvas;
+        let mirror = false;
+        if (trustedChat() && matchMedia('(max-width: 600px)').matches
+            && source instanceof HTMLVideoElement && canvas instanceof HTMLCanvasElement
+            && args.length === 2 && args[0] === -canvas.width && args[1] === 0
+            && source.parentElement === document.body && canvas.parentElement === document.body
+            && [source, canvas].every(element => element.style.position === 'absolute'
+              && element.style.opacity === '0' && element.style.pointerEvents === 'none')) {
+          const transform = this.getTransform();
+          const track = source.srcObject instanceof MediaStream ? source.srcObject.getVideoTracks()[0] : null;
+          // Match only the client's hidden local-camera mirror, never a remote
+          // video, visible preview, overlay, classifier sample or ordinary draw.
+          mirror = transform.a === -1 && transform.d === 1 && transform.b === 0 && transform.c === 0
+            && transform.e === 0 && transform.f === 0 && this.globalAlpha === 1
+            && this.globalCompositeOperation === 'source-over' && Boolean(track?.getSettings().deviceId);
+        }
+        if (!mirror) return originalDraw.call(this, source, ...args);
+        const width = source.videoWidth, height = source.videoHeight;
+        if (source.readyState < 2 || !width || !height) return;
+        // Resize only after a decoded frame exists. This also resets canvas
+        // state, so reapply Snapchat's reflection before drawing the full frame.
+        if (canvas.width !== width) canvas.width = width;
+        if (canvas.height !== height) canvas.height = height;
+        this.setTransform(-1, 0, 0, 1, 0, 0);
+        this.clearRect(-width, 0, width, height);
+        return originalDraw.call(this, source, -width, 0, width, height);
+      };
     })();
     """#
 
@@ -6118,6 +6149,12 @@ enum DOMAdapters {
         + '[role="textbox"][contenteditable="true"], .aXEpU .sT7ta [contenteditable="true"], '
         + '.aXEpU .k1IaM button[title]'
       )].some(visible);
+      // Camera switches hide the feed and conversation. A camera-local toast
+      // must not replace the still-interactive camera with a whole-app failure.
+      // Leave Snapchat's own error and its real close/switch controls intact.
+      const hasMediaSurface = () => [...document.querySelectorAll(
+        '.BN1L1 .MQv99 button, .BN1L1 .ph8Kn button, .ecBYF .QQxLo button'
+      )].some(visible);
       const isMarketingShell = () => {
         if (hasChatSurface()) return false;
         const text = String(document.body?.innerText || '').toLowerCase();
@@ -6202,8 +6239,8 @@ enum DOMAdapters {
         if (window !== window.top) return;
         const text = String(document.body?.innerText || '').toLowerCase();
         if (loginNavigationPending) return;
-        const chatReady = hasChatSurface();
-        const marketingShell = isMarketingShell();
+        const chatReady = hasChatSurface() || hasMediaSurface();
+        const marketingShell = !chatReady && isMarketingShell();
         const unsupported = !chatReady && (marketingShell
           || /browser (?:(?:isn't|is not|not) supported)|unsupported browser|try another browser|only available on desktop/.test(text));
         const failed = !chatReady && /something went wrong|unable to connect|could not connect|failed to load/.test(text);
