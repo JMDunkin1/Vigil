@@ -11,48 +11,56 @@ const source = await readFile(join(root, "ios/VigilSocial/VigilSocial/DOMAdapter
 const bootstrap = source.match(/private static let snapchatCameraBootstrap = #"""([\s\S]*?)"""#/u)?.[1];
 assert.ok(bootstrap);
 type Request = { audio?: unknown; video?: unknown };
-function harness({ hostname = "www.snapchat.com", pathname = "/web/", protocol = "https:", port = "", iframe = false, denied = false } = {}) {
+function harness({ hostname = "www.snapchat.com", pathname = "/web/", protocol = "https:", port = "", iframe = false, denied = false, camera = true, mobile = true } = {}) {
   const calls: Request[] = [];
   const permissionError = new DOMException("Camera denied", "NotAllowedError");
   const cameras = Object.freeze([
     Object.freeze({kind:"videoinput",deviceId:"real-front",label:"Front Ultra Wide"}),
     Object.freeze({kind:"videoinput",deviceId:"real-back",label:"Back Wide"})
   ]);
-  const streams: Array<{ request: Request; stopped: boolean; stop: () => void }> = [];
-  const devices = Object.freeze({
+  const streams: Array<{ request: Request; stopped: boolean; stop: () => void; getVideoTracks: () => never[] }> = [];
+  const devices = {
     async enumerateDevices() { return cameras; },
+    getSupportedConstraints() { return {resizeMode:true}; },
     async getUserMedia(request: Request) {
       calls.push(request);
       if (denied) throw permissionError;
-      const stream = { request, stopped:false, stop() { this.stopped=true; } };
+      const stream = { request, stopped:false, stop() { this.stopped=true; },getVideoTracks:()=>[] };
       streams.push(stream); return stream;
     }
-  });
+  };
+  const originalCapture=devices.getUserMedia,originalEnumeration=devices.enumerateDevices;
   const window: { top?: unknown; __vigilSnapchatCameraInstalled?: boolean; webkit: unknown } = {
-    // A stale/unsupported bridge must never be required to open a real camera.
     webkit:{messageHandlers:{vigilSnapchatCamera:{postMessage(){throw new Error("Native capture must not run");}}}}
   };
   window.top = iframe ? {} : window;
   const context = { window, navigator:{mediaDevices:devices}, location:{hostname,pathname,protocol,port},
-    document:{createElement(){throw new Error("Never create a detached capture consumer or canvas stream");}} };
+    performance:{now:()=>0},matchMedia:()=>({matches:mobile}),getComputedStyle:()=>({visibility:'visible'}),document:{
+      querySelector(selector:string){return selector==='.BN1L1'&&camera?{getClientRects:()=>[{}]}:null;},
+      addEventListener(){},
+      createElement(){throw new Error("Never create a detached capture consumer or canvas stream");}} };
   runInNewContext(bootstrap!, context);
-  return {devices,cameras,calls,streams,permissionError,window,
+  return {devices,cameras,calls,streams,permissionError,window,originalCapture,originalEnumeration,
     reinstall(){runInNewContext(bootstrap!,context);} };
 }
 const h = harness();
-const getUserMedia = h.devices.getUserMedia, enumerateDevices = h.devices.enumerateDevices;
+const installedCapture=h.devices.getUserMedia;
 h.reinstall();
 assert.equal(h.window.__vigilSnapchatCameraInstalled,true);
-assert.equal(h.devices.getUserMedia,getUserMedia);
-assert.equal(h.devices.enumerateDevices,enumerateDevices);
+assert.equal(h.devices.getUserMedia,installedCapture,"Install the adapter once");
+assert.equal(h.devices.enumerateDevices,h.originalEnumeration);
 assert.equal(await h.devices.enumerateDevices(),h.cameras,"Keep WebKit's actual device IDs, labels, and list identity");
 for (const id of ["real-front","real-back","real-front"]) {
   const request = {audio:{echoCancellation:true},video:{deviceId:{exact:id},width:{ideal:406},height:{ideal:720},aspectRatio:{exact:9/16}}};
   const copy = structuredClone(request);
   const stream = await h.devices.getUserMedia(request);
-  assert.equal(h.calls.at(-1),request,"Preserve the original request object and selected camera");
+  const sent=h.calls.at(-1)!;
+  assert.equal(sent.audio,request.audio);
+  assert.equal((sent.video as {deviceId:unknown}).deviceId,request.video.deviceId);
+  for(const key of ['width','height','aspectRatio','zoom'])assert.equal(key in (sent.video as object),false);
+  assert.equal((sent.video as {resizeMode:unknown}).resizeMode,'none');
   assert.equal(stream,h.streams.at(-1),"Return the real stream, without replacing track methods or settings");
-  assert.deepEqual(request,copy);
+  assert.deepEqual(request,copy,"Leave Snapchat's request object untouched");
 }
 const preflight = {audio:true,video:true};
 const selected = {audio:false,video:{deviceId:{exact:"real-back"}}};
@@ -63,6 +71,15 @@ first.stop(); assert.equal(second.stopped,false,"Stopping the preflight cannot s
 const denied = harness({denied:true});
 await assert.rejects(denied.devices.getUserMedia({video:true}),reason=>reason===denied.permissionError);
 assert.equal(denied.calls.length,1,"Do not retry or transform permission errors");
+await assert.rejects(denied.devices.getUserMedia({audio:false,video:{width:{ideal:406},height:{ideal:720}}}),
+  reason=>reason===denied.permissionError);
+assert.equal(denied.calls.length,2,"A denied portrait request cannot retry camera authorization");
+const advanced={audio:false,video:{width:{ideal:406},height:{ideal:720},
+  advanced:[{width:{exact:406},aspectRatio:{exact:9/16},zoom:{exact:4},torch:true}]}};
+const advancedCopy=structuredClone(advanced);
+await h.devices.getUserMedia(advanced);
+assert.equal(JSON.stringify((h.calls.at(-1)!.video as {advanced:unknown}).advanced),JSON.stringify([{torch:true}]));
+assert.deepEqual(advanced,advancedCopy,"Nested sizing and zoom constraints cannot mutate Snapchat's request");
 for (const options of [
   {hostname:"accounts.snapchat.com",pathname:"/v2/login"},
   {hostname:"www.snapchat.com.evil.example"},{pathname:"/spotlight"},{protocol:"http:"},{port:"444"},{iframe:true}
@@ -70,7 +87,12 @@ for (const options of [
   const other=harness(options);
   assert.equal(other.window.__vigilSnapchatCameraInstalled,undefined);
 }
-console.log("Snapchat camera recovery: original capture/enumeration APIs, real streams, device choices, overlapping preflight, cleanup, denials and scope passed.");
+for(const options of [{camera:false},{mobile:false}]) {
+  const other=harness(options),request={audio:true,video:{width:{ideal:406},height:{ideal:720}}};
+  await other.devices.getUserMedia(request);
+  assert.equal(other.calls[0],request,"Calls and desktop capture retain their original requests");
+}
+console.log("Snapchat portrait acquisition: uncropped request, real streams/devices, audio, preflight overlap, denials and scope passed.");
 
 // Exercise only the verified hidden-mirror call shape. Pixel/encoded-photo
 // behavior is checked separately by the real WKWebView regression.
@@ -99,7 +121,7 @@ function drawingHarness() {
   const window:{top?:unknown}={};window.top=window;
   const location={hostname:"www.snapchat.com",pathname:"/web/",protocol:"https:",port:""};
   let mobile=true;
-  const context={window,location,document:{body},matchMedia:()=>({matches:mobile}),
+  const context={window,location,document:{body,addEventListener(){}},matchMedia:()=>({matches:mobile}),
     CanvasRenderingContext2D:Context,HTMLCanvasElement:Canvas,HTMLVideoElement:Video,MediaStream:Stream};
   runInNewContext(bootstrap!,context);
   const ctx=new Context(),video=new Video();

@@ -140,7 +140,147 @@ enum DOMAdapters {
         && /^\/web(?:\/|$)/.test(location.pathname);
       if (window !== window.top || window.__vigilSnapchatCameraInstalled || !trustedChat()) return;
       window.__vigilSnapchatCameraInstalled = true;
-      // Keep WebKit's capture/enumeration APIs, real tracks and device choices.
+      const devices = typeof navigator === 'undefined' ? null : navigator.mediaDevices;
+      const captures = new WeakMap();
+      const mirrorCaptures = new WeakMap();
+      let activeCapture = null;
+      const phoneChat = () => trustedChat() && matchMedia('(max-width: 600px)').matches;
+      const visibleCamera = root => root && root.getClientRects().length > 0
+        && getComputedStyle(root).visibility !== 'hidden';
+      const cameraRoot = () => {
+        const root = document.querySelector('.BN1L1:has(#local-video)');
+        return visibleCamera(root) ? root : null;
+      };
+      const clock = () => performance.now();
+      const shownCapture = root => {
+        const track = root?.querySelector('#local-video')?.srcObject?.getVideoTracks?.()[0];
+        return track?.canvas ? mirrorCaptures.get(track.canvas) || activeCapture : activeCapture;
+      };
+      const portraitPreview = root => {
+        const video = root?.querySelector('#local-video');
+        return video?.videoWidth > 0 && video.videoHeight > video.videoWidth;
+      };
+      const syncPortraitStatus = () => {
+        const root = cameraRoot(), state = shownCapture(root);
+        const existing = root?.querySelector('.vigil-snap-portrait-status');
+        if (!root || !state?.observed || state.ready && portraitPreview(root) || state.track?.readyState === 'ended') {
+          existing?.remove(); return;
+        }
+        const note = existing || document.createElement('div');
+        if (!existing) {
+          note.className = 'vigil-snap-portrait-status';
+          note.setAttribute('role', 'status');
+          note.style.cssText = 'position:absolute;inset:auto 12px 108px;z-index:3;padding:8px 12px;border-radius:12px;background:#181818e6;color:white;text-align:center;font:14px -apple-system;pointer-events:none';
+        }
+        const text = state.unavailable
+          ? 'This camera could not provide portrait frames. Select another camera to retry.'
+          : 'Preparing portrait camera…';
+        if (note.textContent !== text) note.textContent = text;
+        if (!existing) root.appendChild(note);
+      };
+      const ownsCapture = state => activeCapture === state && state.track?.readyState === 'live'
+        && phoneChat() && document.visibilityState !== 'hidden';
+      const applyMode = (state, mode) => {
+        if (!ownsCapture(state) || state.busy || typeof state.track.applyConstraints !== 'function') return;
+        state.busy = true;
+        const revision = ++state.revision;
+        const finish = () => {
+          if (state.revision !== revision) return;
+          ++state.revision; clearTimeout(timer);
+          state.busy = false; state.settleUntil = clock() + 250;
+          syncPortraitStatus();
+        };
+        // Never make getUserMedia wait for orientation negotiation or let an
+        // unresponsive optional constraint prevent camera selection/closing.
+        const timer = setTimeout(finish, 1500);
+        try { Promise.resolve(state.track.applyConstraints(mode)).then(finish, finish); }
+        catch (_) { finish(); }
+      };
+      const observePortraitFrame = (source, width, height) => {
+        const state = captures.get(source.srcObject);
+        if (!state || state.track?.readyState !== 'live' || !phoneChat()
+            || document.visibilityState === 'hidden') return false;
+        state.observed = true;
+        const signature = `${width}x${height}`;
+        if (state.frame !== signature) {
+          state.frame = signature; state.stableSince = clock(); state.ready = false;
+        }
+        if (!state.busy && clock() >= state.settleUntil && clock() - state.stableSince >= 200) {
+          if (width < height) {
+            state.ready = true; state.unavailable = false;
+          } else {
+            state.ready = false;
+            if (ownsCapture(state) && state.nextMode < state.modes.length) applyMode(state, state.modes[state.nextMode++]);
+            else state.unavailable = true;
+          }
+        }
+        syncPortraitStatus();
+        return state.ready;
+      };
+      if (typeof devices?.getUserMedia === 'function') {
+        const originalCapture = devices.getUserMedia.bind(devices);
+        devices.getUserMedia = async function(request) {
+          const video = request?.video;
+          // Boolean permission preflights and calls retain their own behavior.
+          // Only the Snap camera's known desktop portrait requests are changed.
+          const snapCamera = phoneChat() && visibleCamera(document.querySelector('.BN1L1')) && video && typeof video === 'object'
+            && (video.width?.ideal === 406 && video.height?.ideal === 720
+              || video.aspectRatio?.exact === 9 / 16);
+          if (!snapCamera) return originalCapture(request);
+          const base = { ...video };
+          for (const key of ['width', 'height', 'aspectRatio', 'zoom']) delete base[key];
+          if (Array.isArray(base.advanced)) base.advanced = base.advanced.map(item => {
+            const next = { ...item };
+            for (const key of ['width', 'height', 'aspectRatio', 'zoom']) delete next[key];
+            return next;
+          });
+          const supports = devices.getSupportedConstraints?.() || {};
+          if (supports.resizeMode) base.resizeMode = 'none';
+          const state = { ready: false, observed: false, unavailable: false, busy: false,
+            revision: 0, nextMode: 0, settleUntil: 0, stableSince: clock(), frame: '', track: null, modes: [] };
+          activeCapture = state; syncPortraitStatus();
+          let stream;
+          try { stream = await originalCapture({ ...request, video: base }); }
+          catch (error) {
+            if (activeCapture === state) { activeCapture = null; syncPortraitStatus(); }
+            throw error;
+          }
+          const track = stream.getVideoTracks()[0];
+          if (!track) return stream;
+          state.track = track; captures.set(stream, state);
+          if (activeCapture !== state) return stream;
+          let capabilities = {};
+          try { capabilities = track.getCapabilities?.() || {}; } catch (_) {}
+          const minimumZoom = capabilities.zoom?.min;
+          const hasMinimumZoom = Number.isFinite(minimumZoom) && minimumZoom > 0;
+          const fullField = { ...base,
+            ...(hasMinimumZoom ? { zoom: { exact: minimumZoom } } : {}) };
+          // iPhone sensor mounting differs by camera/generation. Try both
+          // primary-orientation orders on the SAME real track, without an exact
+          // aspect ratio, software crop/scale, or a replacement capture session.
+          state.modes = [
+            { ...fullField, width: { ideal: 1920 }, height: { ideal: 1440 } },
+            { ...fullField, width: { ideal: 1440 }, height: { ideal: 1920 } }
+          ];
+          if (hasMinimumZoom) applyMode(state, fullField);
+          return stream;
+        };
+      }
+      // Fail an individual shutter gesture closed while frames are negotiated.
+      // Keep the camera menu and close button owned by Snapchat and reachable.
+      for (const type of ['pointerdown', 'mousedown', 'touchstart', 'click', 'keydown']) {
+        document.addEventListener(type, event => {
+          const root = cameraRoot(), state = shownCapture(root);
+          if (!phoneChat() || !state?.observed || state.ready && portraitPreview(root) || !root) return;
+          const shutter = event.target.closest?.('.BN1L1 .ph8Kn');
+          const cameraHotkey = type === 'keydown' && [' ', 'Enter'].includes(event.key)
+            && (event.target === document.body || event.target === document.documentElement
+              || event.target.matches?.('#local-video'));
+          if (!shutter && !cameraHotkey) return;
+          event.preventDefault(); event.stopImmediatePropagation(); syncPortraitStatus();
+        }, { capture: true, passive: false });
+      }
+      // Retain WebKit's real streams, track methods, device IDs and audio.
       // Snapchat's Safari mirror canvas uses initial track settings, then draws
       // decoded video at natural size. On iOS those sizes can differ or rotate:
       // the resulting clipped canvas is also the source of the outgoing photo.
@@ -166,13 +306,20 @@ enum DOMAdapters {
         if (!mirror) return originalDraw.call(this, source, ...args);
         const width = source.videoWidth, height = source.videoHeight;
         if (source.readyState < 2 || !width || !height) return;
-        // Resize only after a decoded frame exists. This also resets canvas
-        // state, so reapply Snapchat's reflection before drawing the full frame.
-        if (canvas.width !== width) canvas.width = width;
+        const state = captures.get(source.srcObject);
+        if (state) mirrorCaptures.set(canvas, state);
+        const portraitReady = observePortraitFrame(source, width, height);
+        // A normal 9:16 Snap uses the full HEIGHT of an already-portrait camera
+        // frame. Trim only its sides (e.g. 25% for 3:4); never cut a narrow
+        // portrait out of landscape pixels or enlarge/rotate someone's face.
+        const outputWidth = portraitReady ? Math.min(width, Math.round(height * 9 / 16)) : width;
+        if (canvas.width !== outputWidth) canvas.width = outputWidth;
         if (canvas.height !== height) canvas.height = height;
         this.setTransform(-1, 0, 0, 1, 0, 0);
-        this.clearRect(-width, 0, width, height);
-        return originalDraw.call(this, source, -width, 0, width, height);
+        this.clearRect(-outputWidth, 0, outputWidth, height);
+        if (!portraitReady) return originalDraw.call(this, source, -width, 0, width, height);
+        return originalDraw.call(this, source, (width - outputWidth) / 2, 0, outputWidth, height,
+          -outputWidth, 0, outputWidth, height);
       };
     })();
     """#
