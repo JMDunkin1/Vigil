@@ -23,6 +23,7 @@ export const STANDALONE_REDDIT_ALTERNATIVE_BLOCKED_SITES = [
   "endchan.net",
   "funnyjunk.com",
   "hive.blog",
+  "mastodon.social",
   "notabug.io",
   "peakd.com",
   "raddle.me",

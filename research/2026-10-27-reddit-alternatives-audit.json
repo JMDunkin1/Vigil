@@ -49,16 +49,20 @@
     {
       "url": "https://tildes.net/~tildes/18um/nsfw_profanity_adult_filter",
       "purpose": "First-party discussion of optional tag filtering and nudity, without a Vigil enforcement contract"
+    },
+    {
+      "url": "https://docs.joinmastodon.org/user/preferences/#sensitive-content",
+      "purpose": "User-reported mastodon.social follow-up: sensitive-media overlays can be clicked through or always expanded by user preferences; Vigil has no enforced Mastodon guard"
     }
   ],
   "counts": {
-    "STANDALONE_REDDIT_ALTERNATIVE_BLOCKED_SITES": 27,
+    "STANDALONE_REDDIT_ALTERNATIVE_BLOCKED_SITES": 28,
     "REDDIT_ALTERNATIVE_GATEWAY_BLOCKED_SITES": 8,
     "LEMMY_INSTANCE_BLOCKED_SITES": 521,
     "PIEFED_INSTANCE_BLOCKED_SITES": 193,
     "MBIN_KBIN_INSTANCE_BLOCKED_SITES": 170
   },
-  "totalDomains": 919,
+  "totalDomains": 920,
   "inventory": {
     "STANDALONE_REDDIT_ALTERNATIVE_BLOCKED_SITES": [
       "4chan.org",
@@ -75,6 +79,7 @@
       "endchan.net",
       "funnyjunk.com",
       "hive.blog",
+      "mastodon.social",
       "notabug.io",
       "peakd.com",
       "raddle.me",

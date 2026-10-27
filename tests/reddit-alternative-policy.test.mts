@@ -38,7 +38,7 @@ assert.ok(legacy.blockedSites.includes("retained.example"));
 assert.ok(REDDIT_ALTERNATIVE_BLOCKED_SITES.length >= 900, "retain the audited federation inventory");
 assert.equal(new Set(REDDIT_ALTERNATIVE_BLOCKED_SITES).size, REDDIT_ALTERNATIVE_BLOCKED_SITES.length);
 for (const domain of ["discuit.org", "discuit.net", "saidit.net", "raddle.me", "scored.co", "communities.win",
-  "tildes.net", "4chan.org", "lemmy.world", "lemmy.ml", "lemmynsfw.com", "piefed.social",
+  "tildes.net", "4chan.org", "mastodon.social", "lemmy.world", "lemmy.ml", "lemmynsfw.com", "piefed.social",
   "piefed.zip", "piefed.blahaj.zone", "fedia.io", "kbin.earth", "lemmyverse.net", "mlmym.org"]) {
   assert.ok(REDDIT_ALTERNATIVE_BLOCKED_SITES.some(site => site === domain), `reported alternative family: ${domain}`);
 }
@@ -91,7 +91,8 @@ for (const count of [0, 30, 500]) {
 }
 for (const domain of ["reddit.com", "old.reddit.com", "redd.it", "google.com", "bing.com", "duckduckgo.com",
   "example.org", "notdiscuit.org", "discuit.org.example.org", "notlemmy.world", "lemmy.world.example.org",
-  "blahaj.zone", "sdf.org", "korako.me", "nuage-libre.fr", "fediverse.observer", "github.com"]) {
+  "blahaj.zone", "sdf.org", "korako.me", "nuage-libre.fr", "fediverse.observer", "github.com",
+  "docs.joinmastodon.org", "notmastodon.social", "mastodon.social.example.org"]) {
   assert.equal(shouldBlockSite(state.profiles.find(profile => profile.id === "normal")!, domain), false, `exact service boundary: ${domain}`);
 }
 console.log(`Reddit alternative coverage passed: ${REDDIT_ALTERNATIVE_BLOCKED_SITES.length} domains, top-level/embedded/offline guards, both schemes, migration and preserved supervised policy.`);
