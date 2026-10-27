@@ -4,130 +4,168 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runInNewContext } from "node:vm";
+import { randomUUID } from "node:crypto";
 
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = existsSync(join(runtimeRoot, "ios")) ? runtimeRoot : resolve(runtimeRoot, "..", "..");
 const source = await readFile(join(root, "ios/VigilSocial/VigilSocial/DOMAdapters.swift"), "utf8");
 const bootstrap = source.match(/private static let snapchatCameraBootstrap = #"""([\s\S]*?)"""#/u)?.[1];
 assert.ok(bootstrap);
-
-type Constraints = Record<string, unknown>;
-function harness({ width = 390, hostname = "www.snapchat.com", pathname = "/web/", iframe = false,
-  resizeMode = true, zoom = true, zoomFails = false, denied = false, previewMode = "absent" } = {}) {
-  const calls: Constraints[] = [];
-  const zoomCalls: Constraints[] = [];
-  const permissionError = new Error("Permission denied");
-  let active: Constraints = {};
-  const track = {
-    getCapabilities: () => zoom ? { zoom: { min: 1, max: 5 } } : {},
-    getConstraints: () => active,
-    async applyConstraints(value: Constraints) {
-      zoomCalls.push(value);
-      if (zoomFails) throw new Error("Optional zoom is unavailable");
+type Request = Record<string, unknown>;
+type NativeWindow = {
+  top: unknown; __vigilDocumentID: string;
+  __vigilSnapchatNativeFrame: (token: string | null, jpeg: string) => Promise<boolean>;
+  __vigilSnapchatNativeEnd: (token: string | null) => void;
+};
+type NativeTrack = Track & {
+  getSettings: () => Record<string, unknown>;
+  applyConstraints: (request: Request) => Promise<void>;
+};
+class Track extends EventTarget {
+  stopped = false;
+  stop() { this.stopped = true; }
+}
+class Stream {
+  tracks: Track[];
+  constructor(tracks = [new Track()]) { this.tracks = tracks; }
+  getVideoTracks() { return this.tracks.filter(track => track !== microphone); }
+  getAudioTracks() { return this.tracks.filter(track => track === microphone); }
+  getTracks() { return this.tracks; }
+  addTrack(track: Track) { this.tracks.push(track); }
+}
+const microphone = new Track();
+function harness({ native = true, width = 390, hostname = "www.snapchat.com", pathname = "/web/", iframe = false,
+  denied = false, audioDenied = false } = {}) {
+  const requests: Request[] = [], browserCalls: Request[] = [], rendered: string[] = [];
+  const cameras = [
+    { deviceId: "front-ultra", facingMode: "user", label: "Front Ultra Wide" },
+    { deviceId: "back-wide", facingMode: "environment", label: "Back Wide" },
+    { deviceId: "back-ultra", facingMode: "environment", label: "Back Ultra Wide" }
+  ];
+  let activeToken: string | null = null;
+  const bridge = { async postMessage(request: Request) {
+    requests.push(request);
+    assert.equal(request.documentID, "current-document");
+    if (request.action === "devices") return cameras;
+    if (request.action === "stop") { if (request.token === activeToken) activeToken = null; return {}; }
+    if (denied) throw new Error("NotAllowedError");
+    const camera = request.deviceId ? cameras.find(camera => camera.deviceId === request.deviceId)
+      : cameras.find(camera => camera.facingMode === request.facingMode);
+    if (!camera) throw new Error("OverconstrainedError");
+    activeToken = String(request.token);
+    return { ...camera, frameRate: 20 };
+  }};
+  const devices = Object.assign(new EventTarget(), {
+    async enumerateDevices() { return [{kind:"videoinput",deviceId:"webkit-front"},{kind:"audioinput",deviceId:"mic"}]; },
+    async getUserMedia(request: Request) {
+      browserCalls.push(request);
+      if (audioDenied) throw new DOMException("Microphone denied", "NotAllowedError");
+      return new Stream(request.video ? [new Track()] : [microphone]);
     }
-  };
-  const stream = { getVideoTracks: () => [track] };
-  const devices = {
-    getSupportedConstraints: () => ({ resizeMode }),
-    async getUserMedia(value: Constraints) {
-      calls.push(value);
-      if (denied) throw permissionError;
-      active = value.video as Constraints;
-      return stream;
+  });
+  const originalCapture = devices.getUserMedia, originalEnumerate = devices.enumerateDevices;
+  class Canvas {
+    width = 0; height = 0;
+    getContext() { return { drawImage: (image: ImageFixture) => rendered.push(image.key) }; }
+    captureStream() { return new Stream(); }
+  }
+  class ImageFixture {
+    src = ""; naturalWidth = 0; naturalHeight = 0; key = "";
+    async decode() {
+      const [key, w, h] = this.src.split(",")[1]!.split(":");
+      this.key = key!; this.naturalWidth = Number(w); this.naturalHeight = Number(h);
+      await Promise.resolve();
     }
-  };
-  const original = devices.getUserMedia;
-  const window: { top?: unknown } = {};
+  }
+  const window = { __vigilDocumentID: "current-document",
+    ...(native ? { webkit: { messageHandlers: { vigilSnapchatCamera: bridge } } } : {}) } as unknown as NativeWindow;
   window.top = iframe ? {} : window;
   const location = { hostname, pathname };
-  const preview = new EventTarget() as EventTarget & {
-    muted: boolean; playsInline: boolean; srcObject: unknown; pauses: number;
-    play: () => Promise<void>; pause: () => void;
-  };
-  preview.pauses = 0;
-  preview.play = async () => { if (previewMode === "rejected") throw new Error("Preview unavailable"); };
-  preview.pause = () => { preview.pauses += 1; };
   const context = { window, navigator: { mediaDevices: devices }, location,
-    matchMedia: () => ({ matches: width <= 600 }), setTimeout, clearTimeout,
-    ...(previewMode === "absent" ? {} : { document: { createElement: () => preview } }) };
+    matchMedia: () => ({ matches: width <= 600 }), crypto: { randomUUID },
+    document: { createElement: () => new Canvas() }, Image: ImageFixture,
+    DOMException, Event, setTimeout, clearTimeout, addEventListener: () => {} };
   runInNewContext(bootstrap!, context);
-  return { devices, original, calls, zoomCalls, stream, permissionError, location, preview,
-    reinstall() { runInNewContext(bootstrap!, context); } };
+  return { window, devices, originalCapture, originalEnumerate, requests, browserCalls, rendered, location,
+    activeToken: () => activeToken,
+    async frame(key: string, dimensions = [600,800], token = activeToken) {
+      return window.__vigilSnapchatNativeFrame(token, `${key}:${dimensions.join(":")}`);
+    }, reinstall() { runInNewContext(bootstrap!, context); } };
 }
+const tick = () => new Promise(resolve => setImmediate(resolve));
 const plain = (value: unknown) => JSON.parse(JSON.stringify(value));
-for (const width of [320, 390, 430]) for (const resizeMode of [false, true]) {
-  const h = harness({ width, resizeMode });
-  const request = { audio: { deviceId: { exact: "chosen-mic" }, echoCancellation: true },
-    video: { deviceId: { exact: "chosen-camera" }, height: { ideal: 2160 }, aspectRatio: { exact: 9 / 16 },
-      frameRate: { max: 30 }, advanced: [{ aspectRatio: 9 / 16, zoom: 3, facingMode: "environment" }] } };
+const h = harness();
+const listed = await h.devices.enumerateDevices();
+assert.deepEqual(plain(listed.map(device => device.deviceId)), ["mic","front-ultra","back-wide","back-ultra"]);
+assert.ok(!listed.some(device => device.deviceId === "webkit-front"), "Never label a default WebKit front camera as a selected rear lens");
+let wrapped = h.devices.getUserMedia; h.reinstall(); assert.equal(h.devices.getUserMedia, wrapped);
+let unintendedEnded = 0;
+for (const id of ["front-ultra","back-wide","back-ultra","front-ultra","back-wide","front-ultra"]) {
+  const request = { audio:false, video:{ deviceId:{exact:id}, width:{ideal:406},height:{ideal:720},aspectRatio:{exact:9/16} } };
   const copy = structuredClone(request);
-  assert.equal(await h.devices.getUserMedia(request), h.stream, "Return the original stream to Snapchat");
-  const actual = plain(h.calls[0]);
-  assert.deepEqual(request, copy, "Do not mutate Snapchat's retained request");
-  assert.deepEqual(actual.audio, request.audio);
-  assert.deepEqual(actual.video.deviceId, request.video.deviceId);
-  assert.deepEqual(actual.video.frameRate, request.video.frameRate);
-  assert.deepEqual(actual.video.aspectRatio, { ideal: 4 / 3 });
-  assert.deepEqual(actual.video.width, { ideal: 1920 });
-  assert.deepEqual(actual.video.height, { ideal: 1440 });
-  assert.equal(actual.video.facingMode, undefined, "An explicit camera must not be replaced");
-  assert.deepEqual(actual.video.advanced, [{ facingMode: "environment" }]);
-  assert.deepEqual(actual.video.resizeMode, resizeMode ? { ideal: "none" } : undefined);
-  const applied = plain(h.zoomCalls[0]);
-  assert.deepEqual(applied.frameRate, { max: 30 }, "Optional zoom must retain acquisition constraints");
-  assert.deepEqual(applied.advanced, [{ facingMode: "environment" }, { zoom: 1 }]);
-  const wrapped = h.devices.getUserMedia;
-  h.reinstall(); assert.equal(h.devices.getUserMedia, wrapped, "Start/end injection is idempotent");
-  assert.equal(h.calls.length, 1);
+  const pending = h.devices.getUserMedia(request);
+  await tick();
+  assert.equal(h.requests.at(-1)!.deviceId, id);
+  await h.frame(id);
+  const stream = await pending;
+  assert.deepEqual(request, copy);
+  const track = stream.getVideoTracks()[0] as NativeTrack;
+  track.addEventListener("ended", () => { unintendedEnded += 1; });
+  assert.deepEqual(plain(track.getSettings()), { width:600,height:800,aspectRatio:.75,frameRate:20,
+    deviceId:id,facingMode:id.startsWith("front")?"user":"environment",resizeMode:"none" });
+  await track.applyConstraints({width:{exact:406},height:{exact:720},zoom:5});
+  assert.equal(track.getSettings().width,600,"Desktop constraints cannot crop a native camera buffer");
+  await assert.rejects(track.applyConstraints({deviceId:{exact:"another-camera"}}),{name:"OverconstrainedError"});
 }
-for (const zoom of [false, true]) {
-  const h = harness({ zoom, zoomFails: true });
-  assert.equal(await h.devices.getUserMedia({ audio: false, video: true }), h.stream);
-  const actual = plain(h.calls[0]);
-  assert.equal(actual.audio, false);
-  assert.deepEqual(actual.video.facingMode, { ideal: "user" });
-  assert.equal(h.zoomCalls.length, zoom ? 1 : 0);
-}
-const rear = harness();
-await rear.devices.getUserMedia({ audio: true, video: { facingMode: { exact: "environment" } } });
-assert.deepEqual(plain(rear.calls[0]).video.facingMode, { exact: "environment" });
+assert.equal(h.browserCalls.length,0,"Video uses AVFoundation, with no WebKit camera or detached warmup consumer");
+assert.equal(unintendedEnded,0,"Switching intentionally must not send a false capture-failure event to Snapchat");
+const oldToken = h.activeToken();
+const first = h.devices.getUserMedia({video:{deviceId:{exact:"back-wide"}}});
+const firstRejected = assert.rejects(first,{name:"AbortError"});
+await tick();
+const firstToken = h.activeToken();
+const latest = h.devices.getUserMedia({video:{deviceId:{exact:"front-ultra"}}});
+await tick();
+await h.frame("old",[600,800],oldToken);
+await h.frame("superseded",[600,800],firstToken);
+assert.ok(!h.rendered.includes("old") && !h.rendered.includes("superseded"),"Late camera frames never paint the new buffer");
+await h.frame("latest");
+const latestStream = await latest;
+await firstRejected;
+const currentToken = h.activeToken();
+await h.window.__vigilSnapchatNativeEnd(firstToken);
+assert.equal(h.activeToken(),currentToken,"A stale native end cannot stop the new camera");
+latestStream.getVideoTracks()[0]!.stop();
+await tick();
+assert.equal(h.activeToken(),null,"Closing the camera releases AVFoundation");
+const bad = harness();
+const wrongFrame = bad.devices.getUserMedia({video:true});
+const rejectedFrame = assert.rejects(wrongFrame,{name:"NotReadableError"});
+await tick(); await bad.frame("landscape",[800,600]); await rejectedFrame;
+assert.equal(bad.rendered.length,0,"Wrong-orientation frames must never become half-black/cropped previews");
+const unavailable = harness();
+await assert.rejects(unavailable.devices.getUserMedia({video:{deviceId:{exact:"missing-lens"}}}),{name:"OverconstrainedError"});
+assert.equal(unavailable.browserCalls.length,0,"A missing selected camera must not silently turn into the front camera");
+await assert.rejects(harness({denied:true}).devices.getUserMedia({video:true}),{name:"NotAllowedError"});
+await assert.rejects(harness({audioDenied:true}).devices.getUserMedia({video:true,audio:true}),{name:"NotAllowedError"});
 const audio = harness();
-const audioRequest = { audio: true, video: false };
-await audio.devices.getUserMedia(audioRequest);
-assert.equal(audio.calls[0], audioRequest); assert.equal(audio.zoomCalls.length, 0);
-const denied = harness({ denied: true });
-await assert.rejects(denied.devices.getUserMedia({ video: true }), error => error === denied.permissionError);
-assert.equal(denied.calls.length, 1, "Never retry or bypass a permission denial");
-for (const options of [
-  { hostname: "accounts.snapchat.com", pathname: "/v2/login" },
-  { hostname: "www.snapchat.com.evil.test" }, { pathname: "/spotlight" }, { iframe: true }
-]) {
-  const h = harness(options);
-  assert.equal(h.devices.getUserMedia, h.original, "Keep auth, other origins, and subframes untouched");
+await audio.devices.getUserMedia({video:false,audio:{echoCancellation:true}});
+assert.deepEqual(plain(audio.browserCalls),[{video:false,audio:{echoCancellation:true}}]);
+const external = harness();
+const externalCapture = external.devices.getUserMedia({video:true});
+await tick(); await external.frame("external");
+const externalStream = await externalCapture;
+let externalEnded = 0;
+externalStream.getVideoTracks()[0]!.addEventListener("ended",()=>{externalEnded+=1;});
+external.window.__vigilSnapchatNativeEnd(external.activeToken());
+assert.equal(externalStream.getVideoTracks()[0]!.stopped,true);
+assert.equal(externalEnded,1,"Background/native shutdown must deliver a real capture-ended transition");
+for (const options of [{native:false},{hostname:"accounts.snapchat.com"},{hostname:"www.snapchat.com.evil.test"},{pathname:"/spotlight"},{iframe:true}]) {
+  const isolated = harness(options);
+  assert.equal(isolated.devices.getUserMedia,isolated.originalCapture);
 }
-const desktop = harness({ width: 1100 });
-const desktopRequest = { audio: false, video: { width: { ideal: 406 }, height: { ideal: 720 } } };
+const desktop = harness({width:1100});
+const desktopRequest = {video:{width:{ideal:406},height:{ideal:720}}};
 await desktop.devices.getUserMedia(desktopRequest);
-assert.equal(desktop.calls[0], desktopRequest); assert.equal(desktop.zoomCalls.length, 0);
-const changedRoute = harness(); changedRoute.location.pathname = "/discover";
-await changedRoute.devices.getUserMedia(desktopRequest);
-assert.equal(changedRoute.calls[0], desktopRequest);
-const delayed = harness({ previewMode: "manual" });
-let returned = false;
-const waitingForFrame = delayed.devices.getUserMedia({ video: true }).then(value => { returned = true; return value; });
-await new Promise(resolve => setImmediate(resolve));
-assert.equal(returned, false, "Do not let Snapchat cache the pre-frame landscape dimensions");
-assert.equal(delayed.preview.srcObject, delayed.stream);
-assert.equal(delayed.preview.muted && delayed.preview.playsInline, true);
-delayed.preview.dispatchEvent(new Event("loadedmetadata"));
-await Promise.resolve();
-assert.equal(returned, false, "Metadata alone is too early on iOS");
-delayed.preview.dispatchEvent(new Event("loadeddata"));
-assert.equal(await waitingForFrame, delayed.stream, "Hand Snapchat its original stream after the first frame");
-assert.equal(delayed.preview.srcObject, null);
-assert.equal(delayed.preview.pauses, 1);
-assert.equal(delayed.calls.length, 1, "A preview consumer must never acquire another stream");
-const failedPreview = harness({ previewMode: "rejected" });
-assert.equal(await failedPreview.devices.getUserMedia({ video: true }), failedPreview.stream);
-assert.equal(failedPreview.preview.srcObject, null, "Optional preview failure releases its consumer");
-console.log("Snapchat portrait sensor camera: sensor preferences, selected devices, audio, zoom fallback, permission denial, scope and idempotence passed.");
+assert.equal(desktop.browserCalls[0],desktopRequest);
+console.log("Native Snapchat camera: lens identity, full portrait frames, switch races, stale frames, cleanup, denial, microphone and scope passed.");

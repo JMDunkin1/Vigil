@@ -158,6 +158,11 @@
 		4ED31C21E62A60905682F406 /* media-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = 2E5646847AEDDDA8CD346268; };
 		EA22D4B5103C6AF8CAE61F95 /* media-child-lock.js in Resources */ = {isa = PBXBuildFile; fileRef = 2E5646847AEDDDA8CD346268; };
 		F452DB5D09062F2D7716FEBC /* SocialNotificationsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4AB7D65CA565CF7D1200B556; };
+		A10000000000000000000042 /* SnapchatCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* SnapchatCamera.swift */; };
+		D10000000000000000000042 /* SnapchatCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* SnapchatCamera.swift */; };
+		G10000000000000000000042 /* SnapchatCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* SnapchatCamera.swift */; };
+		H10000000000000000000042 /* SnapchatCamera.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000000000000000000042 /* SnapchatCamera.swift */; };
+		B10000000000000000000042 /* SnapchatCameraTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000042 /* SnapchatCameraTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -291,6 +296,8 @@
 		62591D49ACC312257CF67B6E /* VigilSocialActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VigilSocialActivity.swift; sourceTree = "<group>"; };
 		2E5646847AEDDDA8CD346268 /* media-child-lock.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "VigilYouTubeInteractionExtension/Resources/media-child-lock.js"; sourceTree = SOURCE_ROOT; };
 		4AB7D65CA565CF7D1200B556 /* SocialNotificationsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SocialNotificationsTests.swift; sourceTree = "<group>"; };
+		A20000000000000000000042 /* SnapchatCamera.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapchatCamera.swift; sourceTree = "<group>"; };
+		B20000000000000000000042 /* SnapchatCameraTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SnapchatCameraTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -372,6 +379,7 @@
 				A20000000000000000000002 /* SocialService.swift */,
 				A20000000000000000000003 /* DOMAdapters.swift */,
 				A20000000000000000000004 /* SocialWebViewStore.swift */,
+				A20000000000000000000042 /* SnapchatCamera.swift */,
 				A20000000000000000000005 /* RootView.swift */,
 				A20000000000000000000006 /* Info.plist */,
 				A20000000000000000000010 /* icon.png */,
@@ -426,6 +434,7 @@
 				BC2B2EF5910D30A91B2D3B93 /* YouTubeExternalPlaybackTests.swift */,
 				E3C038DC469B21F470CD5D69 /* SocialPreferencesTests.swift */,
 				A20000000000000000000007 /* VigilSocialTests.swift */,
+				B20000000000000000000042 /* SnapchatCameraTests.swift */,
 			);
 			path = VigilSocialTests;
 			sourceTree = "<group>";
@@ -647,6 +656,7 @@
 				A10000000000000000000002 /* SocialService.swift in Sources */,
 				A10000000000000000000003 /* DOMAdapters.swift in Sources */,
 				A10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
+				A10000000000000000000042 /* SnapchatCamera.swift in Sources */,
 				A10000000000000000000005 /* RootView.swift in Sources */,
 				A1000000000000000000000B /* ContentSafetyClassifier.swift in Sources */,
 				C10000000000000000000001 /* YouTubeSafariView.swift in Sources */,
@@ -662,6 +672,7 @@
 				223D54CCA4814918C42A9A8B /* YouTubeExternalPlaybackTests.swift in Sources */,
 				426A5BE2C91A4895DE1E8DA4 /* SocialPreferencesTests.swift in Sources */,
 				A10000000000000000000006 /* VigilSocialTests.swift in Sources */,
+				B10000000000000000000042 /* SnapchatCameraTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -697,6 +708,7 @@
 				D10000000000000000000002 /* SocialService.swift in Sources */,
 				D10000000000000000000003 /* DOMAdapters.swift in Sources */,
 				D10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
+				D10000000000000000000042 /* SnapchatCamera.swift in Sources */,
 				D10000000000000000000005 /* RootView.swift in Sources */,
 				D10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */,
 				D10000000000000000000008 /* YouTubeSafariView.swift in Sources */,
@@ -719,6 +731,7 @@
 				G10000000000000000000002 /* SocialService.swift in Sources */,
 				G10000000000000000000003 /* DOMAdapters.swift in Sources */,
 				G10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
+				G10000000000000000000042 /* SnapchatCamera.swift in Sources */,
 				G10000000000000000000005 /* RootView.swift in Sources */,
 				G10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */,
 				G10000000000000000000007 /* YouTubeSafariView.swift in Sources */,
@@ -741,6 +754,7 @@
 				H10000000000000000000002 /* SocialService.swift in Sources */,
 				H10000000000000000000003 /* DOMAdapters.swift in Sources */,
 				H10000000000000000000004 /* SocialWebViewStore.swift in Sources */,
+				H10000000000000000000042 /* SnapchatCamera.swift in Sources */,
 				H10000000000000000000005 /* RootView.swift in Sources */,
 				H10000000000000000000006 /* ContentSafetyClassifier.swift in Sources */,
 				H10000000000000000000007 /* YouTubeSafariView.swift in Sources */,

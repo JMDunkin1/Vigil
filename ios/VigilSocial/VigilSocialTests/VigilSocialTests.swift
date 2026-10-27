@@ -1898,10 +1898,9 @@ final class VigilSocialTests: XCTestCase {
               getSupportedConstraints: () => ({ resizeMode: true }),
               getUserMedia: async constraints => {
                 window.fixtureCameraRequest=constraints;
-                // Model WebKit 323550: portrait requests yield landscape frames;
-                // primary-orientation requests yield upright portrait frames.
-                const primary=constraints.video.width.ideal>constraints.video.height.ideal;
-                const canvas=document.createElement('canvas');canvas.width=primary?900:1200;canvas.height=primary?1200:900;
+                // Layout fixture only. The AVFoundation bridge and switching are
+                // exercised independently in SnapchatCameraTests.
+                const canvas=document.createElement('canvas');canvas.width=900;canvas.height=1200;
                 const g=canvas.getContext('2d');g.fillStyle='#1256ab';g.fillRect(0,0,900,1200);
                 g.fillStyle='#ffee00';g.fillRect(0,0,108,1200);
                 g.fillStyle='#df635d';g.fillRect(792,0,108,1200);
@@ -2042,7 +2041,7 @@ final class VigilSocialTests: XCTestCase {
                 const r = close.getBoundingClientRect();
                 return [Math.abs(box.width-innerWidth)<1 && Math.abs(box.height-innerHeight)<1,
                   getComputedStyle(video).objectFit === 'contain',
-                  Math.abs(fixtureCameraRequest.video.aspectRatio.ideal - 4/3)<.001 && fixtureCameraRequest.audio === false,
+                  fixtureCameraRequest.video.aspectRatio.exact === 9/16 && fixtureCameraRequest.audio === false,
                   fixtureCameraRequest.video.deviceId.exact === 'selected-camera',
                   close.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))];
                 """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
@@ -2054,7 +2053,7 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("!document.querySelector('[data-vigil-snap-media]') && getComputedStyle(document.querySelector('.ChLAv')).visibility === 'visible'", in: webView)
     }
 
-    private static let snapchatMobileShellFixture = #"""
+    static let snapchatMobileShellFixture = #"""
     <!doctype html><html theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
     /* Structural fixture from Snapchat Web client 9a9dc856. Fictional contacts;

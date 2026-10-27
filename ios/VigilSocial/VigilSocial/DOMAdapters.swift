@@ -138,68 +138,116 @@ enum DOMAdapters {
       if (window !== window.top || window.__vigilSnapchatCameraInstalled
           || !['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
           || !/^\/web(?:\/|$)/.test(location.pathname)) return;
-      const devices = navigator.mediaDevices;
-      if (typeof devices?.getUserMedia !== 'function') return;
       window.__vigilSnapchatCameraInstalled = true;
-      const getUserMedia = devices.getUserMedia.bind(devices);
-      // The desktop client requests 406x720 or an exact 9:16 stream. On a
-      // phone that can crop the sensor before either preview or capture sees
-      // it. WebKit constraints use the sensor's primary (landscape) orientation:
-      // 1920x1440 becomes 1440x1920 once upright camera frames arrive. Asking
-      // for 1440x1920 instead can produce landscape output on iOS. Keep the
-      // full 4:3 sensor, chosen camera, mic, frame rate,
-      // permissions, and Snapchat's original stream/capture lifecycle.
-      const uncropped = video => {
-        const result = { ...video };
-        for (const key of ['width', 'height', 'aspectRatio', 'resizeMode', 'zoom']) delete result[key];
-        if (Array.isArray(result.advanced)) result.advanced = result.advanced.map(uncropped);
-        return result;
+      const devices = navigator.mediaDevices;
+      const bridge = window.webkit?.messageHandlers?.vigilSnapchatCamera;
+      if (!bridge || typeof devices?.getUserMedia !== 'function') return;
+      window.__vigilSnapchatNativeCameraInstalled = true;
+      const originalCapture = devices.getUserMedia.bind(devices);
+      const originalDevices = devices.enumerateDevices.bind(devices);
+      let active = null;
+      const error = value => {
+        const name = String(value?.message || value).match(/NotAllowedError|NotFoundError|NotReadableError|OverconstrainedError|AbortError/)?.[0] || 'NotReadableError';
+        return new DOMException(name === 'OverconstrainedError' ? 'The selected camera is unavailable.' : 'The camera could not start.', name);
+      };
+      const native = async payload => {
+        try { return await bridge.postMessage({ ...payload, documentID: window.__vigilDocumentID }); }
+        catch (reason) { throw error(reason); }
+      };
+      const selected = constraint => typeof constraint === 'string' ? constraint
+        : typeof constraint?.exact === 'string' ? constraint.exact : constraint?.ideal;
+      const isPhoneChat = () => matchMedia('(max-width: 600px)').matches && /^\/web(?:\/|$)/.test(location.pathname);
+      const enumerate = async () => {
+        const [ordinary, cameras] = await Promise.all([originalDevices(), native({ action: 'devices' })]);
+        return [...ordinary.filter(device => device.kind !== 'videoinput'), ...cameras.map(camera => ({
+          deviceId: camera.deviceId, groupId: '', kind: 'videoinput', label: camera.label,
+          toJSON() { return { deviceId: this.deviceId, groupId: '', kind: this.kind, label: this.label }; }
+        }))];
+      };
+      devices.enumerateDevices = function() { return isPhoneChat() ? enumerate() : originalDevices(); };
+      window.__vigilSnapchatNativeEnd = token => {
+        if (active?.token === token) active.end(new DOMException('Camera capture ended.', 'AbortError'), false, true);
+      };
+      window.__vigilSnapchatNativeFrame = async (token, jpeg) => {
+        const source = active;
+        if (!source || source.token !== token || source.closed) return false;
+        const image = new Image(); image.src = 'data:image/jpeg;base64,' + jpeg;
+        await image.decode();
+        if (active !== source || source.closed) return false;
+        if (!image.naturalWidth || !image.naturalHeight || image.naturalWidth >= image.naturalHeight) {
+          source.end(new DOMException('The camera did not deliver an upright portrait frame.', 'NotReadableError'));
+          return false;
+        }
+        const canvas = source.canvas;
+        // A fresh canvas/track belongs to each input. A late old-camera frame
+        // can never resize the new preview or leave a stale half-black buffer.
+        if (canvas.width !== image.naturalWidth || canvas.height !== image.naturalHeight) {
+          canvas.width = image.naturalWidth; canvas.height = image.naturalHeight;
+        }
+        canvas.getContext('2d').drawImage(image, 0, 0);
+        source.firstFrame();
+        return true;
       };
       devices.getUserMedia = async function(constraints) {
-        if (!constraints?.video || !matchMedia('(max-width: 600px)').matches
-            || !/^\/web(?:\/|$)/.test(location.pathname)) return getUserMedia(constraints);
-        const video = uncropped(constraints.video === true ? {} : constraints.video);
-        video.width = { ideal: 1920 };
-        video.height = { ideal: 1440 };
-        video.aspectRatio = { ideal: 4 / 3 };
-        if (!video.deviceId && !video.facingMode) video.facingMode = { ideal: 'user' };
-        if (devices.getSupportedConstraints?.().resizeMode) video.resizeMode = { ideal: 'none' };
-        const stream = await getUserMedia({ ...constraints, video });
-        for (const track of stream.getVideoTracks()) {
-          try {
-            const zoom = track.getCapabilities?.().zoom;
-            if (Number.isFinite(zoom?.min) && typeof track.applyConstraints === 'function') {
-              const current = track.getConstraints?.() || video;
-              await track.applyConstraints({ ...current, advanced: [...(current.advanced || []), { zoom: zoom.min }] });
-            }
-          } catch (_) { /* Optional zoom support must not discard a usable stream. */ }
-        }
-        // iOS initially reports unrotated sensor dimensions. Let one real
-        // frame arrive before Snapchat caches sizes for capture or lenses.
-        // This detached consumer never acquires another stream or stops tracks.
-        if (typeof document !== 'undefined') {
-          const preview = document.createElement('video');
-          preview.muted = true; preview.playsInline = true;
-          await new Promise(resolve => {
-            let finished = false;
-            const finish = () => {
-              if (finished) return;
-              finished = true; clearTimeout(timeout);
-              preview.removeEventListener('loadeddata', finish);
-              preview.removeEventListener('error', finish);
-              preview.pause(); preview.srcObject = null; resolve();
-            };
-            const timeout = setTimeout(finish, 2000);
-            preview.addEventListener('loadeddata', finish, { once: true });
-            preview.addEventListener('error', finish, { once: true });
-            try {
-              preview.srcObject = stream;
-              Promise.resolve(preview.play()).catch(finish);
-            } catch (_) { finish(); }
-          });
-        }
-        return stream;
+        if (!constraints?.video || !isPhoneChat()) return originalCapture(constraints);
+        active?.end(new DOMException('Another camera was selected.', 'AbortError'));
+        const video = constraints.video === true ? {} : constraints.video;
+        const token = crypto.randomUUID();
+        const canvas = document.createElement('canvas');
+        let resolveFrame, rejectFrame;
+        const frame = new Promise((resolve, reject) => { resolveFrame = resolve; rejectFrame = reject; });
+        // Rejections can precede the native acknowledgement during fast switches.
+        frame.catch(() => {});
+        const source = { token, canvas, closed: false, tracks: [], timer: null,
+          firstFrame() { clearTimeout(this.timer); resolveFrame(); },
+          end(reason, stopNative = true, notifyEnded = false) {
+            if (this.closed) return;
+            this.closed = true; clearTimeout(this.timer); rejectFrame(reason);
+            if (active === this) active = null;
+            for (const track of this.tracks) { track.stop(); if (notifyEnded) track.dispatchEvent(new Event('ended')); }
+            if (stopNative) void native({ action: 'stop', token }).catch(() => {});
+          }
+        };
+        active = source;
+        try {
+          // Audio remains WebKit's real microphone track; AVFoundation owns
+          // only video, so calling/recording does not create two mic sessions.
+          const audio = constraints.audio ? await originalCapture({ audio: constraints.audio, video: false }) : null;
+          if (audio) source.tracks.push(...audio.getAudioTracks());
+          if (source.closed) { audio?.getTracks().forEach(track => track.stop()); throw new DOMException('Camera selection changed.', 'AbortError'); }
+          const requestedID = selected(video.deviceId);
+          const descriptor = await native({ action: 'start', token,
+            ...(requestedID ? { deviceId: requestedID } : {}), facingMode: selected(video.facingMode) || 'user' });
+          if (source.closed) throw new DOMException('Camera selection changed.', 'AbortError');
+          source.timer = setTimeout(() => source.end(new DOMException('No camera frame arrived.', 'NotReadableError')), 10000);
+          await frame;
+          clearTimeout(source.timer);
+          if (source.closed) throw new DOMException('Camera selection changed.', 'AbortError');
+          const stream = canvas.captureStream(descriptor.frameRate);
+          const track = stream.getVideoTracks()[0];
+          const stopTrack = track.stop.bind(track);
+          track.stop = () => { stopTrack(); source.end(new DOMException('Camera stopped.', 'AbortError')); };
+          track.getSettings = () => ({ width: canvas.width, height: canvas.height, aspectRatio: canvas.width / canvas.height,
+            frameRate: descriptor.frameRate, deviceId: descriptor.deviceId, facingMode: descriptor.facingMode, resizeMode: 'none' });
+          track.getCapabilities = () => ({ width: { min: canvas.width, max: canvas.width },
+            height: { min: canvas.height, max: canvas.height }, deviceId: descriptor.deviceId,
+            aspectRatio: { min: canvas.width / canvas.height, max: canvas.width / canvas.height },
+            frameRate: { min: descriptor.frameRate, max: descriptor.frameRate },
+            facingMode: [descriptor.facingMode], resizeMode: ['none'], zoom: { min: 1, max: 1, step: 1 } });
+          track.getConstraints = () => ({ deviceId: { exact: descriptor.deviceId }, facingMode: descriptor.facingMode });
+          track.applyConstraints = async requested => {
+            if (selected(requested?.deviceId) && selected(requested.deviceId) !== descriptor.deviceId)
+              throw new DOMException('Select a new camera to change the input.', 'OverconstrainedError');
+            // Never crop/zoom the native full-field portrait buffers to satisfy
+            // the desktop client's retained 406x720 or 9:16 constraints.
+          };
+          source.tracks.push(track);
+          for (const microphone of audio?.getAudioTracks() || []) stream.addTrack(microphone);
+          devices.dispatchEvent(new Event('devicechange'));
+          return stream;
+        } catch (reason) { source.end(reason); throw reason; }
       };
+      addEventListener('pagehide', () => active?.end(new DOMException('Camera page closed.', 'AbortError')));
     })();
     """#
 
@@ -5734,7 +5782,7 @@ enum DOMAdapters {
       // Export only the currently displayed, policy-approved photo. Never
       // screenshot the page, capture a live camera, or remove privacy shields.
       let pendingExport = null;
-      const exportLayers = surface => [...surface.querySelectorAll('.b2f4R img, .b2f4R video, .BN1L1 img, .BN1L1 video')]
+      const exportLayers = surface => [...surface.querySelectorAll('.b2f4R img, .b2f4R video, .RdKti img, .RdKti video, .BN1L1 img, .BN1L1 video')]
         .filter(media => !media.srcObject && renderVisible(media) && (media.currentSrc || media.src));
       const exportMedia = surface => {
         const media = exportLayers(surface)[0];
@@ -5756,17 +5804,9 @@ enum DOMAdapters {
         pendingExport = null;
         button.disabled = false;
         button.textContent = success ? 'Saved to Camera Roll' : (detail || 'Could not save. Try again');
+        if (!success) window.__vigilBridge?.({ type: 'snapchatExportStatus', requestID: id, success: false });
       };
-      const installExport = surface => {
-        const existing = surface.querySelector('.vigil-snap-export');
-        const hasPhoto = exportLayers(surface)[0] instanceof HTMLImageElement;
-        if (existing) { existing.hidden = !hasPhoto; return; }
-        if (!hasPhoto || typeof window.__vigilBridge !== 'function') return;
-        const button = document.createElement('button');
-        button.type = 'button'; button.className = 'vigil-snap-export';
-        button.textContent = 'Save to Camera Roll'; button.setAttribute('aria-live', 'polite');
-        button.addEventListener('click', async event => {
-          event.preventDefault(); event.stopPropagation();
+      const beginPhotoExport = async (surface, button) => {
           if (pendingExport) return;
           const media = exportMedia(surface);
           if (!media || !exportAllowed(surface, media)) {
@@ -5801,8 +5841,36 @@ enum DOMAdapters {
             window.__vigilBridge({ type: 'snapchatExport', requestID: id, mimeType: blob.type,
               base64: dataURL.slice(dataURL.indexOf(',') + 1) });
           } catch (_) { window.__vigilCompleteSnapchatExport(id, false, 'Could not save. Try again'); }
+      };
+      const installExport = surface => {
+        const existing = surface.querySelector('.vigil-snap-export');
+        const hasPhoto = exportLayers(surface)[0] instanceof HTMLImageElement;
+        if (existing) { existing.hidden = !hasPhoto; return; }
+        if (!hasPhoto || typeof window.__vigilBridge !== 'function') return;
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'vigil-snap-export';
+        if (window.__vigilSnapchatNativeSaveControl) button.style.display = 'none';
+        button.textContent = 'Save to Camera Roll'; button.setAttribute('aria-live', 'polite');
+        button.addEventListener('click', event => {
+          event.preventDefault(); event.stopPropagation();
+          void beginPhotoExport(surface, button);
         });
         surface.appendChild(button);
+      };
+      // The native bottom bar remains visible independently of React's media
+      // children and context menus. Resolve the currently opened photo on tap.
+      window.__vigilSaveSnapchatPhoto = () => {
+        if (pendingExport) return 'Saving…';
+        const surface = [...document.querySelectorAll('.ecBYF, .BN1L1')]
+          .find(candidate => renderVisible(candidate) && exportLayers(candidate)[0] instanceof HTMLImageElement);
+        if (!surface) return 'Open a photo first';
+        const media = exportMedia(surface);
+        if (!media || !exportAllowed(surface, media)) return 'Photo is still loading or unavailable';
+        installExport(surface);
+        const button = surface.querySelector('.vigil-snap-export');
+        if (!button) return 'Photo is unavailable';
+        void beginPhotoExport(surface, button);
+        return '';
       };
       const reconcile = () => {
         scheduled = false;

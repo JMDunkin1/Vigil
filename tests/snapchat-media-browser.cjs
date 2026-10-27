@@ -83,8 +83,10 @@ async function main() {
   await run(`navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:406},height:{ideal:720},aspectRatio:{exact:9/16},deviceId:{exact:'selected-camera'}}}).then(stream=>{document.getElementById('local-video').srcObject=stream})`);
   await run(`new Promise(resolve=>{const v=document.getElementById('local-video');if(v.videoWidth)resolve();else v.addEventListener('loadeddata',()=>resolve(),{once:true})})`);
   const request = await run('fixtureConstraints');
-  assert.deepEqual(request.video.aspectRatio,{ideal:4/3},'request the full sensor in primary orientation, without an exact crop');
-  assert.deepEqual([request.video.width,request.video.height],[{ideal:1920},{ideal:1440}]);
+  // A browser fixture has no AVFoundation handler. Keep its source request
+  // untouched; native acquisition/switching is covered by SnapchatCameraTests.
+  assert.deepEqual(request.video.aspectRatio,{exact:9/16});
+  assert.deepEqual([request.video.width,request.video.height],[{ideal:406},{ideal:720}]);
   assert.equal(request.audio,false); assert.deepEqual(request.video.deviceId,{exact:'selected-camera'});
   for (const [width,height] of [[320,780],[390,780],[430,780],[390,420]]) {
     win.setContentSize(width,height); await settle();
