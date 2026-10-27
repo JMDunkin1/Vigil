@@ -505,16 +505,16 @@ final class VigilSocialTests: XCTestCase {
               const action=getComputedStyle(node).touchAction;
               if(action!=='auto'&&!action.includes('pan-y')&&!action.includes('manipulation'))commentsPanAllowed=false;
             }
-            const panelScrolls=getComputedStyle(document.getElementById('comments')).overflowY==='auto';
+            const listScrolls=getComputedStyle(document.getElementById('list')).overflowY==='auto';
             const close=document.getElementById('close');fire(close,'pointerdown',350);fire(close,'pointerup',350);
             fire(video,'pointerdown',200);document.dispatchEvent(new Event('scroll'));fire(video,'pointerup',200);
             return {commentsWork:!commentsBlocked&&window.commentMoves===1,reelBlocked,nextBlocked:next.defaultPrevented,
-              backgroundStayedLocked,commentsPanAllowed,panelScrolls,backgroundRestored:document.scrollingElement.scrollTop===0,
+              backgroundStayedLocked,commentsPanAllowed,listScrolls,backgroundRestored:document.scrollingElement.scrollTop===0,
               closed:window.closes===1&&document.getElementById('comments').hidden,
               visible:getComputedStyle(video).visibility==='visible'};
           })()
           """#) as? [String: Bool]
-        for key in ["commentsWork", "commentsPanAllowed", "panelScrolls", "backgroundStayedLocked", "backgroundRestored", "reelBlocked", "nextBlocked", "closed", "visible"] {
+        for key in ["commentsWork", "commentsPanAllowed", "listScrolls", "backgroundStayedLocked", "backgroundRestored", "reelBlocked", "nextBlocked", "closed", "visible"] {
             XCTAssertEqual(state?[key], true, key)
         }
     }
@@ -667,6 +667,128 @@ final class VigilSocialTests: XCTestCase {
                       "A retained invisible portal must lose its native scrolling exception after fading out")
         XCTAssertEqual(closed?["locked"] as? Bool, true)
         webView.navigationDelegate = nil
+    }
+
+    @MainActor
+    func testInstagramTransformedCommentsDrawerPreservesLayoutHandleAndFullScroll() async throws {
+        for dialogAttributes in ["", "role='dialog' aria-label='Comments'"] {
+            let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
+            controller.add(bridge, name: "vigil")
+            controller.addUserScript(WKUserScript(source: DOMAdapters.documentStartScript(for: .instagram,
+                unclassifiedMediaPolicy: .conceal, audioEnabled: true, contentSafetyEnabled: false),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(source: DOMAdapters.script(for: .instagram,
+                audioEnabled: true, contentSafetyEnabled: false), injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = controller
+            configuration.websiteDataStore = .nonPersistent()
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+            let fixtureWindow = UIWindow(frame: webView.frame)
+            fixtureWindow.rootViewController = UIViewController()
+            fixtureWindow.rootViewController?.view.addSubview(webView)
+            fixtureWindow.makeKeyAndVisible()
+            defer { fixtureWindow.isHidden = true; controller.removeScriptMessageHandler(forName: "vigil") }
+            let loaded = expectation(description: "Transformed Instagram comments drawer")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            webView.navigationDelegate = delegate
+            webView.loadHTMLString("""
+              <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+              html,body{margin:0;height:100%;background:#122334;color:white;font:16px -apple-system}
+              #viewer{position:fixed;inset:0}video{display:block;width:390px;height:700px;background:#234455}
+              #portal{position:fixed;inset:0;pointer-events:none;background:rgba(0,0,0,.4)}
+              #drawer{position:absolute;top:220px;left:0;width:390px;height:624px;transform:translate3d(0,0,0);
+                background:#202225;border-radius:18px 18px 0 0;display:flex;flex-direction:column;overflow:hidden;pointer-events:auto}
+              #drawer[hidden]{display:none}
+              #handle{height:36px;flex:none;touch-action:none;display:grid;place-items:center}
+              #handle i{width:44px;height:4px;background:#50545a;border-radius:4px}
+              #content{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+              h2{margin:0;height:44px;flex:none;font-size:18px;text-align:center}
+              #list{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain}
+              #list>div{height:90px;box-sizing:border-box;padding:12px;border-top:1px solid #50545a}
+              textarea{height:42px;box-sizing:border-box;flex:none;background:#30343a;color:white}
+              </style><script>window.fetch=async()=>({ok:true,json:async()=>({})});</script></head><body>
+              <div id="viewer" role="dialog"><video id="media" src="/original.mp4"></video>
+              <button id="open-comments" aria-label="Comments">Comments</button><button id="next" aria-label="Next reel">Next</button>
+              <div id="portal"><section id="drawer" \(dialogAttributes) hidden><div id="handle"><i></i></div>
+              <div id="content"><h2 id="heading">Comments</h2><div id="list">\((1...12).map { "<div id='row-\($0)'>Comment \($0)</div>" }.joined())</div>
+              <textarea placeholder="Add a comment…"></textarea></div></section></div></div>
+              <script>
+              window.closes=0;window.starts=0;
+              window.geometry=()=>{
+                const ids=['drawer','handle','heading','content','list'];
+                return Object.fromEntries(ids.map(id=>{const node=document.getElementById(id),box=node.getBoundingClientRect();
+                  return [id,{top:box.top,height:box.height,width:box.width,overflow:getComputedStyle(node).overflowY,transform:getComputedStyle(node).transform}];}));
+              };
+              document.getElementById('open-comments').onclick=()=>{document.getElementById('drawer').hidden=false;window.baseline=geometry();};
+              const handle=document.getElementById('handle');
+              handle.onpointerdown=event=>{window.dragStart=event.clientY;window.starts++;};
+              handle.onpointermove=event=>{if(window.dragStart!=null)document.getElementById('drawer').style.transform='translate3d(0,'+(event.clientY-window.dragStart)+'px,0)';};
+              handle.onpointerup=event=>{
+                if(window.dragStart==null)return;
+                const dy=event.clientY-window.dragStart,drawer=document.getElementById('drawer');
+                if(dy>=150){window.closes++;drawer.hidden=true;}
+                else if(dy<0){drawer.style.top=(220+dy)+'px';drawer.style.height=(624-dy)+'px';drawer.style.transform='translate3d(0,0,0)';}
+                window.dragStart=null;
+              };
+              </script></body></html>
+              """, baseURL: URL(string: "https://www.instagram.com/reel/Shared123/")!)
+            await fulfillment(of: [loaded], timeout: 5)
+            _ = try await evaluateJavaScriptWithCompletion("document.getElementById('open-comments').click();true;", in: webView)
+            try await waitForJavaScriptCondition("document.querySelector('[data-vigil-instagram-comments-sheet]') !== null", in: webView)
+            let state = try await evaluateJavaScriptWithCompletion(#"""
+              (()=>{
+                const now=geometry(),same=(id,key)=>Math.abs(now[id][key]-baseline[id][key])<1;
+                const list=document.getElementById('list');list.scrollTop=999999;
+                const last=document.getElementById('row-12').getBoundingClientRect();
+                return {layout:['drawer','handle','heading','content','list'].every(id=>['top','height','width'].every(key=>same(id,key))),
+                  transform:now.drawer.transform===baseline.drawer.transform,
+                  scrollContract:now.drawer.overflow===baseline.drawer.overflow&&now.content.overflow===baseline.content.overflow&&now.list.overflow==='auto',
+                  entireDrawer:document.getElementById('drawer').dataset.vigilInstagramCommentsSheet==='true',
+                  noNestedSheet:!document.getElementById('content').hasAttribute('data-vigil-instagram-comments-sheet'),
+                  handleTouch:getComputedStyle(document.getElementById('handle')).touchAction==='none',
+                  lastComment:Math.abs(last.bottom-list.getBoundingClientRect().bottom)<2,
+                  gripY:(document.getElementById('handle').getBoundingClientRect().top+18)/innerHeight};
+              })()
+              """#, in: webView) as? [String: Any]
+            for key in ["layout", "transform", "scrollContract", "entireDrawer", "noNestedSheet", "handleTouch", "lastComment"] {
+                XCTAssertEqual(state?[key] as? Bool, true, "\(dialogAttributes): \(key)")
+            }
+            let gripY = try XCTUnwrap(state?["gripY"] as? Double)
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let regions = SocialWebViewStore.instagramGestureRegions(bridge.messages.last { $0["type"] as? String == "reelScrollLock" }?["scrollingRegions"])
+            XCTAssertTrue(regions.contains { $0.contains(CGPoint(x: 0.5, y: gripY)) }, "The top handle must be inside the native pan exception")
+            XCTAssertFalse(regions.contains { $0.contains(CGPoint(x: 0.5, y: 0.12)) }, "The exposed Reel stays outside that exception")
+            let expanded = try await evaluateJavaScriptWithCompletion(#"""
+              (()=>{
+                const handle=document.getElementById('handle');
+                for(const [type,y] of [['pointerdown',240],['pointermove',20],['pointerup',20]]){
+                  handle.dispatchEvent(new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:190,clientY:y}));
+                }
+                const now=geometry(),list=document.getElementById('list');
+                list.insertAdjacentHTML('beforeend','<div id="row-13">Newly loaded comment</div>');list.scrollTop=999999;
+                return now.drawer.top===0&&now.drawer.height===844&&now.list.height>baseline.list.height
+                  &&Math.abs(document.getElementById('row-13').getBoundingClientRect().bottom-list.getBoundingClientRect().bottom)<2;
+              })()
+              """#, in: webView) as? Bool
+            XCTAssertEqual(expanded, true, "A top-handle drag can expand the drawer to full height and reach newly loaded comments")
+            try await Task.sleep(nanoseconds: 50_000_000)
+            let expandedRegions = SocialWebViewStore.instagramGestureRegions(bridge.messages.last { $0["type"] as? String == "reelScrollLock" }?["scrollingRegions"])
+            XCTAssertTrue(expandedRegions.contains { $0.contains(CGPoint(x: 0.5, y: 18.0 / 844)) },
+                          "The opaque expanded drawer retains its top-handle exception after comments load")
+            let gestures = try await evaluateJavaScriptWithCompletion(#"""
+              (()=>{
+                const fire=(target,type,y)=>{const event=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:190,clientY:y});target.dispatchEvent(event);return event.defaultPrevented;};
+                const media=document.getElementById('media');fire(media,'pointerdown',20);const blocked=fire(media,'pointermove',0);fire(media,'pointerup',0);
+                const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+                const handle=document.getElementById('handle');fire(handle,'pointerdown',18);fire(handle,'pointermove',218);fire(handle,'pointerup',218);
+                return {background:blocked,next:next.defaultPrevented,closed:window.starts===2&&window.closes===1&&document.getElementById('drawer').hidden};
+              })()
+              """#, in: webView) as? [String: Bool]
+            for key in ["background", "next", "closed"] { XCTAssertEqual(gestures?[key], true, key) }
+            try await Task.sleep(nanoseconds: 50_000_000)
+            XCTAssertTrue(SocialWebViewStore.instagramGestureRegions(bridge.messages.last { $0["type"] as? String == "reelScrollLock" }?["scrollingRegions"]).isEmpty)
+            webView.navigationDelegate = nil
+        }
     }
 
     @MainActor
@@ -5708,7 +5830,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("vigilMutedByPreference"))
         XCTAssertFalse(script.contains("window.__vigilAudioPreferred && hasGesture"))
         XCTAssertTrue(script.contains("data-vigil-instagram-comments-sheet=\"true\""))
-        XCTAssertTrue(script.contains("height: 52dvh !important"))
+        XCTAssertFalse(script.contains("height: 52dvh !important"))
         XCTAssertTrue(script.contains("const isInstagramCommentsDialog"))
         XCTAssertTrue(script.contains("normalizeCommentSheets()"))
         XCTAssertTrue(script.contains("const instagramCommentSheetFor"))
@@ -5723,7 +5845,7 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testInstagramCommentsUseABottomHalfSheet() async throws {
+    func testInstagramCommentsPreserveNativeSheetAndPlayingMedia() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.controlsScript(for: .instagram),
@@ -5782,7 +5904,7 @@ final class VigilSocialTests: XCTestCase {
                   dialog.style.cssText = 'position:fixed;inset:0;width:390px;height:844px';
                   const comments = document.createElement('section');
                   comments.id = 'comments';
-                  comments.style.cssText = 'position:absolute;inset:0;width:390px;height:844px;background:white';
+                  comments.style.cssText = 'position:absolute;left:0;bottom:0;width:390px;height:420px;transform:translate3d(0,0,0);background:white';
                   comments.innerHTML = '<h2>Comments</h2><textarea placeholder="Add a comment…"></textarea>';
                   dialog.append(media, comments);
                   document.body.append(dialog);
@@ -5821,7 +5943,7 @@ final class VigilSocialTests: XCTestCase {
         let bottom = try XCTUnwrap(geometry?["bottom"] as? Double)
         let viewport = try XCTUnwrap(geometry?["viewport"] as? Double)
         XCTAssertEqual(bottom, viewport, accuracy: 2)
-        XCTAssertGreaterThan(top, viewport * 0.4)
+        XCTAssertEqual(top, viewport - 420, accuracy: 2)
         XCTAssertGreaterThan(try XCTUnwrap(geometry?["outerHeight"] as? Double), 700)
         XCTAssertEqual(geometry?["outerSheet"] as? String, "")
         XCTAssertEqual(geometry?["playCalls"] as? Int, 1)

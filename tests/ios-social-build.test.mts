@@ -244,8 +244,13 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /height: 52dvh !important[\s\S]*?nestedCommentPanel[\s\S]*?!candidate\.contains\(largeMedia\)/u,
-  "a full-screen post dialog must keep its media outside the normalized half-height comments panel"
+  /nestedCommentPanel[\s\S]*?largeMedia && candidate\.contains\(largeMedia\)[\s\S]*?completeCommentPanel\(candidate, dialog\)/u,
+  "a full-screen post dialog must keep its media outside the complete comments drawer"
+);
+assert.doesNotMatch(
+  instagramStableAdapterSource,
+  /height: 52dvh !important/u,
+  "the comments guard must preserve the site's own drawer height and transform"
 );
 assert.match(
   instagramStableAdapterSource,

@@ -1866,7 +1866,7 @@ enum DOMAdapters {
 
     // Instagram is a fast-changing single-page app. Keep the production
     // companion deliberately small: hide restricted entry points before they
-    // can paint and normalize only the comments surface requested below, while
+    // can paint and identify foreground comments for gesture exceptions, while
     // leaving Instagram's remaining layout, media, and gestures under its control.
     // Shared media is one item, not an entry point into Instagram's snap feed.
     // Install before Instagram so its gesture/router listeners cannot consume
@@ -1992,17 +1992,18 @@ enum DOMAdapters {
         }
         html[data-vigil-single-reel]:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]),
         html[data-vigil-single-reel] body:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]),
-        html[data-vigil-single-reel] body *:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]),
-        html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"],
-        html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] * {
+        html[data-vigil-single-reel] body *:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]) {
           /* Instagram can restrict the ancestor path itself. An exception must
              override that path as well as our own rule. Native and event pan
              boundaries still contain every gesture starting in the Reel. */
           touch-action: auto !important;
           overscroll-behavior-y: contain !important;
         }
-        html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] {
-          overflow-y: auto !important;
+        html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"],
+        html[data-vigil-single-reel] [data-vigil-instagram-comments-sheet="true"] * {
+          /* Keep Instagram's own drag-handle touch-action and list scroller.
+             Making every descendant a native pan target cancels drawer drags. */
+          overscroll-behavior-y: contain !important;
         }
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"],
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] * {
@@ -3003,25 +3004,6 @@ enum DOMAdapters {
           display: none !important;
         }
         @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
-        [data-vigil-instagram-comments-sheet="true"] {
-          box-sizing: border-box !important;
-          position: fixed !important;
-          inset: auto 0 0 0 !important;
-          z-index: 2147483644 !important;
-          width: 100% !important;
-          min-width: 0 !important;
-          max-width: none !important;
-          height: 52vh !important;
-          height: 52dvh !important;
-          min-height: 0 !important;
-          max-height: 52vh !important;
-          max-height: 52dvh !important;
-          margin: 0 !important;
-          transform: none !important;
-          translate: none !important;
-          overflow: hidden !important;
-          border-radius: 18px 18px 0 0 !important;
-        }
         video {
           /* Instagram's web Reel/Story surface commonly fills a taller iPhone
              box with object-fit: cover, which discards the left and right of a
@@ -7185,25 +7167,6 @@ enum DOMAdapters {
             display: none !important;
           }
           @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
-          [data-vigil-instagram-comments-sheet="true"] {
-            box-sizing: border-box !important;
-            position: fixed !important;
-            inset: auto 0 0 0 !important;
-            z-index: 2147483644 !important;
-            width: 100% !important;
-            min-width: 0 !important;
-            max-width: none !important;
-            height: 52vh !important;
-            height: 52dvh !important;
-            min-height: 0 !important;
-            max-height: 52vh !important;
-            max-height: 52dvh !important;
-            margin: 0 !important;
-            transform: none !important;
-            translate: none !important;
-            overflow: hidden !important;
-            border-radius: 18px 18px 0 0 !important;
-          }
           video {
             max-width: 100% !important;
             object-fit: contain !important;
@@ -7371,15 +7334,45 @@ enum DOMAdapters {
         }
         return null;
       };
+      const commentPanelBounds = panel => {
+        if (panel.matches('article, [role="article"], main, [role="main"], nav, [role="navigation"]')) return false;
+        const style = getComputedStyle(panel);
+        if (style.pointerEvents === 'none') return false;
+        const box = panel.getBoundingClientRect();
+        if (box.width < 180 || box.height < 160 || box.bottom <= 0 || box.top >= innerHeight
+            || box.right <= 0 || box.left >= innerWidth) return false;
+        // A transparent full-screen portal/backdrop is not the drawer. Giving
+        // it an exception would also release the exposed Reel above the sheet.
+        const fillsViewport = box.top <= 1 && box.left <= 1
+          && box.right >= innerWidth - 1 && box.bottom >= innerHeight - 1;
+        const color = style.backgroundColor;
+        return !fillsViewport || /^rgb\([^/]*\)$/.test(color)
+          || /(?:,|\/)\s*(?:1(?:\.0+)?|100%)\s*\)$/.test(color);
+      };
+      const completeCommentPanel = (candidate, boundary) => {
+        let panel = commentPanelBounds(candidate) ? candidate : null;
+        if (candidate === boundary) return panel;
+        for (let parent = candidate.parentElement, depth = 0;
+          parent && parent !== document.body && depth < 12; parent = parent.parentElement, depth++) {
+          if (parent.matches('article, [role="article"], main, [role="main"], nav, [role="navigation"]')
+              || largeVisibleMediaIn(parent)) break;
+          const style = getComputedStyle(parent);
+          if (commentPanelBounds(parent) && (/^(fixed|absolute)$/.test(style.position)
+              || style.transform !== 'none' || parent.matches('[role="dialog"], [aria-modal="true"]'))) panel = parent;
+          if (parent === boundary) break;
+        }
+        return panel;
+      };
       const nestedCommentPanel = (dialog, heading, composer, largeMedia) => {
-        if (!heading || !largeMedia) return null;
+        if (!heading) return null;
         let candidate = heading.parentElement;
         let depth = 0;
-        while (candidate && candidate !== dialog && depth < 12) {
-          const box = candidate.getBoundingClientRect();
-          const containsComments = box.width >= 180 && box.height >= 160
-            && (!composer || candidate.contains(composer));
-          if (containsComments && !candidate.contains(largeMedia)) return candidate;
+        while (candidate && depth < 12) {
+          if (largeMedia && candidate.contains(largeMedia)) break;
+          if ((!composer || candidate.contains(composer)) && commentPanelBounds(candidate)) {
+            return completeCommentPanel(candidate, dialog);
+          }
+          if (candidate === dialog) break;
           candidate = candidate.parentElement;
           depth += 1;
         }
@@ -7397,12 +7390,11 @@ enum DOMAdapters {
         const heading = commentHeadingIn(dialog, Boolean(composer || hasCommentDetails));
         if (!explicitComments && !heading && !(composer && hasCommentDetails)) return null;
 
-        // Some post variants put the media and comments inside one full-screen
-        // dialog. Pin only the nested comments panel in that case; shrinking the
-        // outer dialog would crop the Reel that should continue behind the sheet.
+        // Mark the actual drawer, including its grip, while leaving all site
+        // dimensions, transforms, flex children and scroll containers intact.
         const largeMedia = largeVisibleMediaIn(dialog);
-        if (largeMedia) return nestedCommentPanel(dialog, heading, composer, largeMedia);
-        return dialog;
+        const panel = nestedCommentPanel(dialog, heading, composer, largeMedia);
+        return panel || (!largeMedia && commentPanelBounds(dialog) ? dialog : null);
       };
       const isInstagramCommentsDialog = (dialog) => Boolean(instagramCommentSheetFor(dialog));
       let commentPlaybackSnapshot = [];
@@ -7477,8 +7469,9 @@ enum DOMAdapters {
           for (let level = 0; portal && portal !== document.body && level < 12; level++, portal = portal.parentElement) {
             if (portal.matches(contentRoots) || largeVisibleMediaIn(portal)) break;
             if (/^(fixed|absolute)$/.test(getComputedStyle(portal).position)) {
-              knownAnonymousCommentSheets.add(candidate);
-              return candidate;
+              const panel = completeCommentPanel(candidate, portal);
+              if (panel) knownAnonymousCommentSheets.add(panel);
+              return panel;
             }
           }
         }
@@ -7502,6 +7495,11 @@ enum DOMAdapters {
           if ([...activeSheets].some(sheet => sheet.contains(composer))) continue;
           const sheet = anonymousCommentSheetFor(composer);
           if (sheet) activeSheets.add(sheet);
+        }
+        // Multiple enclosing dialogs can discover the same drawer at different
+        // depths. Only its complete root owns the exception, never nested boxes.
+        for (const sheet of activeSheets) {
+          if ([...activeSheets].some(parent => parent !== sheet && parent.contains(sheet))) activeSheets.delete(sheet);
         }
         document.querySelectorAll('[data-vigil-instagram-comments-sheet]').forEach((sheet) => {
           if (!activeSheets.has(sheet)) sheet.removeAttribute('data-vigil-instagram-comments-sheet');
@@ -9916,22 +9914,6 @@ enum DOMAdapters {
         a[href^="instagram:"] {
           display: none !important;
         }
-        [data-vigil-instagram-comments-sheet="true"] {
-          position: fixed !important;
-          inset: auto 0 0 0 !important;
-          width: 100% !important;
-          min-width: 0 !important;
-          max-width: none !important;
-          height: 52vh !important;
-          height: 52dvh !important;
-          min-height: 0 !important;
-          max-height: 52vh !important;
-          max-height: 52dvh !important;
-          margin: 0 !important;
-          transform: none !important;
-          overflow: hidden !important;
-          border-radius: 18px 18px 0 0 !important;
-        }
         html[data-vigil-instagram-route-feature="reels"] [data-vigil-instagram-reels-metadata="true"] {
           pointer-events: auto !important;
         }
@@ -10172,8 +10154,7 @@ enum DOMAdapters {
 
         // A full-screen Reel is itself commonly exposed as a dialog and contains
         // an Add-comment composer. Treating that one weak signal as the comments
-        // dialog collapses the entire Reel to the 52dvh sheet below, cropping the
-        // caption and moving the media toward the bottom of the screen.
+        // dialog would grant the Reel itself the comments gesture exception.
         const viewportWidth = Math.max(1, window.visualViewport?.width || innerWidth || 1);
         const viewportHeight = Math.max(1, window.visualViewport?.height || innerHeight || 1);
         let inspectedMedia = 0;
