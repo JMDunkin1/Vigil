@@ -43,6 +43,40 @@ The normal `npm run agent:update:social` transaction prepared phone release
 or installing because the previously paired iPhone became unreachable over USB
 and the local network. CoreDevice independently reported it unavailable.
 
-Reconnect the phone and rerun that same verified transaction. The fix is not yet
-installed or physically gesture-tested. No supervision, profile, signing,
-watchdog, or restriction setting was changed by this repair.
+At that point the fix was not installed or physically gesture-tested. No
+supervision, profile, signing, watchdog, or restriction setting was changed by
+this repair.
+
+## Follow-up after the installed build still failed
+
+A later verified deployment receipt, at 01:46 Eastern on October 27, records
+combined app 0.3.203 (206), including the first correction. The user subsequently
+reported that comments still would not work. The phone is currently unreachable,
+and the user will connect it later; the exact live failing layout has not been
+captured.
+
+Two additional iOS WebKit fixtures reproduced gaps in the existing implementation:
+
+- An independently positioned comments drawer without dialog semantics received
+  no scrolling/dismissal exception. Discovery now accepts a bounded title and
+  composer in such a portal after a Comments activation. Post/article/main/nav
+  roots and containers holding the large Reel media remain excluded. Previously
+  mounted drawers are rechecked after activation even if the site only toggles
+  `hidden`. A separate activation timestamp works when the Reel is paused; the
+  playback-resume debounce cannot erase the request. Unrequested anonymous markup
+  cannot acquire a panel exception.
+- A comments portal fading in was measured while transparent, leaving the native
+  pan exception empty after it became visible. Fading out could retain its old
+  exception. Transition/animation completion and cancellation now refresh both
+  discovery and the native foreground geometry, keeping the Reel lock active.
+
+The first versions of the two new fixtures failed five assertions against the
+previous implementation. With the follow-up, all 19 selected iOS tests passed,
+with no failures or skips. The build, lint (503 sources), three runtime social
+build/container/route test files, and whitespace checks also passed. The tests
+cover the new paths alongside the earlier background, route, media, keyboard,
+carousel, pinch, and recipient protections.
+
+This follow-up still requires the normal verified app-and-policy update and
+inspection/retesting on the connected phone. Passing fixtures establish the
+reproduced paths; they do not establish which layout is failing on the phone.

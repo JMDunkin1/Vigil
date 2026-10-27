@@ -2718,6 +2718,14 @@ enum DOMAdapters {
       window.addEventListener('resize', reconcile, true);
       window.visualViewport?.addEventListener('resize', reconcile);
       window.visualViewport?.addEventListener('scroll', reconcile);
+      for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
+        window.addEventListener(type, event => {
+          const target = event.target, sheets = '[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]';
+          // Opacity/transform animations change foreground geometry without a
+          // DOM mutation. Never retain an opening or closing frame's exception.
+          if (target instanceof Element && (target.closest(sheets) || target.querySelector(sheets))) reconcile();
+        }, true);
+      }
       new MutationObserver(reconcile).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'data-vigil-instagram-comments-sheet']
       });
@@ -7377,12 +7385,13 @@ enum DOMAdapters {
         }
         return null;
       };
+      const instagramCommentComposerIn = root => root.querySelector(commentComposerSelector)
+        || [...root.querySelectorAll('[contenteditable="true"]')].slice(0, 16).find(editor =>
+          /^(add|write) a comment[.\u2026]*$/i.test(normalizedInstagramLabel(editor)));
       const instagramCommentSheetFor = (dialog) => {
         if (!(dialog instanceof Element) || !visibleInstagramElement(dialog)) return null;
         const ownLabel = normalizedInstagramLabel(dialog);
-        const composer = dialog.querySelector(commentComposerSelector)
-          || [...dialog.querySelectorAll('[contenteditable="true"]')].slice(0, 16).find(editor =>
-            /^(add|write) a comment[.\u2026]*$/i.test(normalizedInstagramLabel(editor)));
+        const composer = instagramCommentComposerIn(dialog);
         const explicitComments = ownLabel === 'comments' || ownLabel.startsWith('comments ');
         const hasCommentDetails = Boolean(dialog.querySelector(commentDetailSelector));
         const heading = commentHeadingIn(dialog, Boolean(composer || hasCommentDetails));
@@ -7399,6 +7408,7 @@ enum DOMAdapters {
       let commentPlaybackSnapshot = [];
       let commentPlaybackSnapshotAt = 0;
       let commentPlaybackRestoreFor = 0;
+      let commentSurfaceRequestedAt = 0;
       const commentTrigger = (target) => {
         const control = target?.closest?.('button, a, [role="button"]');
         if (!control) return null;
@@ -7414,6 +7424,10 @@ enum DOMAdapters {
       const rememberCommentPlayback = (event) => {
         if (!commentTrigger(event.target)) return;
         const now = performance.now();
+        commentSurfaceRequestedAt = now;
+        // React can reveal an already-mounted anonymous drawer using only a
+        // class/hidden change. Recheck after the site's activation completes.
+        queueMicrotask(normalizeCommentSheets);
         const playingMedia = [...document.querySelectorAll('video')].filter((media) => (
           visibleInstagramElement(media) && !media.paused && !media.ended
         ));
@@ -7445,6 +7459,31 @@ enum DOMAdapters {
         // beyond the opening transition.
         [0, 80, 240, 600].forEach((delay) => setTimeout(restoreCommentPlayback, delay));
       };
+      const knownAnonymousCommentSheets = new WeakSet();
+      const anonymousCommentSheetFor = composer => {
+        if (!visibleInstagramElement(composer) || composer.closest('[aria-hidden="true"], [hidden], [inert]')) return null;
+        const requested = commentSurfaceRequestedAt > 0 && performance.now() - commentSurfaceRequestedAt < 5000;
+        const contentRoots = 'article, [role="article"], main, [role="main"], nav, [role="navigation"]';
+        let candidate = composer.parentElement;
+        for (let depth = 0; candidate && candidate !== document.body && depth < 12; depth++, candidate = candidate.parentElement) {
+          if (candidate.matches(contentRoots) || largeVisibleMediaIn(candidate)) break;
+          if (!requested && !knownAnonymousCommentSheets.has(candidate)) continue;
+          const box = candidate.getBoundingClientRect();
+          if (box.width < 180 || box.height < 160 || box.bottom <= 0 || box.top >= innerHeight
+              || box.right <= 0 || box.left >= innerWidth || !commentHeadingIn(candidate, true)) continue;
+          // Anonymous drawers still need an independently positioned portal.
+          // A post caption/composer cannot exempt the containing media viewer.
+          let portal = candidate;
+          for (let level = 0; portal && portal !== document.body && level < 12; level++, portal = portal.parentElement) {
+            if (portal.matches(contentRoots) || largeVisibleMediaIn(portal)) break;
+            if (/^(fixed|absolute)$/.test(getComputedStyle(portal).position)) {
+              knownAnonymousCommentSheets.add(candidate);
+              return candidate;
+            }
+          }
+        }
+        return null;
+      };
       const normalizeCommentSheets = () => {
         const activeSheets = new Set();
         let inspected = 0;
@@ -7455,6 +7494,14 @@ enum DOMAdapters {
           const sheet = instagramCommentSheetFor(dialog);
           if (sheet) activeSheets.add(sheet);
           if (inspected >= 16) break;
+        }
+        const composers = document.querySelectorAll(`${commentComposerSelector}, [contenteditable="true"]`);
+        for (const composer of [...composers].slice(0, 24)) {
+          if (!composer.matches(commentComposerSelector)
+              && !/^(add|write) a comment[.\u2026]*$/i.test(normalizedInstagramLabel(composer))) continue;
+          if ([...activeSheets].some(sheet => sheet.contains(composer))) continue;
+          const sheet = anonymousCommentSheetFor(composer);
+          if (sheet) activeSheets.add(sheet);
         }
         document.querySelectorAll('[data-vigil-instagram-comments-sheet]').forEach((sheet) => {
           if (!activeSheets.has(sheet)) sheet.removeAttribute('data-vigil-instagram-comments-sheet');
@@ -7467,6 +7514,13 @@ enum DOMAdapters {
       document.addEventListener('pointerdown', rememberCommentPlayback, true);
       document.addEventListener('touchstart', rememberCommentPlayback, { capture: true, passive: true });
       document.addEventListener('click', rememberCommentPlayback, true);
+      for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
+        document.addEventListener(type, event => {
+          const target = event.target;
+          if (target instanceof Element && (target.matches(commentComposerSelector)
+              || target.querySelector(`${commentComposerSelector}, [contenteditable="true"]`))) normalizeCommentSheets();
+        }, true);
+      }
 
       // Content-only pinch: a fixed starting rectangle and finger IDs keep
       // the same point beneath the fingers while the page itself stays still.

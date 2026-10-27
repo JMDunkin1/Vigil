@@ -570,6 +570,106 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramAnonymousCommentsPortalKeepsScrollAndDismissal() async throws {
+        let webView = try await instagramRepairFixture(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+          html,body{margin:0;height:100%}#viewer{position:fixed;inset:0}video{width:390px;height:700px}
+          #comments{position:fixed;bottom:0;width:390px;height:400px;background:white}
+          #rows{height:1600px}#list{height:270px;overflow-y:auto}
+          </style><script>window.fetch=async()=>({ok:true,json:async()=>({})});window.moves=0;window.closes=0;</script>
+          </head><body><div role="dialog" id="viewer"><video id="media" src="/original.mp4"></video>
+          <button id="open-comments" aria-label="Comments">Comments</button>
+          <button id="next" aria-label="Next reel">Next</button><button id="close" aria-label="Close comments">Close</button></div>
+          <section id="comments" hidden><h2>Comments</h2><div id="list"><div id="rows">Comment rows</div></div>
+          <textarea placeholder="Add a comment…"></textarea></section>
+          <article id="caption"><h2>Comments</h2><textarea placeholder="Add a comment…"></textarea></article>
+          <script>
+          document.getElementById('open-comments').onclick=()=>document.getElementById('comments').hidden=false;
+          document.getElementById('list').onpointermove=()=>window.moves++;
+          document.getElementById('close').onpointerup=()=>{window.closes++;document.getElementById('comments').remove();};
+          </script></body></html>
+          """#, path: "/reel/Shared123/")
+        let fixtureWindow = UIWindow(frame: webView.frame)
+        fixtureWindow.rootViewController = UIViewController()
+        fixtureWindow.rootViewController?.view.addSubview(webView)
+        fixtureWindow.isHidden = false
+        defer { fixtureWindow.isHidden = true }
+        func evaluate(_ script: String, stage: String) async throws -> Any? {
+            do { return try await evaluateJavaScriptWithCompletion(script, in: webView) }
+            catch { throw NSError(domain: "CommentsPortalFixture", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "\(stage): \(error)"]) }
+        }
+        _ = try await evaluate("document.getElementById('comments').hidden=false;document.body.append(document.createElement('i'));true;", stage: "unrequested reveal")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let unrequested = try await evaluate("document.getElementById('comments').hasAttribute('data-vigil-instagram-comments-sheet')", stage: "unrequested check") as? Bool
+        XCTAssertEqual(unrequested, false, "Anonymous markup needs an explicit Comments activation before becoming a pan exception")
+        _ = try await evaluate("document.getElementById('comments').hidden=true;true;", stage: "reset drawer")
+        _ = try await evaluate("document.getElementById('open-comments').click();true;", stage: "Comments activation")
+        try await waitForJavaScriptCondition("document.getElementById('comments').dataset.vigilInstagramCommentsSheet === 'true'", in: webView)
+        let state = try await evaluate(#"""
+          (()=>{
+            const fire=(target,type,y)=>{const event=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:y});target.dispatchEvent(event);return event.defaultPrevented;};
+            const sheet=document.getElementById('comments'),list=document.getElementById('list');
+            const marked=sheet.dataset.vigilInstagramCommentsSheet==='true';
+            fire(list,'pointerdown',650);const scrolling=fire(list,'pointermove',500);fire(list,'pointerup',500);
+            const media=document.getElementById('media');fire(media,'pointerdown',200);const background=fire(media,'pointermove',50);fire(media,'pointerup',50);
+            const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+            const close=document.getElementById('close');fire(close,'pointerdown',300);fire(close,'pointerup',300);
+            return {marked,scrolling:!scrolling&&window.moves===1,background,nextBlocked:next.defaultPrevented,
+              closed:window.closes===1,captionExcluded:!document.getElementById('caption').hasAttribute('data-vigil-instagram-comments-sheet'),
+              viewerExcluded:!document.getElementById('viewer').hasAttribute('data-vigil-instagram-comments-sheet')};
+          })()
+          """#, stage: "comments interaction") as? [String: Bool]
+        for key in ["marked", "scrolling", "background", "nextBlocked", "closed", "captionExcluded", "viewerExcluded"] {
+            XCTAssertEqual(state?[key], true, key)
+        }
+    }
+
+    @MainActor
+    func testInstagramCommentsNativeRegionRefreshesAfterPortalFade() async throws {
+        let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
+        controller.add(bridge, name: "vigil")
+        controller.addUserScript(WKUserScript(source: "window.__vigilDocumentID='comments-fade';" + DOMAdapters.instagramSingleReelGuard,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let fixtureWindow = UIWindow(frame: webView.frame)
+        fixtureWindow.rootViewController = UIViewController()
+        fixtureWindow.rootViewController?.view.addSubview(webView)
+        fixtureWindow.isHidden = false
+        defer { fixtureWindow.isHidden = true; controller.removeScriptMessageHandler(forName: "vigil") }
+        let loaded = expectation(description: "Comments opening animation")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+          html,body{margin:0;height:100%}video{width:390px;height:700px}
+          #portal{position:fixed;inset:0;opacity:0;transition:opacity 120ms linear}
+          #comments{position:absolute;bottom:0;width:390px;height:360px;background:white}
+          </style></head><body><video src="/original.mp4"></video><div id="portal">
+          <section id="comments" data-vigil-instagram-comments-sheet="true"><div style="height:1500px">Comments</div></section>
+          </div></body></html>
+          """#, baseURL: URL(string: "https://www.instagram.com/reel/Shared123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        try await Task.sleep(nanoseconds: 200_000_000)
+        XCTAssertTrue(SocialWebViewStore.instagramGestureRegions(bridge.messages.last?["scrollingRegions"]).isEmpty)
+        _ = try await webView.evaluateJavaScript("document.getElementById('portal').style.opacity='1';true;")
+        try await Task.sleep(nanoseconds: 450_000_000)
+        let opened = bridge.messages.last { $0["type"] as? String == "reelScrollLock" }
+        XCTAssertEqual(SocialWebViewStore.instagramGestureRegions(opened?["scrollingRegions"]).count, 1,
+                       "A fade changes presentation without another DOM mutation; native scrolling must be refreshed at completion")
+        XCTAssertEqual(opened?["locked"] as? Bool, true)
+        _ = try await webView.evaluateJavaScript("document.getElementById('portal').style.opacity='0';true;")
+        try await Task.sleep(nanoseconds: 450_000_000)
+        let closed = bridge.messages.last { $0["type"] as? String == "reelScrollLock" }
+        XCTAssertTrue(SocialWebViewStore.instagramGestureRegions(closed?["scrollingRegions"]).isEmpty,
+                      "A retained invisible portal must lose its native scrolling exception after fading out")
+        XCTAssertEqual(closed?["locked"] as? Bool, true)
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
     func testInstagramSharedViewerContainsCaptionPullsWithoutChangingPlayerLayout() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
