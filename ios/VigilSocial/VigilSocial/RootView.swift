@@ -440,21 +440,6 @@ struct RootView: View {
                 )
                     .id(ObjectIdentifier(primaryWebView))
                     .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
-                if service == .snapchat {
-                    HStack(spacing: 12) {
-                        SnapchatPhotoSaveButton(enabled: !store.snapchatExportInProgress && isServiceVisible && scenePhase == .active) {
-                            Task { await store.saveOpenedSnapchatPhoto() }
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                        Spacer(minLength: 0)
-                        Text(store.snapchatPhotoSaveMessage)
-                            .font(.system(size: 11))
-                            .lineLimit(2)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(height: 44)
-                    .background(surfaceColor)
-                }
             }
 
             healthOverlay(
@@ -531,24 +516,6 @@ struct RootView: View {
             )
         }
     }
-}
-
-private struct SnapchatPhotoSaveButton: UIViewRepresentable {
-    let enabled: Bool
-    let action: () -> Void
-
-    func makeUIView(context: Context) -> UIButton {
-        let button = UIButton(type: .system)
-        button.setTitle("Save to Camera Roll", for: .normal)
-        button.setImage(UIImage(systemName: "square.and.arrow.down"), for: .normal)
-        button.titleLabel?.font = .systemFont(ofSize: 13, weight: .semibold)
-        button.accessibilityIdentifier = "snapchat-save-camera-roll"
-        button.accessibilityHint = "Save the currently opened photo to Photos."
-        button.addAction(UIAction { _ in action() }, for: .touchUpInside)
-        return button
-    }
-
-    func updateUIView(_ button: UIButton, context: Context) { button.isEnabled = enabled }
 }
 
 private struct InstagramSessionCounter: View {

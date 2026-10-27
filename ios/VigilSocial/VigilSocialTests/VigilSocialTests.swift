@@ -1705,6 +1705,30 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatDoesNotReserveAPermanentPhotoSaveBar() async throws {
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            websiteDataStore: .nonPersistent())
+        let host = UIHostingController(rootView: RootView(store: store, isServiceVisible: false)
+            .environment(\.scenePhase, .inactive))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(200))
+        window.layoutIfNeeded()
+        host.view.layoutIfNeeded()
+        func saveBar(in view: UIView) -> UIView? {
+            if view.accessibilityIdentifier == "snapchat-save-camera-roll" { return view }
+            return view.subviews.lazy.compactMap { saveBar(in: $0) }.first
+        }
+        XCTAssertNil(saveBar(in: host.view), "Saving belongs on the opened photo, without a permanent native bar")
+        let scripts = store.webView(for: .snapchat).configuration.userContentController.userScripts
+        XCTAssertFalse(scripts.contains { $0.source.contains("__vigilSnapchatNativeSaveControl") },
+            "The photo's own save button must remain visible")
+    }
+
+    @MainActor
     func testSnapchatCameraPermissionIsRememberedAndConfinedToChat() async throws {
         for host in ["www.snapchat.com", "snapchat.com", "web.snapchat.com"] {
             let url = URL(string: "https://\(host)/web/fixture-conversation")!
@@ -1773,6 +1797,8 @@ final class VigilSocialTests: XCTestCase {
         Self.retainedCompanionValidationFixtures.append((window, webView))
         webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
         try await waitForJavaScriptCondition("document.documentElement.dataset.vigilPageVerdict === 'safe'", in: webView)
+        let feedHasSaveButton = try await webView.evaluateJavaScript("!!document.querySelector('.vigil-snap-export')") as? Bool
+        XCTAssertEqual(feedHasSaveButton, false)
         _ = try await webView.callAsyncJavaScript("globalThis.fetch=async url=>({status:200,url}); return true;",
             arguments: [:], in: nil, contentWorld: .defaultClient)
         let allowed = await store.confirmServiceAccess()
@@ -1786,6 +1812,11 @@ final class VigilSocialTests: XCTestCase {
             document.getElementById('fixture-snap-image').src=c.toDataURL('image/png');
             """)
         try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-export') && document.getElementById('fixture-snap-image').dataset.vigilMediaVerdict === 'safe'", in: webView)
+        let saveButtonVisible = try await webView.evaluateJavaScript("""
+            (()=>{const b=document.querySelector('.vigil-snap-export'),r=b.getBoundingClientRect();
+              return r.width>0 && r.height>=44 && b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()
+            """) as? Bool
+        XCTAssertEqual(saveButtonVisible, true, "The photo-specific save button must remain tappable")
         webView.becomeFirstResponder()
         _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-export').click()")
         try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-export').textContent === 'Saved to Camera Roll'", in: webView)
@@ -1891,15 +1922,21 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testSnapchatPortraitCaptureKeepsTheWholeSensorFrame() async throws {
+    func testSnapchatGeneratedPortraitStreamKeepsTheWholeFrame() async throws {
         let controller = WKUserContentController()
+        let obsoleteBridge = FixtureScriptMessageHandler()
+        controller.add(obsoleteBridge, name: "vigilSnapchatCamera")
         controller.addUserScript(WKUserScript(source: #"""
+            window.fixtureSensorStreams=[];window.fixtureSensorTimers=[];
+            window.fixtureCameras=[{kind:'videoinput',deviceId:'webkit-front'},
+              {kind:'videoinput',deviceId:'webkit-back'}];
             Object.defineProperty(navigator, 'mediaDevices', { value: {
+              enumerateDevices: async () => fixtureCameras,
               getSupportedConstraints: () => ({ resizeMode: true }),
               getUserMedia: async constraints => {
                 window.fixtureCameraRequest=constraints;
-                // Layout fixture only. The AVFoundation bridge and switching are
-                // exercised independently in SnapchatCameraTests.
+                // Generated-stream layout fixture. Physical camera framing must
+                // be checked on a phone; this does not emulate its sensor.
                 const canvas=document.createElement('canvas');canvas.width=900;canvas.height=1200;
                 const g=canvas.getContext('2d');g.fillStyle='#1256ab';g.fillRect(0,0,900,1200);
                 g.fillStyle='#ffee00';g.fillRect(0,0,108,1200);
@@ -1908,10 +1945,13 @@ final class VigilSocialTests: XCTestCase {
                 window.fixtureSensorStream=canvas.captureStream(5);
                 // A physical camera keeps delivering frames when the first
                 // consumer detaches. Keep this generated stream moving too.
-                window.fixtureSensorTimer=setInterval(()=>{g.fillStyle='#1256ab';g.fillRect(108,0,684,1200)},100);
+                fixtureSensorTimers.push(setInterval(()=>{g.fillStyle='#1256ab';g.fillRect(108,0,684,1200)},100));
+                fixtureSensorStreams.push(fixtureSensorStream);
                 return fixtureSensorStream;
               }
             }});
+            window.fixtureCaptureAPI=navigator.mediaDevices.getUserMedia;
+            window.fixtureEnumerateAPI=navigator.mediaDevices.enumerateDevices;
             """#, injectionTime: .atDocumentStart, forMainFrameOnly: true))
         controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
             injectionTime: .atDocumentEnd, forMainFrameOnly: true))
@@ -1932,11 +1972,25 @@ final class VigilSocialTests: XCTestCase {
         _ = try await webView.callAsyncJavaScript("""
             fixtureOpenSnap();fixtureOpenReplyCamera();
             document.documentElement.dataset.vigilPageVerdict='safe';
-            const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{width:{ideal:406},height:{ideal:720}}});
+            const [preflight,stream]=await Promise.all([
+              navigator.mediaDevices.getUserMedia({audio:false,video:true}),
+              navigator.mediaDevices.getUserMedia({audio:false,video:{deviceId:{exact:'webkit-back'},width:{ideal:406},height:{ideal:720}}})
+            ]);
+            preflight.getTracks().forEach(track=>track.stop());
             const video=document.getElementById('local-video');video.dataset.vigilMediaVerdict='safe';
             video.srcObject=stream;await video.play();
             """, arguments: [:], in: nil, contentWorld: .page)
         try await waitForJavaScriptCondition("document.getElementById('local-video').videoHeight === 1200", in: webView)
+        let originalCapture = try await webView.callAsyncJavaScript("""
+            return [navigator.mediaDevices.getUserMedia===fixtureCaptureAPI,
+              navigator.mediaDevices.enumerateDevices===fixtureEnumerateAPI,
+              await navigator.mediaDevices.enumerateDevices()===fixtureCameras,
+              document.getElementById('local-video').srcObject===fixtureSensorStreams[1],
+              fixtureSensorStreams[1].getVideoTracks()[0].readyState==='live',
+              fixtureCameraRequest.video.deviceId.exact==='webkit-back'];
+            """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+        XCTAssertEqual(originalCapture, Array(repeating: true, count: 6))
+        XCTAssertTrue(obsoleteBridge.messages.isEmpty, "Camera startup must never wait for the removed native backend")
         for width in [320, 390, 430] {
             webView.frame.size.width = CGFloat(width)
             try await waitForJavaScriptCondition("innerWidth === \(width)", in: webView)
@@ -1954,12 +2008,12 @@ final class VigilSocialTests: XCTestCase {
             if width == 390 {
                 let snapshot = try await webView.takeSnapshot(configuration: nil)
                 let attachment = XCTAttachment(image: snapshot)
-                attachment.name = "Snapchat portrait camera full frame"
+                attachment.name = "Snapchat generated portrait stream full frame"
                 attachment.lifetime = .keepAlways
                 add(attachment)
             }
         }
-        _ = try await webView.evaluateJavaScript("clearInterval(fixtureSensorTimer);fixtureSensorStream.getTracks().forEach(track=>track.stop())")
+        _ = try await webView.evaluateJavaScript("fixtureSensorTimers.forEach(clearInterval);fixtureSensorStreams.forEach(stream=>stream.getTracks().forEach(track=>track.stop()))")
     }
 
     @MainActor
@@ -2053,7 +2107,7 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("!document.querySelector('[data-vigil-snap-media]') && getComputedStyle(document.querySelector('.ChLAv')).visibility === 'visible'", in: webView)
     }
 
-    static let snapchatMobileShellFixture = #"""
+    private static let snapchatMobileShellFixture = #"""
     <!doctype html><html theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
     /* Structural fixture from Snapchat Web client 9a9dc856. Fictional contacts;

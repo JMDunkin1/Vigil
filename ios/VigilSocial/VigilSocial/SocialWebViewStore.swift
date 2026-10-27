@@ -416,9 +416,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
     private var snapchatRenderSnapshots: [[String: Any]] = []
-    @Published private(set) var snapchatExportInProgress = false
-    @Published private(set) var snapchatPhotoSaveMessage = ""
-    private var snapchatCameraBridge: SnapchatCameraBridge?
+    private var snapchatExportInProgress = false
     private(set) var linkedInApplePopup: LinkedInApplePopupController?
     var openSocialLink: ((URL) -> Void)?
     var accessRestriction: (() -> Bool)?
@@ -750,20 +748,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
 
         let configuration = WKWebViewConfiguration()
-        if service == .snapchat {
-            controller.addUserScript(WKUserScript(source: "window.__vigilSnapchatNativeSaveControl = true;",
-                injectionTime: .atDocumentStart, forMainFrameOnly: true))
-            let camera = SnapchatCameraBridge()
-            camera.isAllowed = { [weak self] documentID in
-                guard let self else { return false }
-                return self.playbackServiceIsVisible && !self.playbackIsBackgrounded
-                    && !self.mediaPlaybackIsSuspended && self.hasRecentConfirmedAccess
-                    && self.accessRestriction?() != true
-                    && Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: self.mainDocumentIDs[.snapchat])
-            }
-            controller.addScriptMessageHandler(camera, contentWorld: .page, name: SnapchatCameraBridge.handlerName)
-            snapchatCameraBridge = camera
-        }
         configuration.userContentController = controller
         configuration.websiteDataStore = websiteDataStore ?? .default()
         configuration.allowsAirPlayForMediaPlayback = false
@@ -795,7 +779,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             : WKWebView(frame: .zero, configuration: configuration)
         if service == .snapchat {
             webView.customUserAgent = SnapchatWebCompatibility.desktopSafariUserAgent
-            snapchatCameraBridge?.webView = webView
         }
         // RootView applies the exact SwiftUI environment style once the view
         // is mounted, but the first Instagram navigation begins before that
@@ -952,7 +935,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func suspendAllMedia(relinquishExternalPlayback: Bool = true) {
-        snapchatCameraBridge?.suspend()
         stopYouTubeExternalPlayback()
         externalPlaybackMayRelinquish = SocialMediaSuspensionPolicy.relinquishesGlobalAudio(
             requested: relinquishExternalPlayback, serviceIsVisible: playbackServiceIsVisible)
@@ -1441,18 +1423,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   let data = Data(base64Encoded: encoded), !data.isEmpty,
                   data.count <= SnapchatMediaPolicy.maximumMediaBytes else { return }
             snapchatExportInProgress = true
-            snapchatPhotoSaveMessage = "Saving…"
             Task { [weak self, weak webView] in
                 guard let self, let webView else { return }
                 defer { self.snapchatExportInProgress = false }
                 await self.saveSnapchatMedia(data, mimeType: mimeType, requestID: requestID,
                                             documentID: documentID, in: webView)
             }
-        case "snapchatExportStatus":
-            guard service == .snapchat, frame.isMainFrame,
-                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
-                  body["success"] as? Bool == false else { return }
-            snapchatPhotoSaveMessage = "Could not save. Open the photo and try again."
         case "chromeColor":
             guard service == .snapchat, frame.isMainFrame,
                   let rgb = body["rgb"] as? [Double], rgb.count == 3,
@@ -1774,7 +1750,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     private func cancelDocumentWork(for service: SocialService) {
-        if service == .snapchat { snapchatCameraBridge?.suspend() }
         if service == .youtube { permittedYouTubeVideoFrameCheckTimes.removeAll() }
         let activeKeys = Set(
             mediaClassificationTasks.keys.filter { $0.service == service }
@@ -2542,21 +2517,9 @@ enum SnapchatMediaPolicy {
 }
 
 extension SocialWebViewStore {
-    func saveOpenedSnapchatPhoto() async {
-        guard fixedService == .snapchat, playbackServiceIsVisible, !playbackIsBackgrounded,
-              accessRestriction?() != true, let webView = webViews[.snapchat],
-              SnapchatMediaPolicy.isTrustedDocument(webView.url) else { return }
-        await prepareForegroundInteraction()
-        let message = (try? await webView.callAsyncJavaScript(
-            "return window.__vigilSaveSnapchatPhoto?.() ?? 'Open a photo first';",
-            arguments: [:], in: nil, contentWorld: .page)) as? String
-        if let message, !message.isEmpty { snapchatPhotoSaveMessage = message }
-    }
-
     private func saveSnapchatMedia(_ data: Data, mimeType: String, requestID: String,
                                    documentID: String, in webView: WKWebView) async {
         func complete(_ success: Bool, _ detail: String = "Could not save. Try again") async {
-            snapchatPhotoSaveMessage = success ? "Saved to Camera Roll" : detail
             _ = try? await webView.callAsyncJavaScript(
                 "window.__vigilCompleteSnapchatExport?.(id, success, detail);",
                 arguments: ["id": requestID, "success": success, "detail": detail], in: nil, contentWorld: .page)
