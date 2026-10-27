@@ -2860,9 +2860,31 @@ enum DOMAdapters {
         [data-vigil-instagram-story-relationship="pending"] {
           display: none !important;
         }
+        [data-vigil-instagram-story-relationship="refreshing"],
+        [data-vigil-instagram-story-relationship="refreshing"] * {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
         [data-vigil-instagram-feed-region="closed"] {
           display: none !important;
           content-visibility: hidden !important;
+        }
+        [data-vigil-instagram-feed-layout="true"] {
+          height: auto !important;
+          min-height: 0 !important;
+          flex-basis: auto !important;
+        }
+        [data-vigil-instagram-feed-gap="true"] {
+          height: 0 !important;
+          min-height: 0 !important;
+          max-height: 0 !important;
+          margin-block: 0 !important;
+          padding-block: 0 !important;
+          overflow: hidden !important;
+        }
+        [data-vigil-instagram-feed-layout="true"][data-vigil-instagram-feed-region="refreshing"] {
+          height: var(--vigil-instagram-feed-height, auto) !important;
+          min-height: var(--vigil-instagram-feed-height, 0px) !important;
         }
         [data-vigil-instagram-feed-region="refreshing"],
         [data-vigil-instagram-feed-region="refreshing"] * {
@@ -7006,9 +7028,31 @@ enum DOMAdapters {
           [data-vigil-instagram-story-relationship="pending"] {
             display: none !important;
           }
+          [data-vigil-instagram-story-relationship="refreshing"],
+          [data-vigil-instagram-story-relationship="refreshing"] * {
+            visibility: hidden !important;
+            pointer-events: none !important;
+          }
           [data-vigil-instagram-feed-region="closed"] {
             display: none !important;
             content-visibility: hidden !important;
+          }
+          [data-vigil-instagram-feed-layout="true"] {
+            height: auto !important;
+            min-height: 0 !important;
+            flex-basis: auto !important;
+          }
+          [data-vigil-instagram-feed-gap="true"] {
+            height: 0 !important;
+            min-height: 0 !important;
+            max-height: 0 !important;
+            margin-block: 0 !important;
+            padding-block: 0 !important;
+            overflow: hidden !important;
+          }
+          [data-vigil-instagram-feed-layout="true"][data-vigil-instagram-feed-region="refreshing"] {
+            height: var(--vigil-instagram-feed-height, auto) !important;
+            min-height: var(--vigil-instagram-feed-height, 0px) !important;
           }
           [data-vigil-instagram-feed-region="refreshing"],
           [data-vigil-instagram-feed-region="refreshing"] * {
@@ -8722,7 +8766,13 @@ enum DOMAdapters {
         if (control.closest('ul, [role="list"], [aria-label="Stories" i]')) return true;
         let ancestor = control.parentElement;
         for (let depth = 0; ancestor && ancestor !== document.body && depth < 6; depth += 1) {
-          if (/auto|scroll/.test(getComputedStyle(ancestor).overflowX)
+          // A fully watched tray can start clipped instead of scrollable.
+          // Its grey buttons often have only a username, without "story" in
+          // the label. Recognize that compact portrait row before any gesture.
+          const overflow = getComputedStyle(ancestor).overflowX;
+          if ((/auto|scroll/.test(overflow) || (/hidden|clip/.test(overflow)
+                && ancestor.getBoundingClientRect().height <= 200
+                && !ancestor.querySelector('article, [role="article"], nav, [role="navigation"]')))
               && ancestor.querySelectorAll('img[alt*="profile picture" i]').length > 1) return true;
           ancestor = ancestor.parentElement;
         }
@@ -8854,6 +8904,10 @@ enum DOMAdapters {
         // leading profile slot throughout the viewer's lifetime.
         if (!isFeed) return;
         const rail = isFeed ? storyRailFor(controls) : null;
+        // Do not collapse/rebuild native slots under WebKit's active touch or
+        // momentum. Recycled authors are concealed immediately by the classifier;
+        // the existing slot geometry lasts until the rail settles.
+        if (rail && movingStoryRails.has(rail)) return;
         const viewportState = rail instanceof HTMLElement
           ? (Math.abs(rail.scrollLeft) <= 1 ? { atStart: true, scrollLeft: rail.scrollLeft }
             : storyRailViewportStates.get(rail) || lastStoryRailViewportState)
@@ -9022,20 +9076,34 @@ enum DOMAdapters {
         }
         const username = storyAuthor(control);
         if (control.dataset.vigilInstagramStoryAuthor === username
-            && ['friend', 'other', 'pending', 'unavailable'].includes(
+            && ['friend', 'other', 'pending', 'refreshing', 'unavailable'].includes(
               control.dataset.vigilInstagramStoryRelationship || ''
             )) return;
+        const rail = control.closest('[data-vigil-instagram-story-rail="true"]');
+        const wasVisible = ['friend', 'self', 'refreshing'].includes(
+          control.dataset.vigilInstagramStoryRelationship
+        );
+        const pending = wasVisible && rail && movingStoryRails.has(rail) ? 'refreshing' : 'pending';
         control.dataset.vigilInstagramStoryAuthor = username;
         stagedHomeStoryRelationships.delete(control);
         if (!username) {
-          control.dataset.vigilInstagramStoryRelationship = 'pending';
-          item.dataset.vigilInstagramStoryRelationship = 'pending';
+          control.dataset.vigilInstagramStoryRelationship = pending;
+          item.dataset.vigilInstagramStoryRelationship = pending;
           stagedHomeStoryRelationships.set(control, { username: '', relationship: 'other' });
           queueMicrotask(flushHomeStoryRelationships);
           return;
         }
-        control.dataset.vigilInstagramStoryRelationship = 'pending';
-        item.dataset.vigilInstagramStoryRelationship = 'pending';
+        const cached = isInformationalAccount(username) ? true : friendshipCache.get(username);
+        if (typeof cached === 'boolean' && !(rail && movingStoryRails.has(rail))) {
+          // The same viewer-scoped proof already authorizes this account. Avoid
+          // concealing watched portraits again on every mount/relaunch.
+          const relationship = cached ? 'friend' : 'other';
+          control.dataset.vigilInstagramStoryRelationship = relationship;
+          item.dataset.vigilInstagramStoryRelationship = relationship;
+          return;
+        }
+        control.dataset.vigilInstagramStoryRelationship = pending;
+        item.dataset.vigilInstagramStoryRelationship = pending;
         void canViewAccount(username).then((mutual) => {
           if (!control.isConnected || storyAuthor(control) !== username
               || control.dataset.vigilInstagramStoryAuthor !== username) return;
@@ -9287,6 +9355,65 @@ enum DOMAdapters {
         }
         return '';
       };
+      const homeFeedRegionHeights = new WeakMap();
+      const clearHomeFeedRegionLayout = (region) => {
+        [...region.querySelectorAll('[data-vigil-instagram-feed-layout], [data-vigil-instagram-feed-gap]'), region]
+          .forEach((node) => {
+            node.removeAttribute('data-vigil-instagram-feed-layout');
+            node.removeAttribute('data-vigil-instagram-feed-gap');
+          });
+        region.style.removeProperty('--vigil-instagram-feed-height');
+        homeFeedRegionHeights.delete(region);
+      };
+      const compactHomeFeedRegion = (region, cards, unsettled) => {
+        const previous = [...region.querySelectorAll(
+          '[data-vigil-instagram-feed-layout], [data-vigil-instagram-feed-gap]'
+        ), region];
+        const concealed = (card) => card.hasAttribute('data-vigil-hidden-feature')
+          || ['other', 'unavailable'].includes(card.dataset.vigilInstagramHomeRelationship);
+        // Only correct geometry left by our filtering. Native viewports and
+        // the leading spacer of a virtual window keep their scroll contract.
+        if (unsettled) return;
+        const layouts = new Set();
+        const gaps = new Set();
+        if (cards.some(concealed)) {
+          cards.forEach((card) => {
+            for (let node = card.parentElement; node && region.contains(node); node = node.parentElement) {
+              if (node.hasAttribute('data-vigil-instagram-feed-gap')
+                  || !/^(auto|scroll|hidden|clip)$/.test(getComputedStyle(node).overflowY)) layouts.add(node);
+              if (node === region) break;
+            }
+          });
+          layouts.forEach((node) => {
+            const children = [...node.children];
+            const lastPost = children.findLastIndex((child) => cards.some((card) =>
+              (child === card || child.contains(card)) && !concealed(card)
+            ));
+            children.forEach((child, index) => {
+              if (child.matches('article, [role="article"]')) return;
+              const childCards = cards.filter((card) => child.contains(card));
+              if (childCards.length) {
+                if (childCards.every(concealed)) gaps.add(child);
+                return;
+              }
+              // Leave the pagination sentinel mounted, but remove its virtual
+              // height after the last post. Never trim a leading window spacer
+              // or a real footer, control, media item, or dialog.
+              if (lastPost >= 0 && index > lastPost && !child.textContent.trim()
+                  && !child.matches('img, video, canvas, iframe, input, button, a, [role="button"], [role="dialog"]')
+                  && !child.querySelector('img, video, canvas, iframe, input, button, a, [role="button"], [role="dialog"]')
+                  && (child.style.height || child.style.minHeight || child.style.blockSize
+                    || child.getAttribute('aria-hidden') === 'true')) gaps.add(child);
+            });
+          });
+        }
+        previous.forEach((node) => {
+          if (!layouts.has(node)) node.removeAttribute('data-vigil-instagram-feed-layout');
+          if (!gaps.has(node)) node.removeAttribute('data-vigil-instagram-feed-gap');
+        });
+        layouts.forEach((node) => { node.dataset.vigilInstagramFeedLayout = 'true'; });
+        gaps.forEach((node) => { node.dataset.vigilInstagramFeedGap = 'true'; });
+      };
       const reconcileHomeFeedRegions = (settleRefreshing = false) => {
         const previous = [...document.querySelectorAll('[data-vigil-instagram-feed-region]')];
         if (instagramRoute() !== 'feed') {
@@ -9297,6 +9424,7 @@ enum DOMAdapters {
             // Direct, even when recycled children lose article semantics.
             if (instagramRoute() === 'profile' && !region.querySelector('[data-vigil-instagram-home-relationship]')) {
               region.removeAttribute('data-vigil-instagram-feed-region');
+              clearHomeFeedRegionLayout(region);
             } else if (region.dataset.vigilInstagramFeedRegion !== 'closed') {
               region.dataset.vigilInstagramFeedRegion = 'refreshing';
             }
@@ -9330,11 +9458,12 @@ enum DOMAdapters {
             clearTimeout(homeFeedRegionRefreshTimers.get(region));
             homeFeedRegionRefreshTimers.delete(region);
             region.removeAttribute('data-vigil-instagram-feed-region');
+            clearHomeFeedRegionLayout(region);
           }
         });
         regions.forEach((region) => {
-          const regionCards = cards.filter((card) => region.contains(card)
-            && !card.hasAttribute('data-vigil-hidden-feature'));
+          const allRegionCards = cards.filter((card) => region.contains(card));
+          const regionCards = allRegionCards.filter((card) => !card.hasAttribute('data-vigil-hidden-feature'));
           const hasVerifiedPost = regionCards.some((card) => {
             const identity = homeCardIdentities.get(card) || '';
             const author = homeCardAuthor(card, identity);
@@ -9352,11 +9481,17 @@ enum DOMAdapters {
             clearTimeout(homeFeedRegionRefreshTimers.get(region));
             homeFeedRegionRefreshTimers.delete(region);
             region.dataset.vigilInstagramFeedRegion = 'open';
+            compactHomeFeedRegion(region, allRegionCards, hasUnsettledPost);
+            const height = region.getBoundingClientRect().height;
+            homeFeedRegionHeights.set(region, height);
+            region.style.setProperty('--vigil-instagram-feed-height', `${height}px`);
           } else if (!settleRefreshing && hasUnsettledPost
               && ['open', 'refreshing'].includes(previousState)) {
             // Instagram temporarily removes article semantics while recycling
             // the virtual feed. Conceal the already-open region without
             // collapsing its geometry or resetting the user's scroll offset.
+            const height = homeFeedRegionHeights.get(region);
+            if (height > 0) region.style.setProperty('--vigil-instagram-feed-height', `${height}px`);
             region.dataset.vigilInstagramFeedRegion = 'refreshing';
             if (!homeFeedRegionRefreshTimers.has(region)) {
               const timer = setTimeout(() => {
