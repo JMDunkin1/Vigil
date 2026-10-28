@@ -73,9 +73,9 @@ async function main() {
   // Mock only the native request. The stream is real generated video, so its
   // dimensions and captured edge pixels can detect accidental preview cropping.
   await run(`window.fixtureStream=(()=>{
-    const c=document.createElement('canvas');c.width=1200;c.height=900;
-    const g=c.getContext('2d');g.fillStyle='#84b4d4';g.fillRect(0,0,1200,900);
-    g.fillStyle='#f4b942';g.fillRect(0,0,144,900);g.fillStyle='#df635d';g.fillRect(1056,0,144,900);
+    const c=document.createElement('canvas');c.width=900;c.height=1200;
+    const g=c.getContext('2d');g.fillStyle='#84b4d4';g.fillRect(0,0,900,1200);
+    g.fillStyle='#f4b942';g.fillRect(0,0,108,1200);g.fillStyle='#df635d';g.fillRect(792,0,108,1200);
     window.fixtureCameraCanvas=c;return c.captureStream(5);
   })();
   navigator.mediaDevices.getUserMedia=async constraints=>{window.fixtureConstraints=constraints;return fixtureStream};void 0;`);
@@ -85,8 +85,10 @@ async function main() {
   const request = await run('fixtureConstraints');
   // Let WebKit choose a full sensor format; this generated stream checks
   // presentation rather than emulating physical sensor orientation.
-  for(const key of ['aspectRatio','width','height'])assert.equal(key in request.video,false);
+  assert.equal('aspectRatio' in request.video,false);
+  assert.deepEqual([request.video.width,request.video.height],[{ideal:1280},{ideal:720}]);
   assert.equal(request.audio,false); assert.deepEqual(request.video.deviceId,{exact:'selected-camera'});
+  await run(`new Promise(resolve=>{const check=()=>document.querySelector('.vigil-snap-portrait-status')?requestAnimationFrame(check):resolve();requestAnimationFrame(check)})`);
   for (const [width,height] of [[320,780],[390,780],[430,780],[390,420]]) {
     win.setContentSize(width,height); await settle();
     const camera = await run(`(() => {
@@ -94,10 +96,10 @@ async function main() {
       const video=document.getElementById('local-video');
       return [box.left,box.top,box.width,box.height,getComputedStyle(video).objectFit,video.videoWidth,video.videoHeight];
     })()`);
-    assert.deepEqual(camera,[0,0,width,height,'contain',1200,900]);
+    assert.deepEqual(camera,[0,0,width,height,'contain',900,1200]);
     await tap('#fixture-switch-camera'); assert.equal(await run('fixtureCameraSwitched'),true);
     await tap('#fixture-capture');
-    assert.deepEqual(await run('fixtureCapturedDimensions'),[1200,900]);
+    assert.deepEqual(await run('fixtureCapturedDimensions'),[900,1200]);
     const pixels=await run('fixtureCapturedPixels');
     assert.ok(pixels.every((value,index)=>Math.abs(value-[244,185,66,255,223,99,93,255][index])<=3),
       'capture retains both camera edges, allowing video color conversion rounding');

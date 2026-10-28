@@ -143,7 +143,18 @@ enum DOMAdapters {
       const devices = typeof navigator === 'undefined' ? null : navigator.mediaDevices;
       const captures = new WeakMap();
       const mirrorCaptures = new WeakMap();
+      const streamCanvases = new WeakMap();
       let activeCapture = null;
+      // Bookkeeping only: retain the original stream and capture semantics.
+      // Some WebKit versions do not expose CanvasCaptureMediaStreamTrack.canvas.
+      if (typeof HTMLCanvasElement !== 'undefined' && typeof HTMLCanvasElement.prototype.captureStream === 'function') {
+        const originalCanvasCapture = HTMLCanvasElement.prototype.captureStream;
+        HTMLCanvasElement.prototype.captureStream = function(...args) {
+          const stream = originalCanvasCapture.apply(this, args);
+          streamCanvases.set(stream, this);
+          return stream;
+        };
+      }
       const phoneChat = () => trustedChat() && matchMedia('(max-width: 600px)').matches;
       const visibleCamera = root => root && root.getClientRects().length > 0
         && getComputedStyle(root).visibility !== 'hidden';
@@ -152,10 +163,13 @@ enum DOMAdapters {
         return visibleCamera(root) ? root : null;
       };
       const clock = () => performance.now();
-      const shownCapture = root => {
-        const track = root?.querySelector('#local-video')?.srcObject?.getVideoTracks?.()[0];
-        return track?.canvas ? mirrorCaptures.get(track.canvas) || activeCapture : activeCapture;
+      const displayedCapture = root => {
+        const stream = root?.querySelector('#local-video')?.srcObject;
+        const track = stream?.getVideoTracks?.()[0];
+        const canvas = streamCanvases.get(stream) || track?.canvas;
+        return captures.get(stream) || (canvas ? mirrorCaptures.get(canvas) : null);
       };
+      const shownCapture = root => displayedCapture(root) || activeCapture;
       const portraitPreview = root => {
         const video = root?.querySelector('#local-video');
         return video?.videoWidth > 0 && video.videoHeight > video.videoWidth;
@@ -196,11 +210,36 @@ enum DOMAdapters {
         try { Promise.resolve(state.track.applyConstraints(mode)).then(finish, finish); }
         catch (_) { finish(); }
       };
+      const activateCapture = state => {
+        activeCapture = state;
+        if (state.initialized) return;
+        state.initialized = true;
+        let capabilities = {};
+        try { capabilities = state.track.getCapabilities?.() || {}; } catch (_) {}
+        const minimumZoom = capabilities.zoom?.min;
+        const hasMinimumZoom = Number.isFinite(minimumZoom) && minimumZoom > 0;
+        state.minimumZoom = hasMinimumZoom ? minimumZoom : null;
+        const fullField = { ...state.base,
+          ...(hasMinimumZoom ? { zoom: { exact: minimumZoom } } : {}) };
+        // Snap's own mobile guidance calls for standard LANDSCAPE camera
+        // resolutions, letting the device deliver upright portrait buffers.
+        // Portrait-shaped/unconventional requests can cause zoomed fallbacks.
+        const standard720p = { ...fullField, width: { ideal: 1280 }, height: { ideal: 720 } };
+        state.modes = [
+          { ...fullField, width: { ideal: 1920 }, height: { ideal: 1080 } },
+          fullField
+        ];
+        // A warmed camera may have been acquired before any Snap UI existed.
+        // Clear its original desktop crop once it is actually displayed here.
+        if (!state.initiallyNormalized || hasMinimumZoom) applyMode(state, standard720p);
+      };
       const observePortraitFrame = (source, width, height) => {
-        const state = captures.get(source.srcObject);
-        if (!state || state.track?.readyState !== 'live' || !phoneChat()
-            || document.visibilityState === 'hidden') return false;
+        const state = captures.get(source.srcObject), root = cameraRoot();
+        if (!state || displayedCapture(root) !== state || state.track?.readyState !== 'live'
+            || !phoneChat() || document.visibilityState === 'hidden') return false;
+        activateCapture(state);
         state.observed = true;
+        state.sourceWidth = width; state.sourceHeight = height;
         const signature = `${width}x${height}`;
         if (state.frame !== signature) {
           state.frame = signature; state.stableSince = clock(); state.ready = false;
@@ -221,13 +260,11 @@ enum DOMAdapters {
         const originalCapture = devices.getUserMedia.bind(devices);
         devices.getUserMedia = async function(request) {
           const video = request?.video;
-          // Boolean permission preflights and calls retain their own behavior.
-          // Only the Snap camera's known desktop portrait requests are changed.
-          const snapCamera = phoneChat() && visibleCamera(document.querySelector('.BN1L1')) && video && typeof video === 'object'
+          if (!trustedChat() || !video) return originalCapture(request);
+          const snapCamera = phoneChat() && visibleCamera(document.querySelector('.BN1L1')) && typeof video === 'object'
             && (video.width?.ideal === 406 && video.height?.ideal === 720
               || video.aspectRatio?.exact === 9 / 16);
-          if (!snapCamera) return originalCapture(request);
-          const base = { ...video };
+          const base = typeof video === 'object' ? { ...video } : {};
           for (const key of ['width', 'height', 'aspectRatio', 'zoom']) delete base[key];
           if (Array.isArray(base.advanced)) base.advanced = base.advanced.map(item => {
             const next = { ...item };
@@ -236,36 +273,72 @@ enum DOMAdapters {
           });
           const supports = devices.getSupportedConstraints?.() || {};
           if (supports.resizeMode) base.resizeMode = 'none';
-          const state = { ready: false, observed: false, unavailable: false, busy: false,
-            revision: 0, nextMode: 0, settleUntil: 0, stableSince: clock(), frame: '', track: null, modes: [] };
-          activeCapture = state; syncPortraitStatus();
-          let stream;
-          try { stream = await originalCapture({ ...request, video: base }); }
-          catch (error) {
-            if (activeCapture === state) { activeCapture = null; syncPortraitStatus(); }
-            throw error;
-          }
+          // Register every real video stream, including permission preflights
+          // and warm startup. Defer all changes for non-Snap surfaces until
+          // this exact stream is displayed in Snapchat's camera.
+          const stream = await originalCapture(snapCamera ? { ...request,
+            video: { ...base, width: { ideal: 1280 }, height: { ideal: 720 } } } : request);
           const track = stream.getVideoTracks()[0];
-          if (!track) return stream;
-          state.track = track; captures.set(stream, state);
-          if (activeCapture !== state) return stream;
-          let capabilities = {};
-          try { capabilities = track.getCapabilities?.() || {}; } catch (_) {}
-          const minimumZoom = capabilities.zoom?.min;
-          const hasMinimumZoom = Number.isFinite(minimumZoom) && minimumZoom > 0;
-          const fullField = { ...base,
-            ...(hasMinimumZoom ? { zoom: { exact: minimumZoom } } : {}) };
-          // iPhone sensor mounting differs by camera/generation. Try both
-          // primary-orientation orders on the SAME real track, without an exact
-          // aspect ratio, software crop/scale, or a replacement capture session.
-          state.modes = [
-            { ...fullField, width: { ideal: 1920 }, height: { ideal: 1440 } },
-            { ...fullField, width: { ideal: 1440 }, height: { ideal: 1920 } }
-          ];
-          if (hasMinimumZoom) applyMode(state, fullField);
+          if (track) captures.set(stream, { base, initiallyNormalized: Boolean(snapCamera), initialized: false,
+            ready: false, observed: false, unavailable: false, busy: false, revision: 0,
+            nextMode: 0, settleUntil: 0, stableSince: clock(), frame: '', track, modes: [] });
           return stream;
         };
       }
+      // Fixed geometry flags only, for the existing bounded local diagnostic
+      // receipt. Never include camera IDs, labels, pixels or message content.
+      window.__vigilSnapchatCameraState = () => {
+        const root = cameraRoot(), video = root?.querySelector('#local-video');
+        const state = displayedCapture(root), stream = video?.srcObject;
+        let actualZoom;
+        try { actualZoom = state?.track.getSettings().zoom; } catch (_) {}
+        return {
+          phase: !root ? 'idle' : !state ? 'untracked' : state.unavailable ? 'unavailable'
+            : state.ready && portraitPreview(root) ? 'ready' : 'preparing',
+          pipeline: !root ? 'none' : captures.has(stream) ? 'direct' : state ? 'mirror' : 'untracked',
+          sourceWidth: state?.sourceWidth || 0, sourceHeight: state?.sourceHeight || 0,
+          previewWidth: video?.videoWidth || 0, previewHeight: video?.videoHeight || 0,
+          modeAttempts: state?.nextMode || 0, deferred: Boolean(state && !state.initiallyNormalized),
+          ...(Number.isFinite(state?.minimumZoom) ? { minimumZoom: state.minimumZoom } : {}),
+          ...(Number.isFinite(actualZoom) ? { actualZoom: Math.round(actualZoom * 100) / 100 } : {}),
+          trackProcessor: typeof MediaStreamTrackProcessor !== 'undefined',
+          trackGenerator: typeof MediaStreamTrackGenerator !== 'undefined'
+        };
+      };
+      let cameraDiagnosticSignature = '', lastCameraDiagnosticAt = -Infinity;
+      const publishCameraGeometry = () => {
+        const signature = JSON.stringify(window.__vigilSnapchatCameraState());
+        if (signature === cameraDiagnosticSignature || clock() - lastCameraDiagnosticAt < 1000) return;
+        cameraDiagnosticSignature = signature; lastCameraDiagnosticAt = clock();
+        window.__vigilPublishSnapchatRenderState?.();
+      };
+      let cameraAuditTimer = 0;
+      const auditDisplayedCamera = () => {
+        cameraAuditTimer = 0;
+        const root = cameraRoot();
+        if (!root || !phoneChat() || document.visibilityState === 'hidden') return;
+        const video = root.querySelector('#local-video');
+        if (!video?.srcObject?.active) { syncPortraitStatus(); return; }
+        // Camera Kit supplies the raw stream directly. Its frames never pass
+        // through the hidden mirror drawImage hook, so observe the EXISTING
+        // visible video too. No extra consumer, stream or camera is created.
+        if (captures.has(video?.srcObject) && video.readyState >= 2 && video.videoWidth && video.videoHeight)
+          observePortraitFrame(video, video.videoWidth, video.videoHeight);
+        syncPortraitStatus(); publishCameraGeometry();
+        cameraAuditTimer = setTimeout(auditDisplayedCamera, 100);
+      };
+      const scheduleCameraAudit = () => {
+        if (!cameraAuditTimer) auditDisplayedCamera();
+      };
+      for (const type of ['loadedmetadata', 'loadeddata', 'playing', 'resize', 'emptied'])
+        document.addEventListener(type, scheduleCameraAudit, true);
+      document.addEventListener('visibilitychange', scheduleCameraAudit);
+      window.addEventListener?.('resize', scheduleCameraAudit);
+      if (typeof MutationObserver !== 'undefined') new MutationObserver(scheduleCameraAudit).observe(document, {
+        childList: true, subtree: true, attributes: true,
+        attributeFilter: ['class', 'style', 'hidden', 'data-vigil-page-verdict']
+      });
+      scheduleCameraAudit();
       // Fail an individual shutter gesture closed while frames are negotiated.
       // Keep the camera menu and close button owned by Snapchat and reachable.
       for (const type of ['pointerdown', 'mousedown', 'touchstart', 'click', 'keydown']) {
@@ -5863,7 +5936,8 @@ enum DOMAdapters {
           composerVisible: renderVisible(document.querySelector('.aXEpU [contenteditable="true"]')),
           bodyVisible: Boolean(bodyStyle && bodyStyle.visibility !== 'hidden' && bodyStyle.display !== 'none'),
           layout: currentShell?.getAttribute('data-vigil-snap-layout') || 'none',
-          pageVerdict: document.documentElement.dataset.vigilPageVerdict || 'none'
+          pageVerdict: document.documentElement.dataset.vigilPageVerdict || 'none',
+          camera: window.__vigilSnapchatCameraState?.() || { phase: 'untracked', pipeline: 'untracked' }
         };
         const signature = JSON.stringify(state);
         if (signature === lastRenderState) return;

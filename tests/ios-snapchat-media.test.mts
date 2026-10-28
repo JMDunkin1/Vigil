@@ -57,7 +57,9 @@ for (const id of ["real-front","real-back","real-front"]) {
   const sent=h.calls.at(-1)!;
   assert.equal(sent.audio,request.audio);
   assert.equal((sent.video as {deviceId:unknown}).deviceId,request.video.deviceId);
-  for(const key of ['width','height','aspectRatio','zoom'])assert.equal(key in (sent.video as object),false);
+  for(const key of ['aspectRatio','zoom'])assert.equal(key in (sent.video as object),false);
+  assert.equal((sent.video as {width:{ideal:number}}).width.ideal,1280);
+  assert.equal((sent.video as {height:{ideal:number}}).height.ideal,720);
   assert.equal((sent.video as {resizeMode:unknown}).resizeMode,'none');
   assert.equal(stream,h.streams.at(-1),"Return the real stream, without replacing track methods or settings");
   assert.deepEqual(request,copy,"Leave Snapchat's request object untouched");
@@ -121,7 +123,7 @@ function drawingHarness() {
   const window:{top?:unknown}={};window.top=window;
   const location={hostname:"www.snapchat.com",pathname:"/web/",protocol:"https:",port:""};
   let mobile=true;
-  const context={window,location,document:{body,addEventListener(){}},matchMedia:()=>({matches:mobile}),
+  const context={window,location,document:{body,querySelector(){return null;},addEventListener(){}},matchMedia:()=>({matches:mobile}),
     CanvasRenderingContext2D:Context,HTMLCanvasElement:Canvas,HTMLVideoElement:Video,MediaStream:Stream};
   runInNewContext(bootstrap!,context);
   const ctx=new Context(),video=new Video();

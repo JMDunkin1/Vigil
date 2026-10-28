@@ -2183,11 +2183,39 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("healthReports.at(-1)?.state==='degraded'", in: webView)
     }
 
+    func testSnapchatCameraDiagnosticsOnlyKeepBoundedGeometry() {
+        let result = SocialWebViewStore.sanitizedSnapchatCameraDiagnostics([
+            "phase": "ready", "pipeline": "direct", "sourceWidth": 720, "sourceHeight": 1280,
+            "previewWidth": -1, "previewHeight": 99_999, "modeAttempts": 3,
+            "minimumZoom": 0.5, "actualZoom": Double.infinity, "deferred": true,
+            "deviceId": "must-not-be-recorded", "pixels": "must-not-be-recorded",
+            "message": "must-not-be-recorded", "conversationURL": "must-not-be-recorded"
+        ])
+        XCTAssertEqual(Set(result.keys), Set(["phase", "pipeline", "sourceWidth", "sourceHeight", "minimumZoom", "deferred"]))
+        XCTAssertEqual(result["sourceHeight"] as? Int, 1280)
+        XCTAssertEqual(result["minimumZoom"] as? Double, 0.5)
+    }
+
     @MainActor
     func testSnapchatManagedPortraitCaptureKeepsVerticalFieldAndDoesNotSendLandscape() async throws {
-        // Native mode responses are generated: exercise both sensor dimension
-        // orders, an already-portrait source, and a source unable to do portrait.
-        for primaryWidth in [0, 1920, 1440, -1, -2] {
+        try await verifySnapchatPortraitCapture(cameraMounted: true, mirrored: true, primaryWidths: [0, 1280, 1920, 640, -1, -2])
+    }
+
+    @MainActor
+    func testSnapchatWarmCameraStartedBeforeMountStillNegotiatesPortrait() async throws {
+        try await verifySnapchatPortraitCapture(cameraMounted: false, mirrored: true, primaryWidths: [1280], wideStartup: true)
+    }
+
+    @MainActor
+    func testSnapchatDirectCameraKitStreamNegotiatesPortraitWithoutAMirrorConsumer() async throws {
+        try await verifySnapchatPortraitCapture(cameraMounted: false, mirrored: false, primaryWidths: [0, 1280, 1920, 640, -1])
+    }
+
+    @MainActor
+    private func verifySnapchatPortraitCapture(cameraMounted: Bool, mirrored: Bool, primaryWidths: [Int], wideStartup: Bool = false) async throws {
+        // Generated native mode responses verify both real WebKit pipelines,
+        // including acquisition before React mounts its camera controls.
+        for primaryWidth in primaryWidths {
             let controller = WKUserContentController()
             controller.addUserScript(WKUserScript(source: #"""
                 window.fixtureClock=0;window.fixtureAdvanceClock=false;
@@ -2206,7 +2234,7 @@ final class VigilSocialTests: XCTestCase {
             configuration.websiteDataStore = .nonPersistent()
             configuration.allowsInlineMediaPlayback = true
             configuration.mediaTypesRequiringUserActionForPlayback = []
-            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: wideStartup ? 900 : 390, height: 780), configuration: configuration)
             let window = UIWindow(frame: webView.bounds)
             window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
             let host = UIViewController();window.rootViewController=host
@@ -2216,7 +2244,7 @@ final class VigilSocialTests: XCTestCase {
             webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
             try await waitForJavaScriptCondition("window.__vigilSnapchatCameraInstalled === true", in: webView)
             _ = try await webView.callAsyncJavaScript(#"""
-                fixtureOpenReplyCamera();document.documentElement.dataset.vigilPageVerdict='safe';
+                if(cameraMounted)fixtureOpenReplyCamera();document.documentElement.dataset.vigilPageVerdict='safe';
                 window.fixtureSource=document.createElement('canvas');
                 window.fixturePaint=(width,height)=>{
                   fixtureSource.width=width;fixtureSource.height=height;
@@ -2235,32 +2263,41 @@ final class VigilSocialTests: XCTestCase {
                 track.applyConstraints=async mode=>{
                   fixtureModes.push(mode);
                   if(primaryWidth===-2)return new Promise(()=>{});
-                  if(primaryWidth===1440&&mode.width?.ideal===1920)throw new DOMException('Mode unsupported','OverconstrainedError');
-                  if(mode.width?.ideal===primaryWidth)fixturePaint(120,160);
+                  if(primaryWidth===1920&&mode.width?.ideal===1280)throw new DOMException('Mode unsupported','OverconstrainedError');
+                  if(mode.width?.ideal===primaryWidth || primaryWidth===640&&!mode.width)fixturePaint(120,160);
                 };
                 const stream=await navigator.mediaDevices.getUserMedia({audio:false,video:{
                   deviceId:{exact:'selected-front-ultra-wide'},width:{ideal:406},height:{ideal:720},aspectRatio:{exact:9/16}
                 }});
                 window.fixtureStreamIdentity=stream===fixtureRawStream;
-                window.fixtureMirror=document.createElement('canvas');fixtureMirror.width=160;fixtureMirror.height=90;
-                fixtureMirror.style.cssText='position:absolute;opacity:0;pointer-events:none';
-                window.fixtureMirrorSource=document.createElement('video');
-                fixtureMirrorSource.muted=true;fixtureMirrorSource.autoplay=true;fixtureMirrorSource.playsInline=true;
-                fixtureMirrorSource.style.cssText='position:absolute;opacity:0;pointer-events:none;left:0;top:0';
-                fixtureMirrorSource.srcObject=stream;document.body.append(fixtureMirror,fixtureMirrorSource);
-                window.fixtureMirrorContext=fixtureMirror.getContext('2d');fixtureMirrorContext.scale(-1,1);
-                window.fixtureDraw=()=>fixtureMirrorContext.drawImage(fixtureMirrorSource,-fixtureMirror.width,0);
+                if(!cameraMounted)fixtureOpenReplyCamera();
+                window.fixtureMirrorStream=null;
+                let previewStream=stream;
+                if(mirrored){
+                  window.fixtureMirror=document.createElement('canvas');fixtureMirror.width=160;fixtureMirror.height=90;
+                  fixtureMirror.style.cssText='position:absolute;opacity:0;pointer-events:none';
+                  window.fixtureMirrorSource=document.createElement('video');
+                  fixtureMirrorSource.muted=true;fixtureMirrorSource.autoplay=true;fixtureMirrorSource.playsInline=true;
+                  fixtureMirrorSource.style.cssText='position:absolute;opacity:0;pointer-events:none;left:0;top:0';
+                  fixtureMirrorSource.srcObject=stream;document.body.append(fixtureMirror,fixtureMirrorSource);
+                  window.fixtureMirrorContext=fixtureMirror.getContext('2d');fixtureMirrorContext.scale(-1,1);
+                  window.fixtureDraw=()=>fixtureMirrorContext.drawImage(fixtureMirrorSource,-fixtureMirror.width,0);
+                  window.fixtureMirrorStream=fixtureMirror.captureStream(20);previewStream=fixtureMirrorStream;
+                }
                 window.fixtureFrameTimer=setInterval(()=>{
                   if(fixtureAdvanceClock)fixtureClock+=100;
                   const g=fixtureSource.getContext('2d');g.fillStyle='#1256ab';g.fillRect(0,12,10,fixtureSource.height-24);
-                  if(fixtureMirrorSource.readyState>=2)fixtureDraw();
+                  if(mirrored&&fixtureMirrorSource.readyState>=2)fixtureDraw();
                 },50);
-                window.fixtureMirrorStream=fixtureMirror.captureStream(20);
-                const preview=document.getElementById('local-video');preview.srcObject=fixtureMirrorStream;
+                const preview=document.getElementById('local-video');preview.srcObject=previewStream;
                 preview.dataset.vigilMediaVerdict='safe';
                 window.fixtureCaptures=0;document.getElementById('fixture-capture').addEventListener('click',()=>fixtureCaptures++);
-                await fixtureMirrorSource.play();await preview.play();
-                """#, arguments: ["primaryWidth": primaryWidth], in: nil, contentWorld: .page)
+                if(mirrored)await fixtureMirrorSource.play();await preview.play();
+                """#, arguments: ["primaryWidth": primaryWidth, "cameraMounted": cameraMounted, "mirrored": mirrored], in: nil, contentWorld: .page)
+            if wideStartup {
+                webView.frame.size.width = 390
+                try await waitForJavaScriptCondition("innerWidth===390", in: webView)
+            }
             try await waitForJavaScriptCondition("!!document.querySelector('.vigil-snap-portrait-status')", in: webView)
             _ = try await webView.evaluateJavaScript("document.getElementById('fixture-capture').click();document.getElementById('fixture-switch-camera').click()")
             let pending = try await webView.evaluateJavaScript("fixtureCaptures===0 && fixtureCameraSwitched===true") as? Bool
@@ -2272,30 +2309,32 @@ final class VigilSocialTests: XCTestCase {
                 let closed = try await webView.evaluateJavaScript("fixtureCaptures===0 && !document.getElementById('local-video') && fixtureModes.length===3") as? Bool
                 XCTAssertEqual(closed,true,"Never silently send a wide frame when native portrait modes failed")
             } else {
-                try await waitForJavaScriptCondition("!document.querySelector('.vigil-snap-portrait-status') && document.getElementById('local-video').videoWidth===90 && document.getElementById('local-video').videoHeight===160", in: webView)
+                try await waitForJavaScriptCondition("!document.querySelector('.vigil-snap-portrait-status') && document.getElementById('local-video').videoWidth===\(mirrored ? 90 : 120) && document.getElementById('local-video').videoHeight===160", in: webView)
                 let result = try await webView.callAsyncJavaScript(#"""
                     document.getElementById('fixture-capture').click();
-                    const out=document.createElement('canvas');out.width=fixtureMirror.width;out.height=fixtureMirror.height;
-                    out.getContext('2d').drawImage(fixtureMirror,0,0,out.width,out.height);
+                    const source=mirrored?fixtureMirror:document.getElementById('local-video');
+                    const out=document.createElement('canvas');out.width=mirrored?source.width:source.videoWidth;out.height=mirrored?source.height:source.videoHeight;
+                    out.getContext('2d').drawImage(source,0,0,out.width,out.height);
                     const blob=await new Promise(resolve=>out.toBlob(resolve,'image/jpeg',.95));
                     const image=new Image();image.src=URL.createObjectURL(blob);await image.decode();
                     const decoded=document.createElement('canvas');decoded.width=image.naturalWidth;decoded.height=image.naturalHeight;
                     const g=decoded.getContext('2d');g.drawImage(image,0,0);URL.revokeObjectURL(image.src);
                     const near=(x,y,expected)=>[...g.getImageData(x,y,1,1).data].every((v,i)=>Math.abs(v-expected[i])<=16);
-                    return [image.naturalWidth===90 && image.naturalHeight===160,fixtureCaptures===1,
-                      near(45,2,[255,238,0,255]),near(45,157,[223,99,93,255]),
-                      near(45,80,[39,184,123,255]),near(30,80,[18,86,171,255]),near(60,80,[18,86,171,255]),
+                    const mid=out.width/2;
+                    return [image.naturalWidth===(mirrored?90:120) && image.naturalHeight===160,fixtureCaptures===1,
+                      near(mid,2,[255,238,0,255]),near(mid,157,[223,99,93,255]),
+                      near(mid,80,[39,184,123,255]),near(mid-15,80,[18,86,171,255]),near(mid+15,80,[18,86,171,255]),
                       fixtureStreamIdentity && fixtureRawStream.getVideoTracks()[0].readyState==='live',
                       fixtureRequests.length===1 && fixtureRequests[0].audio===false,
-                      !('aspectRatio' in fixtureRequests[0].video) && !('width' in fixtureRequests[0].video),
+                      cameraMounted ? !('aspectRatio' in fixtureRequests[0].video) : fixtureRequests[0].video.aspectRatio.exact===9/16,
                       fixtureRequests[0].video.deviceId.exact==='selected-front-ultra-wide',
                       fixtureModes.every(mode=>mode.zoom.exact===.5 && mode.resizeMode==='none')];
-                    """#, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+                    """#, arguments: ["cameraMounted": cameraMounted, "mirrored": mirrored], in: nil, contentWorld: .page) as? [Bool]
                 XCTAssertEqual(result,Array(repeating:true,count:12),"Primary width \(primaryWidth): JPEG must be portrait with all vertical field and no digital enlargement")
                 let attempts = try await webView.evaluateJavaScript("fixtureModes.length") as? Int
-                XCTAssertEqual(attempts,primaryWidth==0 ? 1 : primaryWidth==1920 ? 2 : 3)
+                XCTAssertEqual(attempts,primaryWidth==0 || primaryWidth==1280 ? 1 : primaryWidth==1920 ? 2 : 3)
             }
-            _ = try await webView.evaluateJavaScript("clearInterval(fixtureFrameTimer);[fixtureRawStream,fixtureMirrorStream].forEach(s=>s.getTracks().forEach(t=>t.stop()))")
+            _ = try await webView.evaluateJavaScript("clearInterval(fixtureFrameTimer);[fixtureRawStream,fixtureMirrorStream].filter(Boolean).forEach(s=>s.getTracks().forEach(t=>t.stop()))")
         }
     }
 
@@ -2666,8 +2705,8 @@ final class VigilSocialTests: XCTestCase {
                 const r = close.getBoundingClientRect();
                 return [Math.abs(box.width-innerWidth)<1 && Math.abs(box.height-innerHeight)<1,
                   getComputedStyle(video).objectFit === 'contain',
-                  !('aspectRatio' in fixtureCameraRequest.video) && !('width' in fixtureCameraRequest.video)
-                    && !('height' in fixtureCameraRequest.video) && fixtureCameraRequest.audio === false,
+                  !('aspectRatio' in fixtureCameraRequest.video) && fixtureCameraRequest.video.width.ideal === 1280
+                    && fixtureCameraRequest.video.height.ideal === 720 && fixtureCameraRequest.audio === false,
                   fixtureCameraRequest.video.deviceId.exact === 'selected-camera',
                   close.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2))];
                 """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
