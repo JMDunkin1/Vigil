@@ -98,7 +98,9 @@
     updateFinishedScreen();
     if (!statusLine || !state) return;
     const remaining = Math.max(0, 7200000 - state.usedMs);
-    const text = state.grace.status === 'active'
+    const timeFinished = state.grace.status === 'ended' || remaining === 0
+      && !(state.grace.status === 'active' && state.grace.usedMs < 1200000 && state.grace.videoId === currentID());
+    const text = timeFinished ? 'Watch time used for today' : state.grace.status === 'active'
       ? `Finish this video · ${Math.ceil((1200000 - state.grace.usedMs) / 60000)} min left`
       : `${4 - state.slots.filter(Boolean).length} saves left · ${Math.ceil(remaining / 60000)} min left`;
     if (statusLine.textContent !== text) statusLine.textContent = text;
@@ -620,25 +622,30 @@
     }
   }
   function updateFinishedScreen() {
-    if (!topFrame || !document.body) return;
+    if (!topFrame) return;
     const full = Boolean(state?.slots?.filter(Boolean).length === 4);
     const id = currentID();
-    const permittedWatch = Boolean(id && (state?.slots?.some(slot => slot?.videoId === id && !slot.removed)
-      || state?.external?.includes(id) || verifiedWatchPages.has(`${state?.day}:${id}`)));
-    const gated = full && !permittedWatch;
+    const slot = state?.slots?.find(slot => slot?.videoId === id);
+    const grace = state?.grace;
+    const timeFinished = Boolean(state && (grace?.status === 'ended'
+      || state.usedMs >= 7200000 && !(grace?.status === 'active' && grace.usedMs < 1200000 && grace.videoId === id)));
+    const permittedWatch = Boolean(id && ((slot && !slot.removed && !slot.completed)
+      || state?.external?.includes(id) || !slot?.completed && verifiedWatchPages.has(`${state?.day}:${id}`)));
+    const gated = timeFinished || full && !permittedWatch;
     document.documentElement.toggleAttribute('data-vigil-saves-finished', gated);
     document.documentElement.toggleAttribute('data-vigil-saves-full', full);
     if (!gated) { if (finishedScreen) finishedScreen.hidden = true; return; }
+    if (!document.body) return;
     if (!finishedScreen) {
       finishedScreen = document.createElement('section'); finishedScreen.id = 'vigil-youtube-finished';
-      finishedScreen.setAttribute('aria-label', 'Daily YouTube saves complete');
+      finishedScreen.hidden = true;
       const shadow = finishedScreen.attachShadow({ mode: 'closed' });
       const style = document.createElement('style');
       style.textContent = `
         :host{display:block;position:fixed;inset:0;z-index:2147483644;overflow:auto;box-sizing:border-box;
           padding:calc(env(safe-area-inset-top) + 72px) 24px calc(env(safe-area-inset-bottom) + 100px);
           background:var(--vigil-finished-bg,#0f0f0f)!important;color:var(--vigil-finished-text,#f1f1f1)!important;
-          font:16px/1.5 Roboto,Arial,sans-serif;animation:vigil-surface-in 180ms ease-out both}
+          font:16px/1.5 Roboto,Arial,sans-serif}
         :host([hidden]){display:none!important}*{box-sizing:border-box}
         main{max-width:640px;margin:0 auto;color:var(--vigil-finished-text,#f1f1f1);
           animation:vigil-content-in 300ms cubic-bezier(.2,0,0,1) both}
@@ -651,16 +658,16 @@
         p{margin:0 0 30px;max-width:500px;color:var(--vigil-finished-secondary,#aaa);font-size:15px;line-height:1.6}
         nav{display:grid;gap:10px}
         a{display:flex;align-items:center;gap:16px;min-height:76px;padding:16px 18px;border-radius:12px;
-          background:var(--vigil-finished-card,#212121);color:var(--vigil-finished-text,#f1f1f1);text-decoration:none;
+          background:var(--vigil-finished-card,#212121);color:var(--vigil-finished-text,#f1f1f1);text-decoration:none;touch-action:manipulation;
           transition:background-color 150ms ease,transform 150ms ease;animation:vigil-content-in 280ms cubic-bezier(.2,0,0,1) both}
         a:nth-child(1){animation-delay:50ms}a:nth-child(2){animation-delay:80ms}a:nth-child(3){animation-delay:110ms}a:nth-child(4){animation-delay:140ms}
-        a:hover,a:focus-visible{background:var(--vigil-finished-hover,#303030)}a:active{transform:scale(.99)}
+        @media(hover:hover){a:hover{background:var(--vigil-finished-hover,#303030)}}
+        a:focus-visible{background:var(--vigil-finished-hover,#303030)}a:active{transform:scale(.99)}
         a:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:3px}
         .number{flex:0 0 28px;color:var(--vigil-finished-secondary,#aaa);font-size:13px;font-variant-numeric:tabular-nums}
         .title{flex:1;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:15px;font-weight:500;line-height:1.4}
         .play{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--vigil-finished-chip,#272727)}
         .play::after{content:'';margin-left:2px;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:8px solid currentColor}
-        @keyframes vigil-surface-in{from{opacity:0}to{opacity:1}}
         @keyframes vigil-content-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
         @media(max-width:600px){:host{padding-top:calc(env(safe-area-inset-top) + 48px);padding-left:20px;padding-right:20px}h1{margin-top:30px}a{gap:12px;padding:14px;min-height:78px}}
         @media(prefers-reduced-motion:reduce){:host,main,a{animation:none!important;transition:none!important}a:active{transform:none}}
@@ -686,17 +693,23 @@
         else if (!value && finishedScreen.style.getPropertyValue(property)) finishedScreen.style.removeProperty(property);
       }
     }
-    finishedScreen.hidden = false;
-    const slots = state.slots.filter(slot => slot && !slot.removed);
-    const signature = JSON.stringify([state.day, slots]);
-    if (signature === finishedSignature) return;
+    const slots = timeFinished ? [] : state.slots.filter(slot => slot && !slot.removed && !slot.completed);
+    const complete = !timeFinished && slots.length === 0;
+    // Playback counters and slot locks change during polling. Only visible
+    // content changes should rebuild rows or restart their entrance animation.
+    const signature = JSON.stringify([state.day, timeFinished, slots.map(slot => [slot.videoId, slot.title])]);
+    if (signature === finishedSignature) { finishedScreen.hidden = false; return; }
     finishedSignature = signature;
-    const heading = document.createElement('h1'); heading.textContent = 'You’ve saved all four videos today.';
-    const description = document.createElement('p'); description.textContent = 'Finish watching your saved videos, then you’re done with YouTube for today.';
+    const heading = document.createElement('h1'); heading.textContent = timeFinished ? 'You’ve run out of watch time today.'
+      : complete ? 'You’ve watched all your saved videos today.' : 'You’ve saved all four videos today.';
+    const description = document.createElement('p'); description.textContent = timeFinished || complete
+      ? 'You’re done with YouTube for today. Come back tomorrow.'
+      : 'Finish watching your saved videos, then you’re done with YouTube for today.';
+    finishedScreen.setAttribute('aria-label', timeFinished ? 'Daily YouTube watch time complete' : 'Daily YouTube saves complete');
     const brand = document.createElement('div'); brand.className = 'brand';
     const mark = document.createElement('span'); mark.className = 'brand-mark'; mark.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span'); label.textContent = 'Watch Later';
-    const count = document.createElement('span'); count.className = 'count'; count.textContent = '4 / 4 saved';
+    const label = document.createElement('span'); label.textContent = timeFinished ? 'YouTube' : 'Watch Later';
+    const count = document.createElement('span'); count.className = 'count'; count.textContent = timeFinished ? 'Time used' : complete ? '4 / 4 watched' : '4 / 4 saved';
     brand.append(mark, label, count);
     const list = document.createElement('nav'); list.setAttribute('aria-label', 'Your saved videos');
     const links = slots.map((slot, index) => {
@@ -704,10 +717,18 @@
       const number = document.createElement('span'); number.className = 'number'; number.textContent = String(index + 1).padStart(2, '0'); number.setAttribute('aria-hidden', 'true');
       const title = document.createElement('span'); title.className = 'title'; title.textContent = slot.title || 'Watch saved video';
       const play = document.createElement('span'); play.className = 'play'; play.setAttribute('aria-hidden', 'true');
+      // Navigate directly from this owned shadow surface. Native YouTube's
+      // delegated handlers cannot resolve links inside a closed shadow root.
+      link.addEventListener('click', event => {
+        if (event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); event.stopPropagation();
+        location.assign(link.href);
+      });
       link.append(number, title, play); return link;
     });
     list.append(...links);
-    finishedScreen._content.replaceChildren(brand, heading, description, list);
+    finishedScreen._content.replaceChildren(brand, heading, description, ...(slots.length ? [list] : []));
+    finishedScreen.hidden = false;
   }
   function updateHeldPlayer() {
     // YouTube treats the interrupted autoplay attempt as buffering. Keep its
@@ -991,6 +1012,6 @@
   }, 500);
   setInterval(() => { if (!lease && !busy) void request({ action: 'status' }).catch(error => show(error.message)); }, 30000);
   if (document.documentElement) clean();
-  else document.addEventListener('DOMContentLoaded', clean, { once: true });
+  if (!document.body) document.addEventListener('DOMContentLoaded', clean, { once: true });
   void prepareCurrentVideo();
 })();

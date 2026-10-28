@@ -195,3 +195,28 @@ test('a partial feed fills to twenty without replacing its first IDs and repairs
   assert.equal(act({ action: 'start', videoId: ids[5] }).ok, false);
   assert.equal(act({ action: 'search', videoId: 'invalid' }).ok, false);
 });
+
+test('natural completion persists per saved video without spending or freeing another slot', () => {
+  const { act, play, state } = setup();
+  for (const id of ids.slice(0, 4)) act({ action: 'save', videoId: id });
+  play(ids[0], 16000, true);
+  const reply = act({ action: 'status' });
+  assert.equal(reply.slots[0]!.completed, true);
+  assert.equal(reply.slots[1]!.completed, undefined);
+  assert.equal(reply.slots.filter(Boolean).length, 4);
+  assert.equal(act({ action: 'check', videoId: ids[0] }).ok, false);
+  assert.equal(act({ action: 'start', videoId: ids[0] }).ok, false);
+  assert.equal(act({ action: 'check', videoId: ids[1] }).ok, true);
+  const restored = structuredClone(state);
+  assert.equal(youtubeAction(restored, { action: 'status' }, new Date('2026-09-07T17:00:00Z')).slots[0]!.completed, true);
+  act({ action: 'remove', videoId: ids[0] });
+  assert.equal(act({ action: 'save', videoId: ids[0] }).slots[0]!.completed, true);
+});
+
+test('pausing or an invalid completion settlement cannot mark a saved video finished', () => {
+  const { act, play } = setup();
+  act({ action: 'save', videoId: ids[0] });
+  play(ids[0], 16000);
+  assert.equal(act({ action: 'settle', leaseId: 'invalid', playedMs: 0, ended: true }).ok, false);
+  assert.equal(act({ action: 'status' }).slots[0]!.completed, undefined);
+});

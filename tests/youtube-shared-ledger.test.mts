@@ -81,3 +81,21 @@ test('seed corruption and authority removal cannot silently reopen local allowan
   const before=protectedStateSnapshot(state as never);state.youtubeSharedAuthority={endpoint:'https://ledger.test/api/youtube'};
   assert.notDeepEqual(protectedStateSnapshot(state as never),before);
 });
+
+
+test('migration preserves completion when any source finished the same saved video', () => {
+  const state = defaultState();
+  youtubeAction(state, { action: 'save', videoId: ids[0] });
+  const unfinished = structuredClone({ youtubeLimits: state.youtubeLimits! });
+  const finished = structuredClone(unfinished);
+  finished.youtubeLimits.slots[0]!.completed = true;
+  for (const sources of [
+    { mac: finished, 'ios-app': unfinished, 'ios-safari': unfinished },
+    { mac: unfinished, 'ios-app': finished, 'ios-safari': unfinished }
+  ]) {
+    assert.equal(mergeYouTubeLedgers(sources).seed.youtubeLimits.slots[0]!.completed, true);
+  }
+  const invalid = structuredClone(finished);
+  (invalid.youtubeLimits.slots[0] as unknown as Record<string, unknown>).completed = 'yes';
+  assert.throws(() => validateYouTubeLedgerSeed(invalid));
+});

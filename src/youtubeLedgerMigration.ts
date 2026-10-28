@@ -34,7 +34,7 @@ export function mergeYouTubeLedgers(sources: YouTubeMigrationSources, now = new 
     for (const id of ledger.external) if (!day.external.includes(id)) day.external.push(id);
     for (const slot of ledger.slots) if (slot) {
       const existing = slots.get(slot.videoId);
-      if (existing) { existing.locked ||= slot.locked; existing.removed &&= slot.removed; }
+      if (existing) { existing.locked ||= slot.locked; existing.removed &&= slot.removed; existing.completed ||= slot.completed; }
       else slots.set(slot.videoId, { ...slot });
     }
   }

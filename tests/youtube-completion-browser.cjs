@@ -44,8 +44,9 @@ async function main() {
     assert.equal(appearance.text,'rgb(241, 241, 241)');
     assert.equal(appearance.row,'rgb(33, 33, 33)');
     assert.equal(appearance.animation,'vigil-content-in');
-    await wait(600);
-    assert.equal(await win.webContents.executeJavaScript(`testShadows.get(document.getElementById('vigil-youtube-finished')).querySelector('main').getAnimations()[0]?.startTime`),appearance.start,'allowance polling does not replay the entrance animation');
+    await win.webContents.executeJavaScript(`__testReply.slots[0].locked=false; history.pushState({},'', '/watch?v=other000002')`);
+    await wait(750);
+    assert.equal(await win.webContents.executeJavaScript(`testShadows.get(document.getElementById('vigil-youtube-finished')).querySelector('main').getAnimations()[0]?.startTime`),appearance.start,'playback metadata and allowance polling do not replay the entrance animation');
     fs.writeFileSync(`/tmp/vigil-youtube-saved-${native?'phone':'desktop'}.png`,(await win.webContents.capturePage()).toPNG());
     await win.webContents.executeJavaScript(`document.querySelector('ytd-app').style.cssText='--yt-spec-base-background:#fff;--yt-spec-text-primary:#0f0f0f;--yt-spec-text-secondary:#606060;--yt-spec-raised-background:#f2f2f2'`);
     await wait(600);
@@ -63,8 +64,57 @@ async function main() {
     assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.getElementById('related')).display`),'none','saved playback does not expose a recommendation feed');
     await win.webContents.executeJavaScript(`history.pushState({},'', '/watch?v=external001')`); await wait(600);
     assert.equal(await win.webContents.executeJavaScript(`document.documentElement.hasAttribute('data-vigil-saves-finished')`),false,'verified external videos remain usable');
+
+    const refresh = async (changes, route) => {
+      await win.webContents.executeJavaScript(`Object.assign(__testReply,${JSON.stringify(changes)}); history.pushState({},'',${JSON.stringify(route)})`);
+      await wait(750);
+    };
+    const screen = () => win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host);return {hidden:host.hidden,heading:root.querySelector('h1').textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),nav:!!root.querySelector('nav'),opacity:getComputedStyle(host).opacity}})()`);
+    const completed = slots.map((slot,index)=>({...slot,completed:index===0}));
+    await refresh({slots:completed},'/watch?v=other000003');
+    assert.equal((await screen()).links.length,3,'finished saved videos disappear while unwatched saves remain');
+    await refresh({},`/watch?v=${ids[0]}`);
+    assert.equal((await screen()).hidden,false,'a cached successful check cannot reopen a completed saved video');
+    await refresh({slots:completed.map(slot=>({...slot,completed:true}))},'/watch?v=other000004');
+    const done = await screen();
+    assert.match(done.heading,/watched all your saved videos/);
+    assert.equal(done.links.length,0);
+    assert.equal(done.nav,false,'the finished state contains no empty or unusable video list');
+    assert.equal(done.opacity,'1','the opaque surface never reveals the underlying feed during entrance');
+    for (const saved of [slots, [slots[0],null,null,null]]) {
+      await refresh({slots:saved,usedMs:7200000,grace:{status:'ended',videoId:ids[0],usedMs:1200000}},`/watch?v=${ids[1]}`);
+      const timed = await screen();
+      assert.match(timed.heading,/run out of watch time/);
+      assert.equal(timed.hidden,false);
+      assert.equal(timed.links.length,0,'time exhaustion hides even unwatched saved videos before all slots fill');
+      await refresh({},'/watch?v=external001');
+      assert.equal((await screen()).hidden,false,'time exhaustion also closes verified external watch pages');
+    }
+    await refresh({slots,grace:{status:'active',videoId:ids[0],usedMs:1000}},`/watch?v=${ids[0]}`);
+    assert.equal((await screen()).hidden,true,'the established finish-current-video grace remains available');
+    await refresh({},`/watch?v=${ids[1]}`);
+    assert.equal((await screen()).links.length,0,'grace never offers other saved videos');
+
+    // Exercise a real first click/tap, including a YouTube delegated click
+    // handler that tries to consume the retargeted shadow-host event.
+    await refresh({usedMs:0,grace:{status:'unused',videoId:null,usedMs:0}},'/watch?v=other000005');
+    await win.webContents.executeJavaScript(`document.addEventListener('click',event=>{if(event.target.id==='vigil-youtube-finished')event.preventDefault();});`);
+    const point = await win.webContents.executeJavaScript(`(()=>{const rect=testShadows.get(document.getElementById('vigil-youtube-finished')).querySelector('a').getBoundingClientRect();return {x:Math.round(rect.x+rect.width/2),y:Math.round(rect.y+rect.height/2)}})()`);
+    const navigated = new Promise(resolve=>win.webContents.once('did-finish-load',resolve));
+    if (native) {
+      win.webContents.debugger.attach('1.3');
+      await win.webContents.debugger.sendCommand('Emulation.setTouchEmulationEnabled',{enabled:true});
+      await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[point]});
+      await win.webContents.debugger.sendCommand('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    } else {
+      win.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...point});
+      win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});
+    }
+    await Promise.race([navigated,wait(3000).then(()=>{throw new Error('First saved-video activation did not navigate');})]);
+    assert.equal(new URL(win.webContents.getURL()).searchParams.get('v'),ids[0],'one activation opens the selected saved video');
+    if(native) win.webContents.debugger.detach();
   }
-  console.log('YouTube browser checks passed: fresh twenty, collapsed header backdrop, completion screen, saved playback, hidden recommendations, and external links on web and app.');
+  console.log('YouTube browser checks passed: fresh twenty, collapsed header backdrop, completion states, single-click/tap navigation, stable animation, saved playback, hidden recommendations, and external links on web and app.');
   win.destroy(); app.quit();
 }
 void main().catch(error=>{console.error(error);app.exit(1)});

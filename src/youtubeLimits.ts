@@ -8,7 +8,7 @@ const LEASE_LIFETIME_MS = 5_000;
 export const YOUTUBE_FULL = "Watch Later is full. Replace an unwatched video to save this one.";
 export const YOUTUBE_USED = "You’ve used all four Watch Later slots today.";
 export const YOUTUBE_TIME = "You’ve reached today’s watch time.";
-export interface YouTubeSlot { videoId: string; title: string; locked: boolean; removed: boolean }
+export interface YouTubeSlot { videoId: string; title: string; locked: boolean; removed: boolean; completed?: boolean }
 export interface YouTubeCard { videoId: string; title: string; channel?: string; duration?: string }
 interface Lease { id: string; client: string; videoId: string; milliseconds: number; settledMs: number; expiresAt: number }
 export interface YouTubeDay {
@@ -146,7 +146,11 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
         return result(true, "", { ...lease });
       }
       day.lease = null;
-      if (input.ended === true && day.grace.videoId === lease.videoId) day.grace.status = "ended";
+      if (input.ended === true) {
+        const finished = day.slots.find(item => item?.videoId === lease.videoId);
+        if (finished) finished.completed = true;
+        if (day.grace.videoId === lease.videoId) day.grace.status = "ended";
+      }
       return result();
     }
     case "check":
@@ -159,6 +163,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
         day.grace.status = "ended";
       }
       if (day.grace.status === "ended") return result(false, YOUTUBE_TIME);
+      if (slot?.completed && !day.external.includes(id)) return result(false, "You’ve finished this saved video today.");
       if ((!slot || slot.removed) && !day.external.includes(id)) return result(false, "Save this video to Watch Later before playing.");
       if (input.action === "check") return result();
       if (day.lease) return result(false, "Pause playback in the other tab or device first.");
