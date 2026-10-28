@@ -124,6 +124,10 @@ struct ExplicitContentTextPolicy: Codable, Equatable, Sendable {
 /// policy is `.unknown`, which keeps the page concealed instead of silently
 /// falling back to a much smaller hard-coded phrase list.
 struct ConservativePageTextClassifier: PageTextSafetyClassifying {
+    // Bundle policy is immutable for this process. Share its compiled value
+    // across all service/account engines; custom policies remain independent.
+    static let bundled = ConservativePageTextClassifier()
+
     private struct Token: Sendable {
         let value: String
         let offset: Int

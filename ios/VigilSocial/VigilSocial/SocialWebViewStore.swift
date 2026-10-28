@@ -557,6 +557,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                         // A server declining HEAD still demonstrates reachability.
                         // Redirects, opaque responses and system-filter failures do not.
                         const allowed = response.status >= 200 && response.status < 600 && response.url === target.href;
+                        // Only headers establish reachability. A fallback GET
+                        // must not keep downloading a full social page on every
+                        // live policy check after that decision is available.
+                        try { response.body?.cancel().catch(() => {}); } catch (_) {}
                         if (!allowed) diagnostics.push(method + ' rejected (HTTP ' + response.status + ', exact URL ' + (response.url === target.href) + ')');
                         return allowed;
                     } catch (error) {
@@ -1040,7 +1044,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               externalPlaybackAuthorization.permits(snapshot, accessConfirmed: hasRecentConfirmedAccess,
                                                      restricted: false), snapshot.playing,
               let webView = webViews[.youtube] else { return false }
-        youtubeExternalPlaybackAvailable = true
+        setYouTubeExternalPlaybackAvailable(true)
         updateYouTubePictureInPicturePermission()
         let result = try? await webView.callAsyncJavaScript(
             "return window.__vigilRequestExternalPictureInPicture?.() === true;",
@@ -1116,11 +1120,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // Capture a paused baseline before a new ledger reply reaches the
             // page and starts playback. Renewals retain accumulated progress.
             externalPlaybackAuthorization.sample(snapshot)
-            youtubeExternalPlaybackAvailable = externalPlaybackAuthorization.permits(
+            setYouTubeExternalPlaybackAvailable(externalPlaybackAuthorization.permits(
                 snapshot, accessConfirmed: hasRecentConfirmedAccess, restricted: accessRestriction?() == true)
-                && hasFreshPermittedVideoFrameCheck(snapshot)
+                && hasFreshPermittedVideoFrameCheck(snapshot))
             if youtubeExternalPlaybackAvailable { scheduleYouTubeCreditDeadline(snapshot) }
-        } else { youtubeExternalPlaybackAvailable = false }
+        } else { setYouTubeExternalPlaybackAvailable(false) }
         updateYouTubePictureInPicturePermission()
         ensureYouTubeExternalPlaybackMonitor()
     }
@@ -1138,7 +1142,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 guard let self, self.externalPlaybackAuthorization.hasLease else { return }
                 guard let snapshot = await self.youtubePlaybackSnapshot() else {
                     guard !Task.isCancelled, self.externalPlaybackMonitorGeneration == generation else { return }
-                    self.youtubeExternalPlaybackAvailable = false
+                    self.setYouTubeExternalPlaybackAvailable(false)
                     self.updateYouTubePictureInPicturePermission()
                     // Foreground playback already has the page's ledger and
                     // safety gates. A busy WebKit process must not let this
@@ -1153,7 +1157,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 let allowed = self.externalPlaybackAuthorization.permits(
                     snapshot, accessConfirmed: self.hasRecentConfirmedAccess,
                     restricted: self.accessRestriction?() == true) && self.hasFreshPermittedVideoFrameCheck(snapshot)
-                self.youtubeExternalPlaybackAvailable = allowed
+                self.setYouTubeExternalPlaybackAvailable(allowed)
                 self.updateYouTubePictureInPicturePermission()
                 if allowed { self.scheduleYouTubeCreditDeadline(snapshot) }
                 if allowed, snapshot.playing,
@@ -1198,6 +1202,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
     }
 
+    // The authorization monitor samples five times per second. Only a change
+    // needs to invalidate SwiftUI; policy checks and WebKit updates still run.
+    func setYouTubeExternalPlaybackAvailable(_ available: Bool) {
+        guard youtubeExternalPlaybackAvailable != available else { return }
+        youtubeExternalPlaybackAvailable = available
+    }
+
     private func updateYouTubePictureInPicturePermission() {
         guard fixedService == .youtube, let webView = webViews[.youtube] else { return }
         let id = youtubeExternalPlaybackAvailable ? externalPlaybackAuthorization.videoID : nil
@@ -1209,7 +1220,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private func stopYouTubeExternalPlayback() {
         guard fixedService == .youtube else { return }
         externalPlaybackAuthorization.reset()
-        youtubeExternalPlaybackAvailable = false
+        setYouTubeExternalPlaybackAvailable(false)
         externalPlaybackMonitor?.cancel()
         externalPlaybackMonitor = nil
         externalPlaybackMonitorGeneration &+= 1
@@ -1895,7 +1906,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     private func resolvedTextClassifier() -> any PageTextSafetyClassifying {
         if let textClassifier { return textClassifier }
-        let classifier = ConservativePageTextClassifier()
+        let classifier = ConservativePageTextClassifier.bundled
         textClassifier = classifier
         return classifier
     }

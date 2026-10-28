@@ -18,6 +18,64 @@ final class FixtureSocialCommitmentStorage: SocialCommitmentStorage {
 
 final class VigilSocialTests: XCTestCase {
     @MainActor
+    func testServiceArtworkReusesDecodedThumbnailsWithinDisplayBudget() throws {
+        // The standalone YouTube test host omits Snapchat/LinkedIn artwork.
+        // Exercise all eight names with a bundle of full-size image fixtures.
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).bundle")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "tech.caseline.vigil.artwork-fixture"],
+                                           format: .xml, options: 0).write(to: directory.appendingPathComponent("Info.plist"))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let fallback = UIGraphicsImageRenderer(size: CGSize(width: 1024, height: 1024), format: format).pngData { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1024, height: 1024))
+        }
+        for service in SocialService.allCases {
+            let data = try Bundle.main.url(forResource: service.rawValue, withExtension: "png")
+                .map { try Data(contentsOf: $0) } ?? fallback
+            try data.write(to: directory.appendingPathComponent("\(service.rawValue).png"))
+        }
+        let bundle = try XCTUnwrap(Bundle(url: directory))
+        var decodedBytes = 0
+        for service in SocialService.allCases {
+            let first = try XCTUnwrap(SocialServiceArtwork.image(for: service, scale: 3, bundle: bundle))
+            XCTAssertTrue(first === SocialServiceArtwork.image(for: service, scale: 3, bundle: bundle))
+            let bitmap = try XCTUnwrap(first.cgImage)
+            XCTAssertLessThanOrEqual(max(bitmap.width, bitmap.height), 312)
+            decodedBytes += bitmap.bytesPerRow * bitmap.height
+        }
+        XCTAssertLessThan(decodedBytes, 3 * 1024 * 1024)
+    }
+
+    @MainActor
+    func testReusedSharedLedgerSessionHasNoCookieCredentialOrResponseCaches() {
+        let configuration = YouTubeLimitsConnection.sharedSessionConfiguration()
+        XCTAssertNil(configuration.urlCache)
+        XCTAssertNil(configuration.httpCookieStorage)
+        XCTAssertNil(configuration.urlCredentialStorage)
+        XCTAssertFalse(configuration.httpShouldSetCookies)
+        XCTAssertEqual(configuration.requestCachePolicy, .reloadIgnoringLocalCacheData)
+    }
+
+    @MainActor
+    func testUnchangedPlaybackSamplesDoNotInvalidateViews() {
+        let store = SocialWebViewStore(fixedService: .youtube, loadInitialPages: false)
+        var notifications = 0
+        let observation = store.objectWillChange.sink { notifications += 1 }
+        for _ in 0..<100 { store.setYouTubeExternalPlaybackAvailable(false) }
+        XCTAssertEqual(notifications, 0)
+        store.setYouTubeExternalPlaybackAvailable(true)
+        XCTAssertEqual(notifications, 1)
+        for _ in 0..<100 { store.setYouTubeExternalPlaybackAvailable(true) }
+        XCTAssertEqual(notifications, 1)
+        store.setYouTubeExternalPlaybackAvailable(false)
+        XCTAssertEqual(notifications, 2, "A revoked permission must still publish immediately")
+        withExtendedLifetime(observation) {}
+    }
+
+    @MainActor
     func testServicesKeepTheirCanvasesWithoutHiddenCornerControls() async throws {
         let suite = "VigilCornerRegression.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -1084,10 +1142,11 @@ final class VigilSocialTests: XCTestCase {
             await fulfillment(of: [loaded], timeout: 5)
             _ = try await view.callAsyncJavaScript("""
                 globalThis.probeMethods = [];
+                globalThis.cancelledProbeBodies = 0;
                 globalThis.fetch = async (url, options) => {
                     probeMethods.push(options.method);
                     if (options.method === 'HEAD') throw new Error('HEAD unavailable');
-                    return {status: 200, url};
+                    return {status: 200, url, body: {cancel: async () => { cancelledProbeBodies++; }}};
                 };
                 return true;
                 """, arguments: [:], in: nil, contentWorld: .defaultClient)
@@ -1095,6 +1154,8 @@ final class VigilSocialTests: XCTestCase {
             XCTAssertTrue(allowed, "A failed robots check must not strand a permitted document")
             let methods = try await view.callAsyncJavaScript("return probeMethods;", arguments: [:], in: nil, contentWorld: .defaultClient)
             XCTAssertEqual(methods as? [String], ["HEAD", "GET"])
+            let cancelled = try await view.callAsyncJavaScript("return cancelledProbeBodies;", arguments: [:], in: nil, contentWorld: .defaultClient)
+            XCTAssertEqual(cancelled as? Int, 1, "Stop the fallback page body after checking its response headers")
             _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:200,url:'https://blocked.example/'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
             let redirected = await store.confirmServiceAccess()
             XCTAssertFalse(redirected)

@@ -1,6 +1,37 @@
 import SafariServices
 import SwiftUI
 import WebKit
+import ImageIO
+
+// These immutable bundle images are reused by the picker and launch cover.
+// Downsample before decoding: the largest artwork is 1024px but the largest
+// rendered icon is 104pt. NSCache also lets iOS reclaim decoded images.
+@MainActor
+enum SocialServiceArtwork {
+    private static let images: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = SocialService.allCases.count
+        cache.totalCostLimit = 4 * 1024 * 1024
+        return cache
+    }()
+
+    static func image(for service: SocialService, scale: CGFloat, bundle: Bundle = .main) -> UIImage? {
+        let pixels = Int(ceil(104 * min(4, max(1, scale))))
+        guard let url = bundle.url(forResource: service.rawValue, withExtension: "png") else { return nil }
+        let key = "\(url.path):\(pixels)" as NSString
+        if let image = images.object(forKey: key) { return image }
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: pixels
+              ] as CFDictionary) else { return nil }
+        let image = UIImage(cgImage: thumbnail)
+        images.setObject(image, forKey: key, cost: thumbnail.bytesPerRow * thumbnail.height)
+        return image
+    }
+}
 
 struct SocialContainerView: View {
     @ObservedObject var container: SocialContainerStore
@@ -216,11 +247,11 @@ struct SocialContainerView: View {
 // The service artwork fills the entire square; names remain available to VoiceOver.
 struct SocialServiceIcon: View {
     let service: SocialService
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         Group {
-            if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
-               let icon = UIImage(contentsOfFile: path) {
+            if let icon = SocialServiceArtwork.image(for: service, scale: displayScale) {
                 Image(uiImage: icon).resizable().scaledToFit()
             } else {
                 Image(systemName: service.systemImage)
@@ -238,6 +269,7 @@ struct SocialServiceIcon: View {
 struct SocialLaunchScreen: View {
     let service: SocialService
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.displayScale) private var displayScale
 
     private var background: Color {
         switch service {
@@ -284,8 +316,7 @@ struct SocialLaunchScreen: View {
         case .facebook:
             Text("f").font(.system(size: 100, weight: .bold)).foregroundStyle(Color(red: 0.03, green: 0.40, blue: 1))
         default:
-            if let path = Bundle.main.path(forResource: service.rawValue, ofType: "png"),
-               let icon = UIImage(contentsOfFile: path) {
+            if let icon = SocialServiceArtwork.image(for: service, scale: displayScale) {
                 Image(uiImage: icon).resizable().scaledToFit().frame(width: 100, height: 100)
             }
         }

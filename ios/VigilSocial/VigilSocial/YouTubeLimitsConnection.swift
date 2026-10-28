@@ -7,6 +7,19 @@ import JavaScriptCore
 @MainActor
 enum YouTubeLimitsConnection {
     private static var cachedRuntime: (resource: URL, configuration: [String: Any], context: JSContext)?
+    // Reuse connections for frequent shared-ledger requests in both the app and
+    // Safari extension, while keeping every reply live and credentials isolated.
+    static func sharedSessionConfiguration() -> URLSessionConfiguration {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.urlCache = nil
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.httpCookieStorage = nil
+        configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil
+        return configuration
+    }
+    private static let sharedSession = URLSession(configuration: sharedSessionConfiguration(),
+                                                 delegate: SharedRedirectGuard(), delegateQueue: nil)
 
     private static func runtime(bundle: Bundle) throws -> (configuration: [String: Any], context: JSContext) {
         guard let resource = bundle.url(forResource: "youtube-connection", withExtension: "json") else { throw LedgerError.invalid }
@@ -50,9 +63,7 @@ enum YouTubeLimitsConnection {
                 request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
                 request.httpBody = try JSONSerialization.data(withJSONObject: body)
                 // No cookies, caches, or redirects to a different credential recipient.
-                let session = URLSession(configuration: .ephemeral, delegate: SharedRedirectGuard(), delegateQueue: nil)
-                defer { session.finishTasksAndInvalidate() }
-                let (data, response) = try await session.data(for: request)
+                let (data, response) = try await sharedSession.data(for: request)
                 guard (response as? HTTPURLResponse)?.statusCode == 200,
                       let reply = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                       reply["ok"] is Bool, let slots = reply["slots"] as? [Any], slots.count == 4,
