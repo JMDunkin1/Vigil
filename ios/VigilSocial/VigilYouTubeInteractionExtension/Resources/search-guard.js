@@ -483,7 +483,11 @@ function containsContextualExplicitMedia(value) {
         }
         if (body.test(token) && others.some(word => media.test(word) || exposure.test(word) || sexual.test(word)))
             return true;
-        if (marker.test(token) && others.some(word => media.test(word) || marker.test(word) || contributor.test(word)))
+        // An audience description can repeat adult/adults ("adults and young
+        // adults"). Repetition alone adds no explicit evidence. Media terms and
+        // distinct explicit markers must still qualify in either word order.
+        if (marker.test(token) && others.some(word => media.test(word) || contributor.test(word)
+            || (marker.test(word) && !(/^adults?$/u.test(token) && /^adults?$/u.test(word)))))
             return true;
         if (marketing.test(token) && others.some(word => exposure.test(word) || sexual.test(word) || acts.test(word)))
             return true;

@@ -23,6 +23,8 @@ export const broadenedBlockedSearches = [
 ];
 
 export const broadenedAllowedSearches = [
+  "Coaching for adults and young adults", "Support for young adults and older adults",
+  "Adult and adult services", "ADULTS AND YOUNG ADULTS",
   ...printAllowedTitles,
   "silicone dolls", "reborn silicone baby dolls", "dollhouse toys", "silicone baking molds",
   "love dollhouse furniture", "adult doll collectors", "toy robots", "sexdollhouse product",

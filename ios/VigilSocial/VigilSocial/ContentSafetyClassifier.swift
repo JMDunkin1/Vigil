@@ -621,7 +621,10 @@ private enum BroadenedExplicitMedia {
                 [media, people, body, exposure, sexual, acts, marketing].contains(where: { matches($0, word) })
             }) { return true }
             if matches(body, token) && others.contains(where: { word in [media, exposure, sexual].contains(where: { matches($0, word) }) }) { return true }
-            if matches(marker, token) && others.contains(where: { word in [media, marker, contributor].contains(where: { matches($0, word) }) }) { return true }
+            if matches(marker, token) && others.contains(where: { word in
+                matches(media, word) || matches(contributor, word)
+                    || (matches(marker, word) && !(["adult", "adults"].contains(token) && ["adult", "adults"].contains(word)))
+            }) { return true }
             if matches(marketing, token) && others.contains(where: { word in [exposure, sexual, acts].contains(where: { matches($0, word) }) }) { return true }
         }
         return false
