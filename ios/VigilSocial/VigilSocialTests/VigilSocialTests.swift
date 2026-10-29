@@ -9816,6 +9816,62 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramMessagePhotoDismissalAndChatNavigationReleaseMedia() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.instagramSingleReelGuard,
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Message photo lifecycle loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            body{margin:0}img,video{display:block;width:300px;height:240px}
+            #viewer{position:fixed;inset:0;background:black}#opened{width:390px;height:600px}
+          </style></head><body>
+            <main id="thread" role="dialog"><button id="preview"><img src="/preview.svg"></button>
+              <article id="chat"><video id="chat-video" src="/chat.mp4"></video><span>A message</span></article>
+            </main><script>
+              document.getElementById('preview').onclick=()=>{
+                const viewer=document.createElement('div');viewer.id='viewer';viewer.setAttribute('role','dialog');
+                viewer.innerHTML='<article id="selected"><img id="opened" src="/photo.svg"></article>'
+                  +'<article id="suggestion"><img src="/other.svg"></article>';
+                document.body.append(viewer);
+              };
+            </script>
+          </body></html>
+          """#, baseURL: URL(string: "https://www.instagram.com/direct/t/123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        defer { webView.navigationDelegate = nil }
+        _ = try await webView.evaluateJavaScript("document.getElementById('preview').click()")
+        try await waitForJavaScriptCondition("document.documentElement.dataset.vigilSingleReelKind==='p'", in: webView)
+        let opened = try await webView.evaluateJavaScript(#"""
+          ({photo:getComputedStyle(document.getElementById('opened')).visibility,
+            chat:getComputedStyle(document.getElementById('chat-video')).visibility,
+            other:getComputedStyle(document.getElementById('suggestion')).visibility})
+          """#) as? [String: String]
+        XCTAssertEqual(opened, ["photo": "visible", "chat": "visible", "other": "hidden"])
+        _ = try await webView.evaluateJavaScript("document.getElementById('thread').append(document.getElementById('suggestion'))")
+        try await waitForJavaScriptCondition("!document.getElementById('suggestion').hasAttribute('data-vigil-single-reel-card')", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('viewer').style.transform='translateX(110vw)'")
+        try await waitForJavaScriptCondition("!document.documentElement.hasAttribute('data-vigil-single-reel')", in: webView)
+        _ = try await webView.evaluateJavaScript(#"""
+          document.getElementById('viewer').remove();document.getElementById('suggestion').remove();
+          document.getElementById('preview').click();true;
+          """#)
+        try await waitForJavaScriptCondition("document.documentElement.dataset.vigilSingleReelKind==='p'", in: webView)
+        _ = try await webView.evaluateJavaScript("history.pushState({},'', '/direct/t/456/')")
+        let closed = try await webView.evaluateJavaScript(#"""
+          !document.documentElement.hasAttribute('data-vigil-single-reel')
+            && !document.querySelector('[data-vigil-single-reel-card], [data-vigil-single-reel-media], [data-vigil-single-reel-scroll], [data-vigil-single-reel-scope]')
+            && getComputedStyle(document.getElementById('chat-video')).visibility==='visible'
+          """#) as? Bool
+        XCTAssertEqual(closed, true, "Chat changes release retained photo portals and every classification")
+    }
+
+    @MainActor
     func testInstagramRightStoryTouchActivatesNativeNextExactlyOnce() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(

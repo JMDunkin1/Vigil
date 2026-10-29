@@ -2622,6 +2622,30 @@ enum DOMAdapters {
       let modalContext = null;
       let viewerOrigin = null;
       let viewerBackground = null;
+      let directPath = '';
+      let concealmentScope = null;
+      const classifications = new Map();
+      const mark = (node, name, value) => {
+        if (!classifications.has(node)) classifications.set(node, new Set());
+        classifications.get(node).add(name);
+        if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+      };
+      const releaseClassifications = (outside = null) => {
+        classifications.forEach((names, node) => {
+          if (outside?.contains(node)) return;
+          names.forEach(name => node.removeAttribute(name));
+          classifications.delete(node);
+        });
+      };
+      const scopeConcealment = () => {
+        const next = modalContext || document.documentElement;
+        if (concealmentScope !== next) concealmentScope?.removeAttribute('data-vigil-single-reel-scope');
+        concealmentScope = next;
+        // A Direct photo overlay must never conceal the retained conversation.
+        // Cards recycled out of that overlay lose their viewer classification.
+        releaseClassifications(next);
+        next.setAttribute('data-vigil-single-reel-scope', pinnedKind);
+      };
       let gesture = null;
       let pointerGesture = null;
       const touchPointers = new Set();
@@ -2677,11 +2701,11 @@ enum DOMAdapters {
           touch-action: pinch-zoom !important;
           overscroll-behavior: none !important;
         }
-        html:is([data-vigil-single-reel-kind="p"], [data-vigil-single-reel-kind="story"]) video:not([data-vigil-single-reel-media="allowed"]) {
+        :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) video:not([data-vigil-single-reel-media="allowed"]) {
           visibility: hidden !important;
         }
-        html:is([data-vigil-single-reel-kind="p"], [data-vigil-single-reel-kind="story"]) [data-vigil-single-reel-card="blocked"],
-        html:is([data-vigil-single-reel-kind="p"], [data-vigil-single-reel-kind="story"]) [data-vigil-single-reel-card="blocked"] * {
+        :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) [data-vigil-single-reel-card="blocked"],
+        :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) [data-vigil-single-reel-card="blocked"] * {
           visibility: hidden !important;
           pointer-events: none !important;
         }
@@ -2736,6 +2760,10 @@ enum DOMAdapters {
         viewerOrigin = null;
         viewerBackground = null;
         sharedIntent = null;
+        directPath = '';
+        concealmentScope?.removeAttribute('data-vigil-single-reel-scope');
+        concealmentScope = null;
+        releaseClassifications();
         gesture = null;
         pointerGesture = null;
         touchPointers.clear();
@@ -2760,13 +2788,22 @@ enum DOMAdapters {
         }
         return true;
       };
+      const activeViewer = node => {
+        if (!activeModal(node)) return false;
+        // Closing animations can retain an otherwise visible portal offscreen.
+        const box = node.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && box.right > 0 && box.bottom > 0
+          && box.left < innerWidth && box.top < innerHeight;
+      };
       const syncRoute = () => {
+        if (pinnedID && directPath && location.pathname.startsWith('/direct/')
+            && location.pathname !== directPath) reset();
         const route = mediaRoute(location.href);
         // Closing a comments/post portal can return the original media to its
         // article without changing the item URL. Keep observing the live page.
-        if (route && modalContext && !activeModal(modalContext)) modalContext = null;
+        if (route && modalContext && !activeViewer(modalContext)) modalContext = null;
         if (route && !modalContext) {
-          const modal = foregroundModal(sharedIntent?.origin);
+          const modal = foregroundModal(sharedIntent?.origin || viewerOrigin, viewerBackground);
           if (!sharedIntent?.origin || !modal?.contains(sharedIntent.origin)) modalContext = modal;
         }
         const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
@@ -2786,6 +2823,7 @@ enum DOMAdapters {
             pinnedID = route?.id || 'direct-modal';
             pinnedKind = route?.kind || (modalContext.querySelector('video') ? 'reel' : 'p');
             pinnedURL = location.href;
+            directPath = sharedIntent.source;
             viewerOrigin = sharedIntent.origin;
             viewerBackground = sharedIntent.previousModal?.contains(viewerOrigin) ? sharedIntent.previousModal : null;
             sharedIntent = null;
@@ -2799,10 +2837,11 @@ enum DOMAdapters {
         }
         // A player can briefly have no media during a React remount. Its
         // visible viewer, rather than a video URL or dimensions, owns the lock.
-        const viewerStillOpen = pinnedID && modalContext && activeModal(modalContext);
+        const viewerStillOpen = pinnedID && modalContext && activeViewer(modalContext);
         if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
+          scopeConcealment();
           reportNativeScrollLock(true);
           return true;
         }
@@ -2816,10 +2855,11 @@ enum DOMAdapters {
           if (pinnedID) reset();
           return false;
         }
-        if (!pinnedID) { pinnedID = route.id; pinnedKind = route.kind; }
+        if (!pinnedID) { pinnedID = route.id; pinnedKind = route.kind; directPath = sharedIntent?.source || ''; }
         if (!pinnedURL) pinnedURL = location.href;
         document.documentElement.dataset.vigilSingleReel = pinnedID;
         document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
+        scopeConcealment();
         reportNativeScrollLock(true);
         return true;
       };
@@ -2836,7 +2876,7 @@ enum DOMAdapters {
       const foregroundModal = (origin = null, background = null) => {
         const dialogs = [...document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
-        )].filter(modal => activeModal(modal) && !inSheet(modal) && !modal.contains(origin) && modal !== background
+        )].filter(modal => activeViewer(modal) && !inSheet(modal) && !modal.contains(origin) && modal !== background
           && ([...modal.querySelectorAll('video, img')].some(fullScreenMedia)
             || (modal.getBoundingClientRect().width >= innerWidth * 0.72
               && modal.getBoundingClientRect().height >= innerHeight * 0.6)));
@@ -2861,7 +2901,7 @@ enum DOMAdapters {
             const viewportPortal = position === 'fixed' || (position === 'absolute'
               && box.top <= innerHeight * 0.2 && box.bottom >= innerHeight * 0.8
               && box.height <= innerHeight * 1.25);
-            if (viewportPortal && !inSheet(node) && !node.contains(origin) && node !== background
+            if (viewportPortal && activeViewer(node) && !inSheet(node) && !node.contains(origin) && node !== background
                 && box.width >= innerWidth * 0.72 && box.height >= innerHeight * 0.6) return node;
           }
         }
@@ -2962,7 +3002,11 @@ enum DOMAdapters {
         '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
       )) || Boolean(recipientSheet(target)) || commentsDismissControl(target));
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
-        if (!node.isConnected) { lockedScroll.delete(node); return; }
+        if (!node.isConnected || (modalContext && !modalContext.contains(node))) {
+          node.removeAttribute('data-vigil-single-reel-scroll');
+          lockedScroll.delete(node);
+          return;
+        }
         if (node.scrollTop !== position) node.scrollTop = position;
       });
       const captureReelScroll = target => {
@@ -3033,9 +3077,9 @@ enum DOMAdapters {
           || [...child.querySelectorAll('video, img')].some(contentMedia));
       const cardFor = media => {
         const article = media.closest('article, [role="article"]');
-        if (article) return article;
+        if (article && (!modalContext || article !== modalContext && modalContext.contains(article))) return article;
         let identityCard = null;
-        for (let node = media.parentElement; node && !node.matches('body, main, [role="main"]'); node = node.parentElement) {
+        for (let node = media.parentElement; node && node !== modalContext && !node.matches('body, main, [role="main"]'); node = node.parentElement) {
           if (mediaGroups(node).length > 1 && !horizontalCarousel(node)) break;
           const routes = [...node.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
           if (routes.some(route => !matchesPinnedItem(route))) break;
@@ -3217,7 +3261,7 @@ enum DOMAdapters {
           // when its empty video acquired a source after the first layout.
           for (const media of (modalContext || document).querySelectorAll('video, img')) {
             if (!contentMedia(media)) continue;
-            cardFor(media).dataset.vigilSingleReelCard = 'blocked';
+            mark(cardFor(media), 'data-vigil-single-reel-card', 'blocked');
           }
           return;
         }
@@ -3245,8 +3289,8 @@ enum DOMAdapters {
           // classifying a not-yet-measurable photo dump as a single image.
           postLayoutCaptured = Boolean(postCarousel)
             || ![pinnedCard, ...pinnedCard.querySelectorAll('*')].some(horizontalCarousel);
-          postCarousel?.track.setAttribute('data-vigil-single-reel-carousel', 'true');
-          postCarousel?.viewport.setAttribute('data-vigil-single-reel-carousel', 'true');
+          if (postCarousel) mark(postCarousel.track, 'data-vigil-single-reel-carousel', 'true');
+          if (postCarousel) mark(postCarousel.viewport, 'data-vigil-single-reel-carousel', 'true');
         }
         if (postCarousel && (!pinnedCard?.contains(postCarousel.track) || !exactPostCard(pinnedCard))) {
           postCarousel.rejected = true;
@@ -3276,7 +3320,7 @@ enum DOMAdapters {
             && (postCarousel ? carouselMediaAllowed(video, source)
               : video === pinnedVideo && (!pinnedSource || source === pinnedSource))
             && (activeModal(modalContext) || mediaRoute(location.href)?.id === pinnedID);
-          video.dataset.vigilSingleReelMedia = allowed ? 'allowed' : 'blocked';
+          mark(video, 'data-vigil-single-reel-media', allowed ? 'allowed' : 'blocked');
           if (!allowed && !video.paused) video.pause();
           // Use the same item boundary for selection and classification. An
           // anonymous viewer must never promote its portal, body or thread to
@@ -3289,7 +3333,7 @@ enum DOMAdapters {
               if ([...sibling.querySelectorAll('video, img')].some((media) => {
                 const rect = media.getBoundingClientRect();
                 return rect.width >= 220 && rect.height >= 280;
-              })) sibling.dataset.vigilSingleReelCard = 'blocked';
+              })) mark(sibling, 'data-vigil-single-reel-card', 'blocked');
             }
           }
         }
@@ -3331,14 +3375,14 @@ enum DOMAdapters {
           }
         }
         cardDecisions.forEach((allowed, card) => {
-          card.dataset.vigilSingleReelCard = allowed ? 'allowed' : 'blocked';
+          mark(card, 'data-vigil-single-reel-card', allowed ? 'allowed' : 'blocked');
         });
-        if (pinnedCard?.isConnected) {
-          for (let node = pinnedCard; node; node = node.parentElement) {
+        if (pinnedCard?.isConnected && concealmentScope?.contains(pinnedCard)) {
+          for (let node = pinnedCard; node && (!modalContext || modalContext.contains(node)); node = node.parentElement) {
             if (inSheet(node)) continue;
             if (!lockedScroll.has(node)) {
               lockedScroll.set(node, node.scrollTop);
-              node.setAttribute('data-vigil-single-reel-scroll', 'true');
+              mark(node, 'data-vigil-single-reel-scroll', 'true');
             }
           }
         }
@@ -3460,7 +3504,8 @@ enum DOMAdapters {
           const target = event.target, sheets = '[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]';
           // Opacity/transform animations change foreground geometry without a
           // DOM mutation. Never retain an opening or closing frame's exception.
-          if (target instanceof Element && (target.closest(sheets) || target.querySelector(sheets))) reconcile();
+          if (target instanceof Element && (target.closest(sheets) || target.querySelector(sheets)
+              || modalContext && (target === modalContext || target.contains(modalContext)))) reconcile();
         }, true);
       }
       new MutationObserver(reconcile).observe(document.documentElement, {
