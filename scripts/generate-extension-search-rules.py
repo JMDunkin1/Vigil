@@ -1,4 +1,4 @@
-"""Repartition the frozen contextual search matcher without changing its intent.
+"""Repartition the baseline matcher and add search-only age restrictions.
 
 The fixture combines the contextual matcher at searchBaseRef with enforcement
 metadata at searchMetadataRef, including top-level and embedded frame coverage.
@@ -248,6 +248,24 @@ def main():
         rule['condition']['regexFilter'] = expression
         rules.append(rule)
     rules.extend(copy.deepcopy(base[4:]))
+    # Deliberately additive to the frozen baseline. Match declared search text,
+    # never IDs, arbitrary URL fragments, or 18+5 arithmetic. Literal URL '+'
+    # is a form-space; a searched plus sign is percent encoded.
+    age = copy.deepcopy(base[3])
+    age['condition']['regexFilter'] = (
+        r'^https?://[^/?#]+/[^?#]*\?(?:[^&#]*&)*'
+        r'(?:q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|wd|word|tags|tag|gsc\.q|search_api_fulltext)='
+        r'(?:[^&#]*(?:[+_.-]|%20|%2[bdef]|%5f))?'
+        r'(?:18(?:%(?:25){0,3}2b|(?:[+_.-]|%20|%2d|%5f)*plus)|eighteen(?:[+_.-]|%20)+plus)'
+        r'(?:$|&|[+_.-]|%20|%2[bdef]|%5f)'
+    )
+    age_expressions = [expression for expression, _ in partition(age['condition']['regexFilter'])]
+    for index, expression in enumerate(age_expressions):
+        rule = copy.deepcopy(age)
+        rule['id'] = 10000 + index
+        rule['condition']['regexFilter'] = expression
+        rules.append(rule)
+    assert all(compiles(expression) is not None for expression in age_expressions), 'Age-search restriction exceeds Chromium regex budget'
     sizes = [compiles(expression) for expression in expressions]
     assert all((size is not None for size in sizes)), 'A generated partition exceeds the 2 KiB compiler budget'
     other_regexes = 0
@@ -255,7 +273,7 @@ def main():
         path = root / 'extension' / resource['path']
         if path.name != 'rules.json' and path.exists():
             other_regexes += sum(('regexFilter' in rule['condition'] for rule in json.loads(path.read_text())))
-    assert len(expressions) + other_regexes + 4 < 1000, 'Generated static regexes exceed Chromium quota'
+    assert len(expressions) + len(age_expressions) + other_regexes + 4 < 1000, 'Generated static regexes exceed Chromium quota'
     output = json.dumps(rules, indent=2) + '\n'
     destination = root / 'extension/rules.json'
     if args.write:

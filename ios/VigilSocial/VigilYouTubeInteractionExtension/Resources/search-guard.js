@@ -506,7 +506,7 @@ function containsContextualExplicitMedia(value) {
 // turn arbitrary URL metadata or route scaffolding into apparent search words.
 const SEARCH_PARAMETER_NAMES = new Set([
     "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
-    "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
+    "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode", "gsc.q", "search_api_fulltext"
 ]);
 const AMBIGUOUS_SEARCH_PARAMETER_NAMES = new Set(["p", "k", "s", "mode"]);
 // Art categories and product catalogs carry discovery text in the path too;
@@ -578,6 +578,7 @@ function searchQueries(value) {
     const fragment = url.hash.replace(/^#!?/u, "");
     const pathIsSearch = looksLikeSearchRoute(url.pathname);
     const fragmentIsSearch = looksLikeSearchRoute(fragment);
+    const fragmentIsCustomSearch = /^(?:gsc\.(?:tab|q|page)=)/iu.test(fragment);
     const hostname = url.hostname.toLowerCase().replace(/\.$/u, "");
     const protectedParameter = (name) => {
         const normalized = decodeSearchQueryValue(name).toLowerCase();
@@ -600,6 +601,11 @@ function searchQueries(value) {
                 .map(([, query]) => decodeSearchQueryValue(query)));
         }
     }
+    if (fragmentIsCustomSearch) {
+        queries.push(...[...new URLSearchParams(fragment)]
+            .filter(([name]) => name.toLowerCase() === "gsc.q")
+            .map(([, query]) => decodeSearchQueryValue(query)));
+    }
     for (const route of [url.pathname, fragment]) {
         const text = searchRouteText(route);
         if (text)
@@ -608,6 +614,44 @@ function searchQueries(value) {
     return queries.map(query => ({ query, hostname: url.hostname }));
 }
 
+// Search context only: these services are not whole-site bans. Inventory and
+// category sources are recorded in research/2026-10-29-media-discovery-search.md.
+const MEDIA_DISCOVERY_PLATFORMS = [
+    "dedigger.com", "filepursuit.com", "searchfiles.de", "filesearch.link",
+    "mediafiretrend.com", "searchshared.info", "meawfy.com", "eyedex.org",
+    "uvrx.com", "faganfinder.com", "searchftps.net", "mmnt.ru",
+    "drive.google.com", "mega.nz", "mega.io", "mediafire.com", "4shared.com",
+    "dropbox.com", "gofile.io", "archive.org",
+    "images.google.com", "lens.google.com", "images.search.yahoo.com", "video.search.yahoo.com",
+    "tineye.com", "pimeyes.com", "lenso.ai", "facecheck.id",
+    "gettyimages.com", "istockphoto.com", "shutterstock.com", "stock.adobe.com",
+    "alamy.com", "dreamstime.com", "depositphotos.com", "123rf.com",
+    "pexels.com", "pixabay.com", "unsplash.com", "freepik.com",
+    "giphy.com", "tenor.com", "photobucket.com", "imgur.com",
+    "youtube.com", "vimeo.com", "dailymotion.com"
+];
+const MEDIA_DISCOVERY_NAMES = /(?:^|[^\p{L}\p{N}])(?:de[\s_-]*digger|file[\s_-]*pursuit|searchfiles|filesearch|mediafire(?:trend)?|searchshared|meawfy|eyedex|uvrx|google[\s_-]*drive|gdrive|drive\.google\.com|mega\.(?:nz|io)|4shared|dropbox|gofile|archive\.org|google[\s_-]+(?:images|videos)|(?:file|media|image|video)[\s_-]+(?:search|finder)|(?:shared|public)[\s_-]+(?:files|folders)|open[\s_-]+directories)(?:$|[^\p{L}\p{N}])/iu;
+// Promote suggestive/exposure contributors to independent negative signals on
+// media discovery surfaces. Neutral words (photos, files, models) stay neutral.
+const MEDIA_DISCOVERY_MARKERS = /(?:^|[^\p{L}\p{N}])(?:adult|adults|mature|explicit|spicy|steamy|sexy|sensual|seductive|sultry|raunchy|racy|risque|suggestive|provocative|revealing|intimate|uncensored|unfiltered|uncut|sensitive|leaks?|leaked|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|lingerie|underwear|bikinis?|thongs?|boudoir|pin[\s_-]*ups?|cleavage|underboob|busty|voluptuous|thicc|thirst[\s_-]*traps?)(?:$|[^\p{L}\p{N}])/iu;
+const AGE_RESTRICTED_SEARCH_MARKER = /(?:^|[^\p{L}\p{N}])(?:18\s*\+|18[\s_.-]*plus|eighteen[\s_.-]+plus)(?=$|[^\p{L}\p{N}])/iu;
+function isMediaDiscoverySearchUrl(value) {
+    let url;
+    try {
+        url = new URL(String(value || ""));
+    }
+    catch {
+        return false;
+    }
+    if (!["http:", "https:"].includes(url.protocol))
+        return false;
+    // Explicit image/video routes also cover metasearch and self-hosted engines.
+    if (/(?:^|\/)(?:images?|videos?|photos?|media)(?:\/|$)/iu.test(url.pathname))
+        return true;
+    return [...url.searchParams].some(([name, mode]) => /^(?:tbm|udm|ia|iax|category|categories|type|t)$/iu.test(name)
+        && (/^(?:isch|vid|images?|videos?|photos?|media)$/iu.test(mode)
+            || (name.toLowerCase() === "udm" && /^(?:2|7)$/u.test(mode))));
+}
 function containsExplicitMediaLabel(value) {
     return containsContextualExplicitMedia(value);
 }
@@ -620,7 +664,7 @@ const CONTEXTUAL_SEARCH_PLATFORMS = [
     "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com",
     "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com",
     "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app",
-    "patreon.com", "itch.io", "discord.com", "discordapp.com"
+    "patreon.com", "itch.io", "discord.com", "discordapp.com", ...MEDIA_DISCOVERY_PLATFORMS
 ];
 const CONTEXTUAL_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])/iu;
 const CONTEXTUAL_SEARCH_MARKERS = /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu;
@@ -645,8 +689,12 @@ function contextualSearchDecode(value) {
 function containsExplicitSearchVariants(query) {
     return containsExplicitSearchAliases(normalizeAutomaticExplicitText(contextualSearchDecode(query)));
 }
-function containsContextualExplicitSearch(query, hostname = "", includeRedditShorthand = true) {
+function containsContextualExplicitSearch(query, hostname = "", includeRedditShorthand = true, mediaDiscovery = false) {
     const decoded = contextualSearchDecode(query);
+    // Search intent is deliberately stricter than URL/page prose. Check before
+    // ordinary-phrase removal: even "18+ travel insurance" is a typed age query.
+    if (AGE_RESTRICTED_SEARCH_MARKER.test(decoded))
+        return true;
     // Consume only established ordinary phrases. Separate explicit intent in
     // the same query remains available to the media/alias checks.
     const evidence = normalizeAutomaticExplicitText(decoded);
@@ -659,6 +707,10 @@ function containsContextualExplicitSearch(query, hostname = "", includeRedditSho
     const normalized = evidence.replace(/3/gu, "e").replace(/0/gu, "o");
     const host = hostname.toLowerCase().replace(/\.$/u, "");
     const platform = CONTEXTUAL_SEARCH_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`));
+    const discovery = mediaDiscovery || MEDIA_DISCOVERY_PLATFORMS.some(domain => host === domain || host.endsWith(`.${domain}`))
+        || MEDIA_DISCOVERY_NAMES.test(decoded);
+    if (discovery && (CONTEXTUAL_SEARCH_MARKERS.test(normalized) || MEDIA_DISCOVERY_MARKERS.test(normalized)))
+        return true;
     if ((host === "itch.io" || host.endsWith(".itch.io"))
         && /(?:^|[/#])tag-adult(?:$|[/?.#])/iu.test(decoded))
         return true;
@@ -671,7 +723,7 @@ function containsContextualExplicitSearch(query, hostname = "", includeRedditSho
     return (platform || CONTEXTUAL_SEARCH_NAMES.test(decoded)) && CONTEXTUAL_SEARCH_MARKERS.test(normalized);
 }
 function matchContextualExplicitSearchUrl(value) {
-    if (searchQueries(value).some(({ query, hostname }) => containsContextualExplicitSearch(query, hostname)))
+    if (searchQueries(value).some(({ query, hostname }) => containsContextualExplicitSearch(query, hostname, true, isMediaDiscoverySearchUrl(value))))
         return true;
     try {
         const url = new URL(String(value || ""));
@@ -1070,10 +1122,17 @@ function explicitSearchBlockRedirect(rawUrl, baseUrl = location.href) {
         return browserProtectionPageURL("blocked.html");
     return null;
 }
-function containsExplicitSearchText(rawValue, hostname = new URL(location.href).hostname, includeRedditShorthand = true) {
+function containsExplicitSearchText(rawValue, hostname, includeRedditShorthand = true) {
     const decoded = decodeNestedSearchValue(rawValue);
+    const currentPage = hostname === undefined;
+    const host = hostname ?? new URL(location.href).hostname;
+    const mediaDiscovery = currentPage && (isMediaDiscoverySearchUrl(location.href)
+        || (typeof document !== "undefined" && MEDIA_DISCOVERY_NAMES.test([
+            document.title, document.querySelector("h1")?.textContent,
+            document.querySelector('meta[name="description"]')?.getAttribute("content")
+        ].filter(Boolean).join(" "))));
     return containsExplicitSearchKeyword(decoded)
-        || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
+        || containsContextualExplicitSearch(decoded, host, includeRedditShorthand, mediaDiscovery)
         || containsExplicitXxxSearchText(decoded)
         || containsExplicitPersonSearchText(decoded)
         || (hasSafeSearchContributor(decoded) && (hasSavedSafeSearchSubject(decoded)

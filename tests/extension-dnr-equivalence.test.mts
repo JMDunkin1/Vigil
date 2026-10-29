@@ -10,7 +10,7 @@ assert.equal(baseline.searchBaseRef, "296c5e6648b5c0d917b6c524e3d449ede2575b0a",
 assert.equal(baseline.searchMetadataRef, "3258db6d354f2d6253056528b76215287c2e146f", "search enforcement metadata retains the delivery base's top-level and embedded frame coverage");
 const search: Rule[] = JSON.parse(await readFile(new URL("../extension/rules.json", import.meta.url), "utf8"));
 const reddit: Rule[] = JSON.parse(await readFile(new URL("../extension/reddit-navigation-rules.json", import.meta.url), "utf8"));
-const explicit = search.filter(rule => rule.id === 4 || rule.id >= 7);
+const explicit = search.filter(rule => rule.id === 4 || (rule.id >= 7 && rule.id < 10000));
 const redditPartitions = reddit.filter(rule => rule.id === 1 || rule.id >= 4);
 const metadata = (rule: Rule) => ({ priority: rule.priority, action: rule.action, condition: { ...rule.condition, regexFilter: undefined } });
 for (const rule of search) assert.deepEqual(rule.condition.resourceTypes, ["main_frame", "sub_frame"], `every generated search rule and partition preserves both frame types: rule ${rule.id}`);

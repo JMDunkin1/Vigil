@@ -39,13 +39,14 @@ function page(source: string, url: string) {
 const ordinary = [
   "Sporn dog harness", "Caporn family history", "SKU-RULE34567", "webcam480 driver", "AbcHentai90XZ",
   "dbNSFWfile88123", "account_onlyfanshash_04", "Project118plus build", "Nissan R34 photos", "Nissan Skyline R34 tuning",
-  "18+", "18%252B", "18+ travel insurance", "18+ voting eligibility", "Chapter XXX", "Super Bowl XXX videos", "Chapter XXX videos",
+  "Chapter XXX", "Super Bowl XXX videos", "Chapter XXX videos",
   "sex education reddit", "sexual health reddit", "nude lipstick pinterest", "uncensored interview Reddit",
   "naked mole rat photos", "Sex Pistols gallery", "pornography law history", "pornography prevention research",
   "adult education video", "banana cream pie video", "manhwa", "manhua", "manga", "webtoon", "mawha",
   "top 18 manga", "read 18 comics", "chapter 18 manga", "top18manga", "read18comics", "chapter18manga"
 ];
 const explicit = [
+  "18+", "18%252B", "18+ travel insurance", "18+ voting eligibility", "18 plus", "eighteen plus",
   "porn videos", "hentai comics", "nsfw photos", "onlyfans leaks", "honeytoon", "toongod",
   "mature manhwa", "adult webtoon", "uncensored manhua", "xxx videos", "r34 comics", "18+ manga", "r18 manga", "naked girls photos",
   "sex education porn videos", "Nissan R34 hentai comics", "Chapter XXX porn photos", "nude lipstick naked girls",

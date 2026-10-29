@@ -3,7 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ADDITIONAL_EXPLICIT_SEARCH_TERMS, EXPLICIT_MEDIA_PATTERNS, EXPLICIT_MEDIA_ORDINARY_PHRASES, EXPLICIT_AUTOMATIC_ORDINARY_PHRASES, EXPLICIT_VOCABULARY_REPLACEMENTS, EXPLICIT_SEARCH_ALIAS_PATTERNS, EXPLICIT_SEARCH_KEYWORD_TERMS, EXPLICIT_SEARCH_COMPOUND_PATTERN, MULTILINGUAL_EXPLICIT_TERMS, EXPLICIT_PRINT_ORDINARY_PHRASES, EXPLICIT_PRINT_PATTERNS, REVIEWED_EXPLICIT_PRINT_PRODUCT_IDS, REVIEWED_EXPLICIT_PRINT_PRODUCT_ROUTE } from "../src/explicitMediaContext.js";
 import { isDirectRun } from "../src/directRun.js";
-import { CONTEXTUAL_SEARCH_PLATFORMS, CONTEXTUAL_SEARCH_NAMES, CONTEXTUAL_SEARCH_MARKERS, EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS } from "../src/contextualExplicitSearch.js";
+import { CONTEXTUAL_SEARCH_PLATFORMS, CONTEXTUAL_SEARCH_NAMES, CONTEXTUAL_SEARCH_MARKERS, EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS, MEDIA_DISCOVERY_PLATFORMS, MEDIA_DISCOVERY_NAMES, MEDIA_DISCOVERY_MARKERS, AGE_RESTRICTED_SEARCH_MARKER } from "../src/contextualExplicitSearch.js";
 import { MARKETPLACE_SEARCH_FIELDS } from "../src/searchQueryContext.js";
 
 const projectRoot = dirname(dirname(dirname(dirname(fileURLToPath(import.meta.url)))));
@@ -17,8 +17,8 @@ export function generatedNativeExplicitMedia(): string {
   const patterns = Object.entries(EXPLICIT_MEDIA_PATTERNS).map(([name, source]) =>
     `    private static let ${name} = try! NSRegularExpression(pattern: #"${source}"#)`
   ).join("\n");
-  const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, replacement }) => `        text = text.replacingOccurrences(of: #"${pattern}"#, with: "${replacement}", options: [.regularExpression, .caseInsensitive])`).join("\n");
-  const ordinaryReplacements = [...EXPLICIT_MEDIA_ORDINARY_PHRASES, ...EXPLICIT_AUTOMATIC_ORDINARY_PHRASES].map(pattern => `        text = text.replacingOccurrences(of: #"${pattern}"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])`).join("\n");
+  const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, replacement }) => `        (try! NSRegularExpression(pattern: #"${pattern}"#, options: .caseInsensitive), "${replacement}")`).join(",\n");
+  const ordinaryPatterns = [...EXPLICIT_MEDIA_ORDINARY_PHRASES, ...EXPLICIT_AUTOMATIC_ORDINARY_PHRASES].map(pattern => `        try! NSRegularExpression(pattern: #"${pattern}"#, options: .caseInsensitive)`).join(",\n");
   const aliasChecks = EXPLICIT_SEARCH_ALIAS_PATTERNS.map(pattern => `text.range(of: #"${pattern}"#, options: [.regularExpression, .caseInsensitive]) != nil`).join(" || ");
   const comicChecks = EXPLICIT_COMIC_OR_AGE_SEARCH_PATTERNS.map(pattern => `text.range(of: #"${pattern}"#, options: [.regularExpression, .caseInsensitive]) != nil`).join(" || ");
   return `// BEGIN GENERATED EXPLICIT MEDIA MATCHER
@@ -27,6 +27,20 @@ private enum BroadenedExplicitMedia {
     private static let labels: Set<String> = [${ADDITIONAL_EXPLICIT_SEARCH_TERMS.map(term => JSON.stringify(term)).join(", ")}]
     private static let searchKeywords: Set<String> = [${EXPLICIT_SEARCH_KEYWORD_TERMS.map(term => JSON.stringify(term)).join(", ")}]
     private static let searchCompound = try! NSRegularExpression(pattern: #"${EXPLICIT_SEARCH_COMPOUND_PATTERN}"#)
+    private static let ageSearchMarker = try! NSRegularExpression(pattern: #"${AGE_RESTRICTED_SEARCH_MARKER.source}"#, options: .caseInsensitive)
+    private static let searchFormatCharacters = try! NSRegularExpression(pattern: #"[\\u00ad\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufe00-\\ufe0f\\ufeff]"#)
+    private static let discoveryNames = try! NSRegularExpression(pattern: #"${MEDIA_DISCOVERY_NAMES.source}"#, options: .caseInsensitive)
+    private static let discoveryMarkers = try! NSRegularExpression(pattern: #"${MEDIA_DISCOVERY_MARKERS.source}"#, options: .caseInsensitive)
+    private static let contextualMarkers = try! NSRegularExpression(pattern: #"${CONTEXTUAL_SEARCH_MARKERS.source}"#, options: .caseInsensitive)
+    // Compile shared normalization patterns once; a discovery URL can inspect
+    // several components without rebuilding the same regexes for each one.
+    private static let latinLetters = try! NSRegularExpression(pattern: #"\\p{Script=Latin}\\p{M}*"#)
+    private static let vocabularyReplacements: [(NSRegularExpression, String)] = [
+${vocabularyReplacements}
+    ]
+    private static let ordinaryPatterns: [NSRegularExpression] = [
+${ordinaryPatterns}
+    ]
 ${patterns}
     private static let marker = try! NSRegularExpression(pattern: #"^(?:adults?|spicy|creampies?|nudes?|naked|nudity|erotic|erotica|lewd|x+)$"#)
     private static let contributor = try! NSRegularExpression(pattern: #"^(?:mature|steamy|uncensored)$"#)
@@ -41,9 +55,8 @@ ${patterns}
     static func normalizedVocabulary(_ value: String) -> String {
         var text = value.precomposedStringWithCompatibilityMapping
             .replacingOccurrences(of: #"[\\u00ad\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u206f\\ufe00-\\ufe0f\\ufeff]"#, with: "", options: .regularExpression)
-        let latin = try! NSRegularExpression(pattern: #"\\p{Script=Latin}\\p{M}*"#)
         let source = text as NSString
-        for match in latin.matches(in: text, range: NSRange(location: 0, length: source.length)).reversed() {
+        for match in latinLetters.matches(in: text, range: NSRange(location: 0, length: source.length)).reversed() {
             if let range = Range(match.range, in: text) {
                 text.replaceSubrange(range, with: source.substring(with: match.range).folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX")))
             }
@@ -56,13 +69,17 @@ ${patterns}
             let folded = original.lowercased().map { glyphs[String($0)] ?? String($0) }.joined()
             if (vocabulary.contains(folded) || matches(searchCompound, folded)), let range = Range(match.range, in: text) { text.replaceSubrange(range, with: folded) }
         }
-${vocabularyReplacements}
+        for (pattern, replacement) in vocabularyReplacements {
+            text = pattern.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: replacement)
+        }
         return text
     }
 
     static func normalized(_ value: String) -> String {
         var text = normalizedVocabulary(value)
-${ordinaryReplacements}
+        for pattern in ordinaryPatterns {
+            text = pattern.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " vigilordinary ")
+        }
         return text
     }
 
@@ -187,7 +204,21 @@ ${EXPLICIT_PRINT_ORDINARY_PHRASES.map(pattern => `        text = text.replacingO
         return hasMarker && (tokens.contains(where: semanticMedia.contains) || semanticCatalog.contains(previous))
     }
 
-    static func containsSearch(_ value: String, hostname: String = "") -> Bool {
+    static func isMediaDiscoverySearchURL(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        if components.path.range(of: #"(?:^|/)(?:images?|videos?|photos?|media)(?:/|$)"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
+        return (components.queryItems ?? []).contains { item in
+            ["tbm", "udm", "ia", "iax", "category", "categories", "type", "t"].contains(item.name.lowercased())
+                && ((item.value ?? "").range(of: #"^(?:isch|vid|images?|videos?|photos?|media)$"#, options: [.regularExpression, .caseInsensitive]) != nil
+                    || (item.name.lowercased() == "udm" && ["2", "7"].contains(item.value ?? "")))
+        }
+    }
+
+    static func containsSearch(_ value: String, hostname: String = "", mediaDiscovery: Bool = false) -> Bool {
+        let ageSource = value.precomposedStringWithCompatibilityMapping
+        let ageText = searchFormatCharacters.stringByReplacingMatches(in: ageSource, range: NSRange(ageSource.startIndex..., in: ageSource), withTemplate: "")
+        if matches(ageSearchMarker, ageText) { return true }
         let text = normalizedEvidence(value)
         let lower = text.lowercased()
         let source = lower as NSString
@@ -204,7 +235,11 @@ ${EXPLICIT_PRINT_ORDINARY_PHRASES.map(pattern => `        text = text.replacingO
         }
         let namedPlatform = text.range(of: #"${CONTEXTUAL_SEARCH_NAMES.source}"#, options: [.regularExpression, .caseInsensitive]) != nil
         let discoveryText = text.replacingOccurrences(of: "3", with: "e").replacingOccurrences(of: "0", with: "o")
-        return (platform || namedPlatform) && discoveryText.range(of: #"${CONTEXTUAL_SEARCH_MARKERS.source}"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let discovery = mediaDiscovery
+            || [${MEDIA_DISCOVERY_PLATFORMS.map(domain => JSON.stringify(domain)).join(", ")}].contains { host == $0 || host.hasSuffix("." + $0) }
+            || matches(discoveryNames, text)
+        if discovery && (matches(contextualMarkers, discoveryText) || matches(discoveryMarkers, discoveryText)) { return true }
+        return (platform || namedPlatform) && matches(contextualMarkers, discoveryText)
     }
 
     static func contains(_ value: String) -> Bool {

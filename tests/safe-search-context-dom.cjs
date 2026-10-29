@@ -62,6 +62,29 @@ async function main() {
   }
   const query = text => `https://www.google.com/search?q=${encodeURIComponent(text)}&safe=active`;
   try {
+    for (const [url, html, expected] of [
+      ['https://www.dedigger.com/', '<input type="search" name="search" value="spicy">', true],
+      ['https://unknown-finder.example/', '<h1>Find public files in Google Drive</h1><input type="search" value="suggestive">', true],
+      ['https://unknown-finder.example/', '<h1>Image search engine</h1><input type="search" value="mature">', true],
+      ['https://unknown-finder.example/', '<h1>Find public files</h1><input type="search" value="family photos">', false],
+      ['https://ordinary.example/', '<h1>Project notes</h1><input type="search" value="suggestive">', false],
+      ['https://ordinary.example/', '<input type="search" value="18 plus">', true],
+      ['https://ordinary.example/', '<article>File search engine 18+ release notes</article>', false]
+    ]) {
+      const result = await page(url, html);
+      assert.equal(result.redirects.includes(blocked), expected, `media search context and existing controls: ${url} ${html}`);
+    }
+    for (const activation of ['input', 'keydown', 'click', 'submit']) {
+      const result = await page('https://new-file-index.example/', '<h1>File search engine</h1><form role="search" method="post"><input type="search" name="custom-field"><button>Search</button></form>');
+      assert.deepEqual(result.redirects, []);
+      await result.win.webContents.executeJavaScript(`(() => {
+        const input = document.querySelector('input'); input.value = 'spicy';
+        const target = ${JSON.stringify(activation)} === 'submit' ? document.querySelector('form') : ${JSON.stringify(activation)} === 'click' ? document.querySelector('button') : input;
+        const event = ${JSON.stringify(activation)} === 'keydown' ? new document.defaultView.KeyboardEvent('keydown', {key:'Enter',bubbles:true,cancelable:true}) : new MouseEvent(${JSON.stringify(activation)}, {bubbles:true,cancelable:true});
+        target.dispatchEvent(event);
+      })()`);
+      assert.ok(result.redirects.includes(blocked), `unknown media finder blocks ${activation} before its search executes`);
+    }
     for (const metadata of [
       '<input type="hidden" name="ei" value="AQpornTracked">',
       '<input type="hidden" name="ved" value="nsfwRandomTracking">',
@@ -104,7 +127,8 @@ async function main() {
     }
     assert.ok((await page(query('Jane Example photos'), '<div role="status">Some results have been limited by <a href="https://www.google.com/safesearch">SafeSearch</a>. Learn more</div>')).redirects.includes(blocked), 'a genuine notice can link its SafeSearch label');
     assert.ok((await page(query('Jane Example photos'), `<main id="search">${notice}</main>`)).redirects.includes(blocked), 'real notice inside Google search container blocks the contributing query');
-    for (const text of ['sex', 'sexual', 'nude', 'nudity', 'fetish', 'leaks', 'cream pie', 'mature', 'uncensored', 'steamy', 'spicy', 'adult', 'nude art', 'uncensored interview', 'medical anatomy photos', 'adult education', 'spicy chicken videos']) {
+    assert.ok((await page(query('nude art'), '<main>Results</main>')).redirects.includes(blocked), 'explicit art search is blocked without requiring a SafeSearch notice');
+    for (const text of ['sex', 'sexual', 'nude', 'nudity', 'fetish', 'leaks', 'cream pie', 'mature', 'uncensored', 'steamy', 'spicy', 'adult', 'uncensored interview', 'medical anatomy photos', 'adult education', 'spicy chicken videos']) {
       assert.deepEqual((await page(query(text), '<main>Ordinary results</main>')).redirects, [], `ambiguous search without a popup stays available: ${text}`);
       assert.ok((await page(query(text), notice + '<main>Limited results</main>')).redirects.includes(blocked), `ambiguous search plus popup blocks without a name or file links: ${text}`);
     }

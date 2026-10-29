@@ -50,8 +50,8 @@ struct NativeTextClassifierRegression {
             "sex education", "sexual health", "nude lipstick photos", "nude art figure drawing", "naked mole rat photos",
             "Sex Pistols gallery", "adult education video", "mature skin photos", "uncensored interview videos",
             "pornographic content moderation research", "pornography blocker", "pornography addiction recovery",
-            "pornography law history", "NSFW classifier", "NSFW API reference", "18+ voting eligibility",
-            "18+ travel insurance", "18+5", "manhwa", "manhua", "manga", "webtoon", "mawha",
+            "pornography law history", "NSFW classifier", "NSFW API reference",
+            "18+5", "manhwa", "manhua", "manga", "webtoon", "mawha",
             "nude watercolor palette", "nude art sculpture", "mature trees", "erotic imagery art history",
             "top 18 manga for beginners", "read 18 comics this year", "chapter 18 manga",
             "nude art drawings", "nudity anatomy"
@@ -59,6 +59,11 @@ struct NativeTextClassifierRegression {
             let verdict = await classifier.classify(pageText: text, wasTruncated: false)
             precondition(verdict == .safe, "Unexpected ordinary automatic text verdict for \(text): \(verdict)")
             precondition(!nativeAutomaticSearchForTesting(text), "Unexpected ordinary native automatic search: \(text)")
+        }
+        for text in ["18+", "18 plus", "18+ voting eligibility", "18+ travel insurance", "eighteen plus"] {
+            let verdict = await classifier.classify(pageText: text, wasTruncated: false)
+            precondition(verdict == .safe, "An age label in ordinary page prose is not an explicit-content ban: \(text)")
+            precondition(nativeAutomaticSearchForTesting(text), "An intentional age-restricted search must block: \(text)")
         }
         for text in [
             "porn", "p.o.r.n videos", "ｐｏｒｎ", "pornvideos", "hentai manga", "nsfw photos", "cam4", "onlyfans",

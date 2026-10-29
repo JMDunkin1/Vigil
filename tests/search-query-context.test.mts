@@ -85,10 +85,11 @@ const ordinaryQueries = [
   "dbNSFWfile88123", "account_onlyfanshash_04", "Project118plus build", "Nissan R34 photos", "Chapter XXX videos",
   "XXX chromosomes", "sex education reddit", "sexual health reddit", "nude lipstick photos", "naked mole rat photos",
   "nsfw moderation", "nsfw API reference", "pornography law history", "porn blocker detection",
-  "adult education video", "manhwa", "manga", "18+", "18%252B", "18+ travel insurance", "sexdollhouse product", "sextoyota engine",
+  "adult education video", "manhwa", "manga", "sexdollhouse product", "sextoyota engine",
   "top 18 manga", "read 18 comics", "chapter 18 manga"
 ];
 const explicitQueries = [
+  "18+", "18%252B", "18+ travel insurance", "18+ voting eligibility", "18 plus", "eighteen plus",
   "porn", "hentai", "onlyfans", "cam4", "fansly", "toongod", "honeytoon", "xxx", "xxx videos",
   "pornvids", "hentaicomics", "nsfwphotos", "mature manhwa", "adult webtoon", "18+ videos", "18+ manga", "r18 manga",
   "Nissan R34 hentai comics", "Chapter XXX porn photos", "nsfw moderation porn videos",

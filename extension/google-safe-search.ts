@@ -1,5 +1,5 @@
 import { checkSearchBreakBeforeNavigation } from "./search-break.js";
-import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl } from "../src/contextualExplicitSearch.js";
+import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl, isMediaDiscoverySearchUrl, MEDIA_DISCOVERY_NAMES } from "../src/contextualExplicitSearch.js";
 import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
 import { searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
 import { containsExplicitSearchKeyword, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
@@ -77,10 +77,17 @@ function explicitSearchBlockRedirect(rawUrl: string, baseUrl = location.href): s
   return null;
 }
 
-function containsExplicitSearchText(rawValue: string, hostname = new URL(location.href).hostname, includeRedditShorthand = true): boolean {
+function containsExplicitSearchText(rawValue: string, hostname?: string, includeRedditShorthand = true): boolean {
   const decoded = decodeNestedSearchValue(rawValue);
+  const currentPage = hostname === undefined;
+  const host = hostname ?? new URL(location.href).hostname;
+  const mediaDiscovery = currentPage && (isMediaDiscoverySearchUrl(location.href)
+    || (typeof document !== "undefined" && MEDIA_DISCOVERY_NAMES.test([
+      document.title, document.querySelector("h1")?.textContent,
+      document.querySelector('meta[name="description"]')?.getAttribute("content")
+    ].filter(Boolean).join(" "))));
   return containsExplicitSearchKeyword(decoded)
-    || containsContextualExplicitSearch(decoded, hostname, includeRedditShorthand)
+    || containsContextualExplicitSearch(decoded, host, includeRedditShorthand, mediaDiscovery)
     || containsExplicitXxxSearchText(decoded)
     || containsExplicitPersonSearchText(decoded)
     || (hasSafeSearchContributor(decoded) && (hasSavedSafeSearchSubject(decoded)

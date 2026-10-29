@@ -313,6 +313,76 @@ private enum BroadenedExplicitMedia {
     private static let labels: Set<String> = ["pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos", "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes", "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate", "toonily", "omegascans", "manhwabuddy", "mangadna", "manghaha", "mangaforfree", "manhwaclub", "webtoonscan", "pornhwa", "qtoon", "comicle", "mangabuddy", "mangameow", "mangaball", "kuramanga", "comizy", "nyrascans", "mangavyvy", "hiperdex", "tappytoon", "toomics", "lezhin", "lezhinus", "lezhinx", "daycomics", "toptoon", "coolmic", "mangaplaza", "ebookrenta", "webcomicsapp", "lalatoon", "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls", "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"]
     private static let searchKeywords: Set<String> = ["porn", "porno", "prno", "p0rn", "p0rno", "pornography", "pornographic", "nsfw", "hentai", "h3ntai", "rule34", "gonewild", "onlyfans", "fansly", "chaturbate", "stripchat", "cam4", "redtube", "youporn", "spankbang", "xvideos", "xnxx", "xhamster", "pornhub", "honeytoon", "honeytoons", "hooneytoon", "hooneytoons", "toongod", "pornography", "pornographic", "pornstar", "pornstars", "pornpics", "pornvideos", "sexcam", "sexcams", "camsex", "camgirl", "camgirls", "sextape", "sextapes", "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate", "toonily", "omegascans", "manhwabuddy", "mangadna", "manghaha", "mangaforfree", "manhwaclub", "webtoonscan", "pornhwa", "qtoon", "comicle", "mangabuddy", "mangameow", "mangaball", "kuramanga", "comizy", "nyrascans", "mangavyvy", "hiperdex", "tappytoon", "toomics", "lezhin", "lezhinus", "lezhinx", "daycomics", "toptoon", "coolmic", "mangaplaza", "ebookrenta", "webcomicsapp", "lalatoon", "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls", "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"]
     private static let searchCompound = try! NSRegularExpression(pattern: #"^(?:porn|porno|p0rn|hentai|h3ntai|nsfw)(?:videos?|vids?|photos?|pics?|images?|gifs?|comics?|manga|manhwa|manhua|webtoons?|doujin(?:shi)?|hub|tube|hd|vr|4k)$"#)
+    private static let ageSearchMarker = try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:18\s*\+|18[\s_.-]*plus|eighteen[\s_.-]+plus)(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive)
+    private static let searchFormatCharacters = try! NSRegularExpression(pattern: #"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufe00-\ufe0f\ufeff]"#)
+    private static let discoveryNames = try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:de[\s_-]*digger|file[\s_-]*pursuit|searchfiles|filesearch|mediafire(?:trend)?|searchshared|meawfy|eyedex|uvrx|google[\s_-]*drive|gdrive|drive\.google\.com|mega\.(?:nz|io)|4shared|dropbox|gofile|archive\.org|google[\s_-]+(?:images|videos)|(?:file|media|image|video)[\s_-]+(?:search|finder)|(?:shared|public)[\s_-]+(?:files|folders)|open[\s_-]+directories)(?:$|[^\p{L}\p{N}])"#, options: .caseInsensitive)
+    private static let discoveryMarkers = try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:adult|adults|mature|explicit|spicy|steamy|sexy|sensual|seductive|sultry|raunchy|racy|risque|suggestive|provocative|revealing|intimate|uncensored|unfiltered|uncut|sensitive|leaks?|leaked|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|lingerie|underwear|bikinis?|thongs?|boudoir|pin[\s_-]*ups?|cleavage|underboob|busty|voluptuous|thicc|thirst[\s_-]*traps?)(?:$|[^\p{L}\p{N}])"#, options: .caseInsensitive)
+    private static let contextualMarkers = try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])"#, options: .caseInsensitive)
+    // Compile shared normalization patterns once; a discovery URL can inspect
+    // several components without rebuilding the same regexes for each one.
+    private static let latinLetters = try! NSRegularExpression(pattern: #"\p{Script=Latin}\p{M}*"#)
+    private static let vocabularyReplacements: [(NSRegularExpression, String)] = [
+        (try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])q[\s_.\p{Pd}]+toon(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive), " qtoon "),
+        (try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])(?:omega[\s_.\p{Pd}]+scans)(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive), " omegascans "),
+        (try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+dna(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive), " mangadna "),
+        (try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+for[\s_.\p{Pd}]+free(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive), " mangaforfree "),
+        (try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])manhwa[\s_.\p{Pd}]+buddy(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive), " manhwabuddy "),
+        (try! NSRegularExpression(pattern: #"(?:^|[^\p{L}\p{N}])manhwa[\s_.\p{Pd}]+club(?=$|[^\p{L}\p{N}])"#, options: .caseInsensitive), " manhwaclub "),
+        (try! NSRegularExpression(pattern: #"\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b"#, options: .caseInsensitive), "sexdoll"),
+        (try! NSRegularExpression(pattern: #"\bsex[\s_\p{Pd}]+robots?\b"#, options: .caseInsensitive), "sexrobot"),
+        (try! NSRegularExpression(pattern: #"\bsex[\s_\p{Pd}]+toys?\b"#, options: .caseInsensitive), "sextoy"),
+        (try! NSRegularExpression(pattern: #"\b(sexy|lingerie|mature)(?=\d{1,2}[x×]\d{1,2}\b)"#, options: .caseInsensitive), "$1 "),
+        (try! NSRegularExpression(pattern: #"\b(?:bare|exposed|uncovered)[\s_-]+(?:breasts?|nipples?|genitals?)\b"#, options: .caseInsensitive), "nude"),
+        (try! NSRegularExpression(pattern: #"\b(?:nak3d|n4ked|n4k3d)\b"#, options: .caseInsensitive), "naked"),
+        (try! NSRegularExpression(pattern: #"\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b"#, options: .caseInsensitive), "nudes"),
+        (try! NSRegularExpression(pattern: #"\b(?:ph0t0s|ph0tos|phot0s)\b"#, options: .caseInsensitive), "photos"),
+        (try! NSRegularExpression(pattern: #"\bn[\s_.-]+a[\s_.-]+k[\s_.-]+e[\s_.-]+d\b"#, options: .caseInsensitive), "naked"),
+        (try! NSRegularExpression(pattern: #"\bn[\s_.-]+u[\s_.-]+d[\s_.-]+e(?:[\s_.-]+s)?\b"#, options: .caseInsensitive), "nudes"),
+        (try! NSRegularExpression(pattern: #"\bp[\s_.-]+[o0][\s_.-]+r[\s_.-]+n\b"#, options: .caseInsensitive), "porn"),
+        (try! NSRegularExpression(pattern: #"\b(naked|nudes?|topless|bottomless|adult|sex)(girls?|boys?|women|woman|men|males?|females?|models?|videos?|vids?|photos?|pics?|images?)\b"#, options: .caseInsensitive), "$1 $2")
+    ]
+    private static let ordinaryPatterns: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: #"\bnaked[\s_-]+(?:eyes?|mole[\s_-]+rats?|neck[\s_-]+chickens?|singularit(?:y|ies)|dna|seeds?|calls?|puts?|short[\s_-]+(?:selling|positions?)|stocks?|options?|economics|wires?|cables?|roofs?|trucks?|cakes?|burrito(?:[\s_-]+bowls?)?)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:bare[\s_-]+naked[\s_-]+ladies|barenaked[\s_-]+ladies|naked[\s_-]+(?:gun|truth|lunch|brothers[\s_-]+band|king|snake|cowboy|chef))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:nude[\s_-]+descending[\s_-]+(?:a[\s_-]+)?staircase|(?:the[\s_-]+)?naked[\s_-]+maja|blue[\s_-]+nude[\s_-]+matisse)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnude[\s_-]+(?:sculptures?|statues?|figure[\s_-]+drawings?|lipsticks?|makeup|nail[\s_-]+polish|nails?|palettes?|manicures?|beige[\s_-]+swatches?|(?:colou?red[\s_-]+)?(?:shoes?|heels?|dresses?|clothing|outfits?|fabrics?|shades?|colou?rs?))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:see[\s_-]+through|seethrough)[\s_-]+(?:glass|windows?|fabrics?|curtains?|materials?)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:topless[\s_-]+trucks?|bottomless[\s_-]+(?:coffee|mimosas?|brunch|pits?))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bstripping[\s_-]+(?:paint|wallpaper|furniture|wood|floors?|ions?|bond[\s_-]+coupons?|thyme[\s_-]+leaves)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:boston[\s_-]+cream[\s_-]+pies?|cream[\s_-]+pies?[\s_-]+baker(?:y|ies)|cum[\s_-]+laude)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:blue|great|coal|crested|marsh|willow|bearded|long[\s_-]+tailed)[\s_-]+tits?\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:tits?[\s_-]+bird[\s_-]+species|boobies[\s_-]+galapagos[\s_-]+birds?|(?:blue[\s_-]+footed|red[\s_-]+footed|brown|masked|nazca)[\s_-]+boobies|cock[\s_-]+(?:pheasants?|sparrows?|roosters?|robins?)|wild[\s_-]+asses|pussy[\s_-]+willows?)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:horny[\s_-]+(?:toads?|goat[\s_-]+weed)|adult[\s_-]+(?:butterflies|birds?|fish|animals?|insects?))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:oral[\s_-]+(?:thrush|feeding|arguments?|presentations?|exams?|hygiene|fixation[\s_-]+shakira)|(?:assisted[\s_-]+)?oral[\s_-]+feeding|anal[\s_-]+fistulas?)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:sex[\s_-]+(?:education|determination|differences|changing|chromosomes?)|sexual[\s_-]+(?:health|reproduction|dimorphism|selection|orientation|harassment|assault)|same[\s_-]+sex|opposite[\s_-]+sex)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:breast[\s_-]+(?:reconstruction|feeding|tissue[\s_-]+histology)|buttocks[\s_-]+stretching|feet[\s_-]+pain|thighs?[\s_-]+exercises?|cleavage[\s_-]+(?:crystal|mineral))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:sex[\s_-]+pistols|dick[\s_-]+(?:van[\s_-]+dyke|tracy|clark)|moby[\s_-]+dick|hot[\s_-]+money|penetration[\s_-]+(?:pricing|testing|tests?))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:fingering[\s_-]+(?:guitar|piano|music)|(?:guitar|piano)[\s_-]+fingering|strip[\s_-]+tease[\s_-]+rose(?=[\s_-]+(?:growing|garden|plant)))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bleak(?:s|ed)?[\s_-]+(?:(?:pentagon|government|classified|court|source)[\s_-]+)?(?:documents?|data|databases?|passwords?|code|pipes?|aquariums?|gardening)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:nissan|skyline|gt[\s_-]?r)[\s_-]+r[\s_-]?34\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\br[\s_-]?34[\s_-]+(?:nissan|skyline|gt[\s_-]?r)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\brule[\s_.-]*34[\s_-]+(?:algorithm|theorem|proof|specification|standard|procedure)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:chapter|book|section|volume|part|appendix|super[\s_-]+bowl)[\s_-]+x{3,}\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bx{3,}[\s_-]+chromosomes?\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bchromosomes?[\s_-]+x{3,}\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bxxx[\s_-]+(?:vin[\s_-]+diesel|return[\s_-]+of[\s_-]+xander[\s_-]+cage|2002[\s_-]+(?:film|movie))\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bvin[\s_-]+diesel[\s_-]+xxx\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\badult[\s_-]+(?:education|learning|training|literacy)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bmature[\s_-]+skin\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\buncensored[\s_-]+interviews?\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnude[\s_-]+art[\s_-]+(?:figure[\s_-]+)?drawings?\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnude[\s_-]+art[\s_-]+videos?\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnudity[\s_-]+anatomy\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnude[\s_-]+(?:watercolou?r[\s_-]+palettes?|art[\s_-]+sculptures?)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bmature[\s_-]+trees?\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\berotic[\s_-]+imagery[\s_-]+art[\s_-]+history\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:porn|porno|pornography|pornographic)[\s_-]+(?:content[\s_-]+)?(?:blockers?|blocking|filters?|filtering|detection|detectors?|moderation|prevention)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bpornography[\s_-]+(?:laws?|legal[\s_-]+history)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b(?:porn|pornography)[\s_-]+(?:addiction[\s_-]+)?(?:recovery|treatment)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnsfw[\s_-]+(?:classifiers?|classification|filters?|filtering|detection|detectors?|moderation)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\bnsfw[\s_-]+api[\s_-]+(?:reference|documentation)\b"#, options: .caseInsensitive),
+        try! NSRegularExpression(pattern: #"\b18\s*\+[\s_-]+(?:travel[\s_-]+insurance|insurance|(?:voting[\s_-]+)?eligibility|age[\s_-]+requirements?)\b"#, options: .caseInsensitive)
+    ]
     private static let exposure = try! NSRegularExpression(pattern: #"^(?:nud|nuds|nudes?|nued|nudity|naked|nakedness|topless|bottomless|unclothed|undressed|undressing|stripping|striptease|fullfrontal|seethrough|upskirt|downblouse|nipslips?|cameltoe)$"#)
     private static let sexual = try! NSRegularExpression(pattern: #"^(?:erotic|erotica|lewd|horny|sensual|seductive|sex|sexual|sexually|raunchy|salacious|lustful|lascivious|risque|risqué|sultry|racy|titillating|arousing|aroused|fetish|fetishes|kinky|kink|bdsm|bondage)$"#)
     private static let acts = try! NSRegularExpression(pattern: #"^(?:blowjobs?|handjobs?|cumshots?|cum|cumming|ejaculation|fingering|selfpleasure|creampies?|bukkake|gangbangs?|threesomes?|orgies|orgy|masturbation|masturbating|fucking|penetration|anal|oral|doggystyle|pegging|squirting|sexting)$"#)
@@ -342,9 +412,8 @@ private enum BroadenedExplicitMedia {
     static func normalizedVocabulary(_ value: String) -> String {
         var text = value.precomposedStringWithCompatibilityMapping
             .replacingOccurrences(of: #"[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufe00-\ufe0f\ufeff]"#, with: "", options: .regularExpression)
-        let latin = try! NSRegularExpression(pattern: #"\p{Script=Latin}\p{M}*"#)
         let source = text as NSString
-        for match in latin.matches(in: text, range: NSRange(location: 0, length: source.length)).reversed() {
+        for match in latinLetters.matches(in: text, range: NSRange(location: 0, length: source.length)).reversed() {
             if let range = Range(match.range, in: text) {
                 text.replaceSubrange(range, with: source.substring(with: match.range).folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX")))
             }
@@ -357,69 +426,17 @@ private enum BroadenedExplicitMedia {
             let folded = original.lowercased().map { glyphs[String($0)] ?? String($0) }.joined()
             if (vocabulary.contains(folded) || matches(searchCompound, folded)), let range = Range(match.range, in: text) { text.replaceSubrange(range, with: folded) }
         }
-        text = text.replacingOccurrences(of: #"(?:^|[^\p{L}\p{N}])q[\s_.\p{Pd}]+toon(?=$|[^\p{L}\p{N}])"#, with: " qtoon ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"(?:^|[^\p{L}\p{N}])(?:omega[\s_.\p{Pd}]+scans)(?=$|[^\p{L}\p{N}])"#, with: " omegascans ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+dna(?=$|[^\p{L}\p{N}])"#, with: " mangadna ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+for[\s_.\p{Pd}]+free(?=$|[^\p{L}\p{N}])"#, with: " mangaforfree ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"(?:^|[^\p{L}\p{N}])manhwa[\s_.\p{Pd}]+buddy(?=$|[^\p{L}\p{N}])"#, with: " manhwabuddy ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"(?:^|[^\p{L}\p{N}])manhwa[\s_.\p{Pd}]+club(?=$|[^\p{L}\p{N}])"#, with: " manhwaclub ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:sex|love)[\s_\p{Pd}]+(?:(?:silicone|tpe|realistic|lifelike|full[\s_\p{Pd}]+body)[\s_\p{Pd}]+){0,3}dolls?\b"#, with: "sexdoll", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+robots?\b"#, with: "sexrobot", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bsex[\s_\p{Pd}]+toys?\b"#, with: "sextoy", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(sexy|lingerie|mature)(?=\d{1,2}[x×]\d{1,2}\b)"#, with: "$1 ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:bare|exposed|uncovered)[\s_-]+(?:breasts?|nipples?|genitals?)\b"#, with: "nude", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:nak3d|n4ked|n4k3d)\b"#, with: "naked", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:nud3s?|nudez|nudz|n00dz|n00des|noodz)\b"#, with: "nudes", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:ph0t0s|ph0tos|phot0s)\b"#, with: "photos", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bn[\s_.-]+a[\s_.-]+k[\s_.-]+e[\s_.-]+d\b"#, with: "naked", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bn[\s_.-]+u[\s_.-]+d[\s_.-]+e(?:[\s_.-]+s)?\b"#, with: "nudes", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bp[\s_.-]+[o0][\s_.-]+r[\s_.-]+n\b"#, with: "porn", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(naked|nudes?|topless|bottomless|adult|sex)(girls?|boys?|women|woman|men|males?|females?|models?|videos?|vids?|photos?|pics?|images?)\b"#, with: "$1 $2", options: [.regularExpression, .caseInsensitive])
+        for (pattern, replacement) in vocabularyReplacements {
+            text = pattern.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: replacement)
+        }
         return text
     }
 
     static func normalized(_ value: String) -> String {
         var text = normalizedVocabulary(value)
-        text = text.replacingOccurrences(of: #"\bnaked[\s_-]+(?:eyes?|mole[\s_-]+rats?|neck[\s_-]+chickens?|singularit(?:y|ies)|dna|seeds?|calls?|puts?|short[\s_-]+(?:selling|positions?)|stocks?|options?|economics|wires?|cables?|roofs?|trucks?|cakes?|burrito(?:[\s_-]+bowls?)?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:bare[\s_-]+naked[\s_-]+ladies|barenaked[\s_-]+ladies|naked[\s_-]+(?:gun|truth|lunch|brothers[\s_-]+band|king|snake|cowboy|chef))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:nude[\s_-]+descending[\s_-]+(?:a[\s_-]+)?staircase|(?:the[\s_-]+)?naked[\s_-]+maja|blue[\s_-]+nude[\s_-]+matisse)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnude[\s_-]+(?:sculptures?|statues?|figure[\s_-]+drawings?|lipsticks?|makeup|nail[\s_-]+polish|nails?|palettes?|manicures?|beige[\s_-]+swatches?|(?:colou?red[\s_-]+)?(?:shoes?|heels?|dresses?|clothing|outfits?|fabrics?|shades?|colou?rs?))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:see[\s_-]+through|seethrough)[\s_-]+(?:glass|windows?|fabrics?|curtains?|materials?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:topless[\s_-]+trucks?|bottomless[\s_-]+(?:coffee|mimosas?|brunch|pits?))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bstripping[\s_-]+(?:paint|wallpaper|furniture|wood|floors?|ions?|bond[\s_-]+coupons?|thyme[\s_-]+leaves)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:boston[\s_-]+cream[\s_-]+pies?|cream[\s_-]+pies?[\s_-]+baker(?:y|ies)|cum[\s_-]+laude)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:blue|great|coal|crested|marsh|willow|bearded|long[\s_-]+tailed)[\s_-]+tits?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:tits?[\s_-]+bird[\s_-]+species|boobies[\s_-]+galapagos[\s_-]+birds?|(?:blue[\s_-]+footed|red[\s_-]+footed|brown|masked|nazca)[\s_-]+boobies|cock[\s_-]+(?:pheasants?|sparrows?|roosters?|robins?)|wild[\s_-]+asses|pussy[\s_-]+willows?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:horny[\s_-]+(?:toads?|goat[\s_-]+weed)|adult[\s_-]+(?:butterflies|birds?|fish|animals?|insects?))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:oral[\s_-]+(?:thrush|feeding|arguments?|presentations?|exams?|hygiene|fixation[\s_-]+shakira)|(?:assisted[\s_-]+)?oral[\s_-]+feeding|anal[\s_-]+fistulas?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:sex[\s_-]+(?:education|determination|differences|changing|chromosomes?)|sexual[\s_-]+(?:health|reproduction|dimorphism|selection|orientation|harassment|assault)|same[\s_-]+sex|opposite[\s_-]+sex)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:breast[\s_-]+(?:reconstruction|feeding|tissue[\s_-]+histology)|buttocks[\s_-]+stretching|feet[\s_-]+pain|thighs?[\s_-]+exercises?|cleavage[\s_-]+(?:crystal|mineral))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:sex[\s_-]+pistols|dick[\s_-]+(?:van[\s_-]+dyke|tracy|clark)|moby[\s_-]+dick|hot[\s_-]+money|penetration[\s_-]+(?:pricing|testing|tests?))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:fingering[\s_-]+(?:guitar|piano|music)|(?:guitar|piano)[\s_-]+fingering|strip[\s_-]+tease[\s_-]+rose(?=[\s_-]+(?:growing|garden|plant)))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bleak(?:s|ed)?[\s_-]+(?:(?:pentagon|government|classified|court|source)[\s_-]+)?(?:documents?|data|databases?|passwords?|code|pipes?|aquariums?|gardening)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:nissan|skyline|gt[\s_-]?r)[\s_-]+r[\s_-]?34\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\br[\s_-]?34[\s_-]+(?:nissan|skyline|gt[\s_-]?r)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\brule[\s_.-]*34[\s_-]+(?:algorithm|theorem|proof|specification|standard|procedure)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:chapter|book|section|volume|part|appendix|super[\s_-]+bowl)[\s_-]+x{3,}\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bx{3,}[\s_-]+chromosomes?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bchromosomes?[\s_-]+x{3,}\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bxxx[\s_-]+(?:vin[\s_-]+diesel|return[\s_-]+of[\s_-]+xander[\s_-]+cage|2002[\s_-]+(?:film|movie))\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bvin[\s_-]+diesel[\s_-]+xxx\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\badult[\s_-]+(?:education|learning|training|literacy)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bmature[\s_-]+skin\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\buncensored[\s_-]+interviews?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnude[\s_-]+art[\s_-]+(?:figure[\s_-]+)?drawings?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnude[\s_-]+art[\s_-]+videos?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnudity[\s_-]+anatomy\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnude[\s_-]+(?:watercolou?r[\s_-]+palettes?|art[\s_-]+sculptures?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bmature[\s_-]+trees?\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\berotic[\s_-]+imagery[\s_-]+art[\s_-]+history\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:porn|porno|pornography|pornographic)[\s_-]+(?:content[\s_-]+)?(?:blockers?|blocking|filters?|filtering|detection|detectors?|moderation|prevention)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bpornography[\s_-]+(?:laws?|legal[\s_-]+history)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b(?:porn|pornography)[\s_-]+(?:addiction[\s_-]+)?(?:recovery|treatment)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnsfw[\s_-]+(?:classifiers?|classification|filters?|filtering|detection|detectors?|moderation)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\bnsfw[\s_-]+api[\s_-]+(?:reference|documentation)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
-        text = text.replacingOccurrences(of: #"\b18\s*\+[\s_-]+(?:travel[\s_-]+insurance|insurance|(?:voting[\s_-]+)?eligibility|age[\s_-]+requirements?)\b"#, with: " vigilordinary ", options: [.regularExpression, .caseInsensitive])
+        for pattern in ordinaryPatterns {
+            text = pattern.stringByReplacingMatches(in: text, range: NSRange(text.startIndex..., in: text), withTemplate: " vigilordinary ")
+        }
         return text
     }
 
@@ -550,7 +567,21 @@ private enum BroadenedExplicitMedia {
         return hasMarker && (tokens.contains(where: semanticMedia.contains) || semanticCatalog.contains(previous))
     }
 
-    static func containsSearch(_ value: String, hostname: String = "") -> Bool {
+    static func isMediaDiscoverySearchURL(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        if components.path.range(of: #"(?:^|/)(?:images?|videos?|photos?|media)(?:/|$)"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
+        return (components.queryItems ?? []).contains { item in
+            ["tbm", "udm", "ia", "iax", "category", "categories", "type", "t"].contains(item.name.lowercased())
+                && ((item.value ?? "").range(of: #"^(?:isch|vid|images?|videos?|photos?|media)$"#, options: [.regularExpression, .caseInsensitive]) != nil
+                    || (item.name.lowercased() == "udm" && ["2", "7"].contains(item.value ?? "")))
+        }
+    }
+
+    static func containsSearch(_ value: String, hostname: String = "", mediaDiscovery: Bool = false) -> Bool {
+        let ageSource = value.precomposedStringWithCompatibilityMapping
+        let ageText = searchFormatCharacters.stringByReplacingMatches(in: ageSource, range: NSRange(ageSource.startIndex..., in: ageSource), withTemplate: "")
+        if matches(ageSearchMarker, ageText) { return true }
         let text = normalizedEvidence(value)
         let lower = text.lowercased()
         let source = lower as NSString
@@ -559,7 +590,7 @@ private enum BroadenedExplicitMedia {
         if text.range(of: #"(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}]|videos?\b|vids?\b|photos?\b|pics?\b|porn\b)"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
         if text.range(of: #"^\s*(?:nud(?:s|3s?)?|nudes)\s*$"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:(?:adults?|mature|uncensored|lewd|erotica?|explicit|smut|ecchi|nsfw|hentai|porn|r[\s_-]*1[89]|1[89](?:\s*\+|[\s_-]*plus))[\s_.-]*(?:comics?|manga|manhwa|manhua|mawha|webtoons?|doujin(?:shi)?)|(?:comics?|manga|manhwa|manhua|mawha|webtoons?|doujin(?:shi)?)[\s_.-]*(?:adults?|mature|uncensored|lewd|erotica?|explicit|smut|ecchi|nsfw|hentai|porn|r[\s_-]*1[89]|1[89](?:\s*\+|[\s_-]*plus)))(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil || text.range(of: #"(?:^|[^\p{L}\p{N}])(?:(?:18\s*\+|18[\s_-]*plus)[\s_-]+(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?)|(?:videos?|vids?|photos?|pics?|images?|gifs?|clips?|comics?|manga|manhwa|manhua|webtoons?)[\s_-]+(?:18\s*\+|18[\s_-]*plus))(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil || contains(text) { return true }
         let host = hostname.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-        let domains = ["reddit.com", "deviantart.com", "artstation.com", "pixiv.net", "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com", "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com", "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com", "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app", "patreon.com", "itch.io", "discord.com", "discordapp.com"]
+        let domains = ["reddit.com", "deviantart.com", "artstation.com", "pixiv.net", "behance.net", "newgrounds.com", "furaffinity.net", "tumblr.com", "artmajeur.com", "inkbunny.net", "sofurry.com", "weasyl.com", "saatchiart.com", "fineartamerica.com", "flickr.com", "500px.com", "pinterest.com", "pinterest.co.uk", "x.com", "twitter.com", "bsky.app", "patreon.com", "itch.io", "discord.com", "discordapp.com", "dedigger.com", "filepursuit.com", "searchfiles.de", "filesearch.link", "mediafiretrend.com", "searchshared.info", "meawfy.com", "eyedex.org", "uvrx.com", "faganfinder.com", "searchftps.net", "mmnt.ru", "drive.google.com", "mega.nz", "mega.io", "mediafire.com", "4shared.com", "dropbox.com", "gofile.io", "archive.org", "images.google.com", "lens.google.com", "images.search.yahoo.com", "video.search.yahoo.com", "tineye.com", "pimeyes.com", "lenso.ai", "facecheck.id", "gettyimages.com", "istockphoto.com", "shutterstock.com", "stock.adobe.com", "alamy.com", "dreamstime.com", "depositphotos.com", "123rf.com", "pexels.com", "pixabay.com", "unsplash.com", "freepik.com", "giphy.com", "tenor.com", "photobucket.com", "imgur.com", "youtube.com", "vimeo.com", "dailymotion.com"]
         let platform = domains.contains { host == $0 || host.hasSuffix("." + $0) }
         if (host == "itch.io" || host.hasSuffix(".itch.io")), text.range(of: #"(?:^|[/#])tag-adult(?:$|[/?.#])"#, options: [.regularExpression, .caseInsensitive]) != nil { return true }
         if host == "reddit.com" || host.hasSuffix(".reddit.com") {
@@ -567,7 +598,11 @@ private enum BroadenedExplicitMedia {
         }
         let namedPlatform = text.range(of: #"(?:^|[^\p{L}\p{N}])(?:reddit|deviantart|artstation|pixiv|behance|newgrounds|fur[\s_-]*affinity|artmajeur|inkbunny|sofurry|weasyl|saatchi[\s_-]*art|fine[\s_-]*art[\s_-]*america|flickr|500px|tumblr|pinterest|twitter|x\.com|bluesky|bsky\.app|patreon|itch\.io|discord)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
         let discoveryText = text.replacingOccurrences(of: "3", with: "e").replacingOccurrences(of: "0", with: "o")
-        return (platform || namedPlatform) && discoveryText.range(of: #"(?:^|[^\p{L}\p{N}])(?:sex|sexual|nud|nuds|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|nsfw|r[\s_-]*18g?|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])"#, options: [.regularExpression, .caseInsensitive]) != nil
+        let discovery = mediaDiscovery
+            || ["dedigger.com", "filepursuit.com", "searchfiles.de", "filesearch.link", "mediafiretrend.com", "searchshared.info", "meawfy.com", "eyedex.org", "uvrx.com", "faganfinder.com", "searchftps.net", "mmnt.ru", "drive.google.com", "mega.nz", "mega.io", "mediafire.com", "4shared.com", "dropbox.com", "gofile.io", "archive.org", "images.google.com", "lens.google.com", "images.search.yahoo.com", "video.search.yahoo.com", "tineye.com", "pimeyes.com", "lenso.ai", "facecheck.id", "gettyimages.com", "istockphoto.com", "shutterstock.com", "stock.adobe.com", "alamy.com", "dreamstime.com", "depositphotos.com", "123rf.com", "pexels.com", "pixabay.com", "unsplash.com", "freepik.com", "giphy.com", "tenor.com", "photobucket.com", "imgur.com", "youtube.com", "vimeo.com", "dailymotion.com"].contains { host == $0 || host.hasSuffix("." + $0) }
+            || matches(discoveryNames, text)
+        if discovery && (matches(contextualMarkers, discoveryText) || matches(discoveryMarkers, discoveryText)) { return true }
+        return (platform || namedPlatform) && matches(contextualMarkers, discoveryText)
     }
 
     static func contains(_ value: String) -> Bool {

@@ -2,7 +2,7 @@
 // turn arbitrary URL metadata or route scaffolding into apparent search words.
 export const SEARCH_PARAMETER_NAMES = new Set([
   "q", "query", "searchquery", "search_query", "search", "searchterm", "search_term",
-  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode"
+  "keyword", "keywords", "term", "text", "p", "k", "s", "wd", "word", "tags", "tag", "mode", "gsc.q", "search_api_fulltext"
 ]);
 const AMBIGUOUS_SEARCH_PARAMETER_NAMES = new Set(["p", "k", "s", "mode"]);
 // Art categories and product catalogs carry discovery text in the path too;
@@ -73,6 +73,7 @@ export function searchQueries(value: unknown): Array<{ query: string; hostname: 
   const fragment = url.hash.replace(/^#!?/u, "");
   const pathIsSearch = looksLikeSearchRoute(url.pathname);
   const fragmentIsSearch = looksLikeSearchRoute(fragment);
+  const fragmentIsCustomSearch = /^(?:gsc\.(?:tab|q|page)=)/iu.test(fragment);
   const hostname = url.hostname.toLowerCase().replace(/\.$/u, "");
   const protectedParameter = (name: string) => {
     const normalized = decodeSearchQueryValue(name).toLowerCase();
@@ -94,6 +95,11 @@ export function searchQueries(value: unknown): Array<{ query: string; hostname: 
         .filter(([name]) => isProtectedSearchParameter(name, true))
         .map(([, query]) => decodeSearchQueryValue(query)));
     }
+  }
+  if (fragmentIsCustomSearch) {
+    queries.push(...[...new URLSearchParams(fragment)]
+      .filter(([name]) => name.toLowerCase() === "gsc.q")
+      .map(([, query]) => decodeSearchQueryValue(query)));
   }
   for (const route of [url.pathname, fragment]) {
     const text = searchRouteText(route);

@@ -62,9 +62,10 @@ const explicitSearchRegexes = explicitSearchConditions.map(condition => new RegE
 const explicitSearchRegex = { test: (url: string) => explicitSearchRegexes.some(regex => regex.test(url)) };
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=ordinary+reference"), false);
 assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=explicit+porn+query"), true);
-assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), false, "age markers alone require contextual interpretation");
+assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B"), true, "age markers alone are blocked in search text");
 assert.equal(explicitSearchRegex.test("https://www.bing.com/search?q=18%2B+videos"), true);
-for (const query of ["18%2B+travel+insurance", "pornography+blocker", "chapter+xxx"]) {
+assert.equal(explicitSearchRegex.test("https://www.google.com/search?q=18%2B+travel+insurance"), true);
+for (const query of ["pornography+blocker", "chapter+xxx"]) {
   assert.equal(explicitSearchRegex.test(`https://www.google.com/search?q=${query}`), false, `contextual search remains allowed: ${query}`);
 }
 assert.equal(explicitSearchRegex.test("https://archive.org/search?query=explicit+porn+query"), true);
@@ -362,8 +363,8 @@ assert.ok(
   location.href = "https://www.google.com/search?q=ordinary&safe=active";
   assert.equal(
     runInContext("explicitSearchBlockRedirect('https://www.bing.com/search?QUERY=18%252B')", context),
-    null,
-    "a nested encoded age marker alone does not establish explicit intent"
+    "chrome-extension://vigil/blocked.html",
+    "a nested encoded age marker is sufficient in deliberate search text"
   );
   assert.equal(
     runInContext("explicitSearchBlockRedirect('https://www.bing.com/search?QUERY=18%252B+videos')", context),
