@@ -166,7 +166,8 @@ enum InstagramSingleReelPolicy {
            ["instagram.com", "www.instagram.com"].contains(destination.host?.lowercased() ?? ""),
            mediaRoute(destination)?.id != current.id { return true }
         guard let next = mediaRoute(destination) else { return false }
-        return next.kind != current.kind || current.id != next.id
+        let postAliases = ["p", "reel"].contains(current.kind) && ["p", "reel"].contains(next.kind)
+        return current.id != next.id || (!postAliases && next.kind != current.kind)
     }
 
     private static func mediaRoute(_ url: URL) -> (kind: String, id: String)? {

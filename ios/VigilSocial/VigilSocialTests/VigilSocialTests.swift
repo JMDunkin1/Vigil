@@ -1195,12 +1195,18 @@ final class VigilSocialTests: XCTestCase {
     @MainActor
     private static var retainedYouTubeMiniplayerFixtures: [(UIWindow, WKWebView)] = []
 
+    // The simulator's native media/gesture bridge can fail during immediate
+    // teardown after real video playback. Keep these three fixtures alive for
+    // the test process, as with the existing miniplayer fixtures above.
+    @MainActor
+    private static var retainedInstagramReferenceFixtures: [(UIWindow, SocialWebViewStore)] = []
+
     func testInstagramSharedReelNativeNavigation() throws {
         let source = try XCTUnwrap(URL(string: "https://www.instagram.com/reel/AbC123/"))
-        for path in ["/reel/other/", "/reel/abc123/", "/creator/reel/other/", "/reels/Other/", "/reels/", "/p/AbC123/"] {
+        for path in ["/reel/other/", "/reel/abc123/", "/creator/reel/other/", "/reels/Other/", "/reels/", "/p/Other456/"] {
             XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: source, to: URL(string: "https://www.instagram.com\(path)")!), path)
         }
-        for path in ["/reel/AbC123/?utm_source=share", "/creator/reel/AbC123/", "/reels/AbC123/", "/direct/t/123/", "/creator/", "/"] {
+        for path in ["/reel/AbC123/?utm_source=share", "/creator/reel/AbC123/", "/reels/AbC123/", "/p/AbC123/", "/creator/p/AbC123/", "/direct/t/123/", "/creator/", "/"] {
             XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: source, to: URL(string: "https://www.instagram.com\(path)")!), path)
         }
         XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: URL(string: "https://www.instagram.com/direct/t/123/"), to: source))
@@ -1208,6 +1214,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: URL(string: "https://www.instagram.com/reel/Other456/")!))
         XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: URL(string: "https://www.instagram.com/p/Other456/")!))
         XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: sharedPost))
+        XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: sharedPost, to: URL(string: "https://www.instagram.com/creator/reel/AbC123/")!))
         let story = URL(string: "https://www.instagram.com/stories/stranger/123/")!
         XCTAssertTrue(InstagramSingleReelPolicy.blocksNavigation(from: story, to: URL(string: "https://www.instagram.com/stories/stranger/456/")!, sharedStory: story))
         XCTAssertFalse(InstagramSingleReelPolicy.blocksNavigation(from: story, to: URL(string: "https://www.instagram.com/stories/stranger/456/")!))
@@ -10189,36 +10196,42 @@ final class VigilSocialTests: XCTestCase {
         let loaded = expectation(description: "reference-search fixture loaded")
         let initialNavigation = FixtureNavigationDelegate { loaded.fulfill() }
         webView.navigationDelegate = initialNavigation
-        let cases = ["likes", "views", "followers", "below", "missing", "wrongaccount", "wrongpost", "strings", "sensitive"]
-        let tiles = cases.map { "<div class='tile' id='tile-\($0)'><a id='\($0)' href='/p/Reference\($0)/'>Reference</a></div>" }.joined()
-        webView.loadHTMLString("<html><head><style>#grid{display:grid;grid-template-columns:1fr 1fr}</style></head><body><main><input aria-label='Search'><div id='grid'>\(tiles)</div><a id='tag' href='/explore/tags/topic/'>Tag</a><button id='posts' role='tab'>Posts</button></main></body></html>",
+        let cases = ["likes", "below", "views", "missing", "followers", "sensitive", "wrongaccount", "wrongpost", "strings"]
+        let tiles = stride(from: 0, to: cases.count, by: 3).map { offset in
+            "<div class='row' id='row-\(offset)'>" + cases[offset..<offset + 3].map {
+                "<div class='tile' id='tile-\($0)'><div class='thumb'><a id='\($0)' href='/p/Reference\($0)/'>Reference</a></div></div>"
+            }.joined() + "</div>"
+        }.joined()
+        webView.loadHTMLString("<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0}#grid{display:flex;flex-direction:column}.row{display:grid;grid-template-columns:repeat(3,1fr);column-gap:1px}.thumb{width:100%;aspect-ratio:1}a{display:block}</style></head><body><main><input aria-label='Search'><div id='grid'>\(tiles)</div><a id='tag' href='/explore/tags/topic/'>Tag</a><button id='posts' role='tab'>Posts</button></main></body></html>",
             baseURL: URL(string: "https://www.instagram.com/explore/search/keyword/?q=basketball"))
         await fulfillment(of: [loaded], timeout: 5)
         try await webView.evaluateJavaScript(#"""
             window.__vigilDocumentID='reference-fixture';window.referenceOpened=[];window.referenceVerdict='safe';
-            window.referenceFetches=0;
+            window.referenceFetches=0;window.referenceTextRequests=0;window.referenceLikeCount=1000;
+            const response=(url,text)=>({ok:true,url:url.href,headers:{get:key=>key==='content-type'?'application/json':null},
+              clone(){return this},text:async()=>text});
             window.fetch=async value=>{
               window.referenceFetches++;
               const url=new URL(value,location.href), scenario=url.pathname.match(/Reference([a-z]+)/)?.[1];
               if(url.pathname.includes('/web_profile_info/')){
                 const name=url.searchParams.get('username');
-                return {ok:true,url:url.href,text:async()=>JSON.stringify({data:{user:{
+                return response(url,JSON.stringify({data:{user:{
                   username:name==='creatorwrongaccount'?'lookalike':name,
-                  follower_count:name==='creatorfollowers'||name==='creatorwrongaccount'?10000:10}}})};
+                  follower_count:name==='creatorfollowers'||name==='creatorwrongaccount'?10000:10}}}));
               }
               let item={shortcode:'Reference'+scenario,like_count:0,play_count:0,owner:{username:'creator'+scenario},caption:{text:'basketball reference'}};
-              if(scenario==='likes'||scenario==='sensitive')item.like_count=1000;
+              if(scenario==='likes'||scenario==='sensitive')item.like_count=window.referenceLikeCount;
               if(scenario==='views')item.play_count=10000;
               if(scenario==='below'){item.like_count=999;item.play_count=9999;}
               if(scenario==='missing')item={};
               if(scenario==='wrongpost')item={shortcode:'Other456',like_count:999999};
               if(scenario==='strings')item.like_count='999999';
               if(scenario==='sensitive')item.caption.text='sensitive_reference';
-              return {ok:true,url:url.href,text:async()=>'<script type="application/json">'+JSON.stringify(item)+'</script>'};
+              return response(url,url.searchParams.has('metrics')?JSON.stringify(item):'<script type="application/json">'+JSON.stringify(item)+'</script>');
             };
             Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{vigil:{postMessage:body=>{
-              if(body.type==='instagramSearchText')setTimeout(()=>window.__vigilResolveInstagramSearchText(body.documentID,body.requestID,
-                body.text.includes('sensitive_reference')?'sensitive':window.referenceVerdict),0);
+              if(body.type==='instagramSearchText'){window.referenceTextRequests++;setTimeout(()=>window.__vigilResolveInstagramSearchText(body.documentID,body.requestID,
+                body.text.includes('sensitive_reference')?'sensitive':window.referenceVerdict),0);}
               if(body.type==='instagramSearchOpen'){
                 window.referenceOpened.push(body.destination);
                 setTimeout(()=>window.__vigilResolveInstagramSearchOpen(body.documentID,body.requestID),0);
@@ -10244,6 +10257,17 @@ final class VigilSocialTests: XCTestCase {
         }
         let opened = try await webView.evaluateJavaScript("window.referenceOpened") as? [String]
         XCTAssertEqual(opened, ["/p/Referencelikes/", "/p/Referenceviews/", "/p/Referencefollowers/"])
+        let layout = try await webView.evaluateJavaScript(#"""
+            (()=>{const row=document.getElementById('row-0').getBoundingClientRect();
+              const end=document.getElementById('tile-views').getBoundingClientRect();
+              return {filled:Math.abs(end.right-row.right)<2,empty:getComputedStyle(document.getElementById('row-6')).display==='none'};})()
+            """#) as? [String: Bool]
+        XCTAssertEqual(layout, ["filled": true, "empty": true], "filtered results must not leave a reserved blank right column")
+        let checksBefore = try await webView.evaluateJavaScript("window.referenceTextRequests") as? Int
+        _ = try await webView.evaluateJavaScript("window.referenceLikeCount=1001;void fetch('/p/Referencelikes/?metrics=1');")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let checksAfter = try await webView.evaluateJavaScript("window.referenceTextRequests") as? Int
+        XCTAssertEqual(checksAfter, checksBefore, "ordinary counter updates must not re-hide and reclassify an approved tile")
         let popup = try await webView.evaluateJavaScript("document.getElementById('vigil-instagram-reference-status')!==null") as? Bool
         XCTAssertEqual(popup, false, "denied results disappear without a per-result popup")
         _ = try await webView.evaluateJavaScript("document.getElementById('likes').href='/p/Referencebelow/'; true;")
@@ -10255,53 +10279,166 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(cleared, false)
         let allHidden = try await webView.evaluateJavaScript("[...document.querySelectorAll('#grid a')].every(link=>getComputedStyle(link).display==='none')") as? Bool
         XCTAssertEqual(allHidden, true)
+        _ = try await webView.evaluateJavaScript("history.pushState({},'', '/');true;")
+        let clearedLayout = try await webView.evaluateJavaScript("!document.documentElement.hasAttribute('data-vigil-instagram-reference-search') && document.querySelectorAll('[data-vigil-instagram-reference-row], [data-vigil-instagram-reference-tile]').length===0") as? Bool
+        XCTAssertEqual(clearedLayout, true, "leaving an empty Search must release its retained layout markers")
         webView.navigationDelegate = nil
     }
 
     @MainActor
     func testInstagramReferenceSearchOpensVisiblePhotoAndVideoDocuments() async throws {
+        let playableVideo: String
+        do { playableVideo = try await makeReferenceSearchPlayableVideo() }
+        catch { throw NSError(domain: "ReferenceSearchVideoEncoding", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Encoding the local playback fixture: \(error)"]) }
         for kind in ["photo", "video", "reel"] {
-            let destination = kind == "reel" ? "/reel/Popular123/" : "/p/Popular123/"
-            let svg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='520'%3E%3Crect width='390' height='520' fill='purple'/%3E%3C/svg%3E"
-            let media = kind == "photo" ? "<img id='opened-media' src=\"\(svg)\" width='390' height='520'>"
-                : "<video id='opened-media' poster=\"\(svg)\" src='data:video/mp4;base64,AA==' style='width:390px;height:520px'></video>"
-            let page = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0}</style></head><body><main><article id='selected'><a href='\(destination)'>Selected</a>\(media)</article></main></body></html>"
-            let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false,
-                mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .revealUnclassified,
-                websiteDataStore: .nonPersistent())
-            let webView = store.webView(for: .instagram)
-            webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
-            let bridge = ReferenceSearchDocumentServer(store: store, page: page, destination: destination)
-            webView.navigationDelegate = bridge
-            webView.loadHTMLString("<html><body><main><input aria-label='Search'><a id='result' href='\(destination)'>Popular result</a></main><script type='application/json'>{\"shortcode\":\"Popular123\",\"like_count\":1000,\"caption\":{\"text\":\"a basketball highlight\"}}</script></body></html>",
-                baseURL: URL(string: "https://www.instagram.com/explore/search/keyword/?q=highlights"))
-            try await waitForJavaScriptCondition("document.getElementById('result')?.dataset.vigilInstagramReferenceResult==='allowed'", in: webView)
-            _ = try await webView.evaluateJavaScript("document.getElementById('result').click(); true;")
-            try await waitForJavaScriptCondition("document.getElementById('opened-media')!==null && document.readyState==='complete'", in: webView)
-            let state = try await webView.evaluateJavaScript(#"""
-                (()=>{
-                  const media=document.getElementById('opened-media');
-                  history.pushState({},'', '/p/Other456/');
-                  const start=new Event('touchstart',{bubbles:true,cancelable:true});
-                  Object.defineProperty(start,'touches',{value:[{clientX:100,clientY:300}]});media.dispatchEvent(start);
-                  const move=new Event('touchmove',{bubbles:true,cancelable:true});
-                  Object.defineProperty(move,'touches',{value:[{clientX:100,clientY:100}]});media.dispatchEvent(move);
-                  return {shown:getComputedStyle(media).display!=='none'&&getComputedStyle(media).visibility==='visible',
-                    cardShown:getComputedStyle(document.getElementById('selected')).visibility==='visible',
-                    searchCSS:document.documentElement.hasAttribute('data-vigil-instagram-reference-search'),
-                    pinned:document.documentElement.dataset.vigilSingleReel==='Popular123',swipeBlocked:move.defaultPrevented,
-                    path:location.pathname};
-                })()
-                """#) as? [String: Any]
-            XCTAssertEqual(bridge.openedCount, 1, kind)
-            XCTAssertEqual(state?["shown"] as? Bool, true, kind)
-            XCTAssertEqual(state?["cardShown"] as? Bool, true, kind)
-            XCTAssertEqual(state?["searchCSS"] as? Bool, false, kind)
-            XCTAssertEqual(state?["pinned"] as? Bool, true, kind)
-            XCTAssertEqual(state?["swipeBlocked"] as? Bool, true, kind)
-            XCTAssertEqual(state?["path"] as? String, destination, kind)
-            webView.navigationDelegate = nil
+            var stage = "loading Search"
+            do {
+                let destination = kind == "reel" ? "/reel/Popular123/" : "/p/Popular123/"
+                let svg = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='520'%3E%3Crect width='390' height='520' fill='purple'/%3E%3C/svg%3E"
+                let media = kind == "photo" ? "<img id='opened-media' src=\"\(svg)\" width='390' height='520'>"
+                    : "<video id='opened-media' playsinline preload='auto' poster=\"\(svg)\" style='width:0;height:0'></video>"
+                let hydration = kind == "photo" ? "" : "<script>setTimeout(()=>{const v=document.getElementById('opened-media');v.style.cssText='width:390px;height:520px';v.src='\(playableVideo)';},200)</script>"
+                let page = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0}</style></head><body><main><article id='selected'><a href='\(destination)liked_by/'>Likes</a>\(media)<a href='/creator/reel/Popular123/'>Original video</a></article></main>\(hydration)</body></html>"
+                let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false,
+                    mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .revealUnclassified,
+                    websiteDataStore: .nonPersistent())
+                let webView = store.webView(for: .instagram)
+                webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+                let window = UIWindow(frame: webView.frame)
+                let viewController = UIViewController()
+                viewController.view.addSubview(webView)
+                window.rootViewController = viewController
+                window.isHidden = false
+                Self.retainedInstagramReferenceFixtures.append((window, store))
+                defer { window.isHidden = true }
+                let bridge = ReferenceSearchDocumentServer(store: store, page: page, destination: destination)
+                webView.navigationDelegate = bridge
+                webView.loadHTMLString("<html><body><main><input aria-label='Search'><a id='result' href='\(destination)'>Popular result</a></main><script type='application/json'>{\"shortcode\":\"Popular123\",\"like_count\":1000,\"caption\":{\"text\":\"a basketball highlight\"}}</script></body></html>",
+                    baseURL: URL(string: "https://www.instagram.com/explore/search/keyword/?q=highlights"))
+                try await waitForJavaScriptCondition("document.getElementById('result')?.dataset.vigilInstagramReferenceResult==='allowed'", in: webView)
+                stage = "opening the approved result"
+                _ = try await evaluateJavaScriptRetryingKnownGestureTransition("document.getElementById('result')?.click(); true;", in: webView)
+                try await waitForJavaScriptCondition("document.getElementById('opened-media')!==null && document.readyState==='complete'", in: webView)
+                if kind != "photo" {
+                    stage = "hydrating the video"
+                    try await waitForJavaScriptCondition("document.getElementById('opened-media').clientWidth>0", in: webView)
+                    stage = "starting playback"
+                    _ = try await evaluateJavaScriptRetryingKnownGestureTransition("document.getElementById('opened-media').load();void document.getElementById('opened-media').play();", in: webView)
+                    try await waitForJavaScriptCondition("document.getElementById('opened-media').currentTime>0", in: webView)
+                    let playback = try await evaluateJavaScriptRetryingKnownGestureTransition(#"""
+                        (()=>{const video=document.getElementById('opened-media');
+                          return !video.paused && video.currentTime>0 && video.videoWidth>0;})()
+                        """#, in: webView) as? Bool
+                    XCTAssertEqual(playback, true, "\(kind): a real decoded video must advance after opening")
+                }
+                stage = "checking visibility and containment"
+                let state = try await evaluateJavaScriptRetryingKnownGestureTransition(#"""
+                    (()=>{
+                      const media=document.getElementById('opened-media');
+                      history.pushState({},'', '/p/Other456/');
+                      const start=new Event('touchstart',{bubbles:true,cancelable:true});
+                      Object.defineProperty(start,'touches',{value:[{clientX:100,clientY:300}]});media.dispatchEvent(start);
+                      const move=new Event('touchmove',{bubbles:true,cancelable:true});
+                      Object.defineProperty(move,'touches',{value:[{clientX:100,clientY:100}]});media.dispatchEvent(move);
+                      return {shown:getComputedStyle(media).display!=='none'&&getComputedStyle(media).visibility==='visible',
+                        cardShown:getComputedStyle(document.getElementById('selected')).visibility==='visible',
+                        searchCSS:document.documentElement.hasAttribute('data-vigil-instagram-reference-search'),
+                        pinned:document.documentElement.dataset.vigilSingleReel==='Popular123',swipeBlocked:move.defaultPrevented,
+                        path:location.pathname};
+                    })()
+                    """#, in: webView) as? [String: Any]
+                XCTAssertEqual(bridge.openedCount, 1, kind)
+                XCTAssertEqual(state?["shown"] as? Bool, true, kind)
+                XCTAssertEqual(state?["cardShown"] as? Bool, true, kind)
+                XCTAssertEqual(state?["searchCSS"] as? Bool, false, kind)
+                XCTAssertEqual(state?["pinned"] as? Bool, true, kind)
+                XCTAssertEqual(state?["swipeBlocked"] as? Bool, true, kind)
+                XCTAssertEqual(state?["path"] as? String, destination, kind)
+                webView.navigationDelegate = nil
+            } catch {
+                throw NSError(domain: "ReferenceSearchPlayback", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "\(kind), \(stage): \(error)"])
+            }
         }
+    }
+
+    private func makeReferenceSearchPlayableVideo() async throws -> String {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).mp4")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 64, AVVideoHeightKey: 64
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+            sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32ARGB,
+                kCVPixelBufferWidthKey as String: 64, kCVPixelBufferHeightKey as String: 64])
+        writer.add(input)
+        guard writer.startWriting() else { throw writer.error ?? NSError(domain: "ReferenceVideo", code: 1) }
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<60 {
+            for _ in 0..<1000 where !input.isReadyForMoreMediaData {
+                try await Task.sleep(nanoseconds: 1_000_000)
+            }
+            var buffer: CVPixelBuffer?
+            let status = CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32ARGB, nil, &buffer)
+            guard status == kCVReturnSuccess, let buffer else { throw NSError(domain: "ReferenceVideo", code: 2) }
+            CVPixelBufferLockBaseAddress(buffer, [])
+            memset(CVPixelBufferGetBaseAddress(buffer), Int32(96 + frame), CVPixelBufferGetDataSize(buffer))
+            CVPixelBufferUnlockBaseAddress(buffer, [])
+            guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
+                throw writer.error ?? NSError(domain: "ReferenceVideo", code: 3)
+            }
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        guard writer.status == .completed else { throw writer.error ?? NSError(domain: "ReferenceVideo", code: 4) }
+        return "data:video/mp4;base64," + (try Data(contentsOf: url)).base64EncodedString()
+    }
+
+    @MainActor
+    func testInstagramSearchPostHydratesBeforePlayerLayout() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.documentStartScript(
+            for: .instagram, unclassifiedMediaPolicy: .revealUnclassified,
+            audioEnabled: true, contentSafetyEnabled: false), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Post shell before player layout")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+            <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+              body{margin:0}#player{width:0;height:0}video{display:block;width:100%;height:100%}
+            </style></head><body><main><article id="selected"><div id="player"><video id="video"></video></div>
+              <a href="/p/Hydrated123/liked_by/">Likes</a><a href="/p/Hydrated123/comments/">Comments</a>
+              <a href="/creator/reel/Hydrated123/">Original video</a>
+            </article><article id="next"><a href="/p/Other456/">Next</a><video src="data:video/mp4;base64,AA=="></video></article></main></body></html>
+            """#, baseURL: URL(string: "https://www.instagram.com/p/Hydrated123/"))
+        await fulfillment(of: [loaded], timeout: 5)
+        _ = try await webView.evaluateJavaScript(#"""
+            document.getElementById('player').style.cssText='width:390px;height:500px';
+            document.getElementById('video').src='data:video/mp4;base64,AA==';true;
+            """#)
+        try await Task.sleep(nanoseconds: 150_000_000)
+        let state = try await webView.evaluateJavaScript(#"""
+            (()=>{const video=document.getElementById('video');
+              const move=new Event('touchmove',{bubbles:true,cancelable:true});
+              Object.defineProperty(move,'touches',{value:[{clientX:100,clientY:100}]});
+              const start=new Event('touchstart',{bubbles:true,cancelable:true});
+              Object.defineProperty(start,'touches',{value:[{clientX:100,clientY:300}]});
+              video.dispatchEvent(start);video.dispatchEvent(move);history.pushState({},'', '/p/Other456/');
+              return {visible:getComputedStyle(video).visibility==='visible',allowed:video.dataset.vigilSingleReelMedia==='allowed',
+                nextHidden:getComputedStyle(document.querySelector('#next video')).visibility==='hidden',
+                swipeBlocked:move.defaultPrevented,path:location.pathname};})()
+            """#) as? [String: Any]
+        XCTAssertEqual(state?["visible"] as? Bool, true)
+        XCTAssertEqual(state?["allowed"] as? Bool, true)
+        XCTAssertEqual(state?["nextHidden"] as? Bool, true)
+        XCTAssertEqual(state?["swipeBlocked"] as? Bool, true)
+        XCTAssertEqual(state?["path"] as? String, "/p/Hydrated123/")
+        webView.navigationDelegate = nil
     }
 
     @MainActor

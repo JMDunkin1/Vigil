@@ -143,3 +143,79 @@ visible media elements, absence of Search preview CSS, and blocked next-item
 swipes/History changes. These are fixture visibility checks; they do not prove
 live Instagram streaming or on-phone behavior. The final test harness preserves
 the host's script controller without removing/readding its installed scripts.
+
+## Follow-up: live Search reproduction and hydration repair
+
+The subsequent phone report reproduced on the wired iPhone using a normal
+topic Search. The supported combined updater was run with the existing
+paired-developer inspection opt-in. It verified the exact installed supervised
+policy (`bcd3df1d6fea`), all service launches, and the signed combined app.
+Inspection was enabled for that process launch; no permanent inspector setting
+or enforcement exception was added.
+
+The live Search returned 21 approved results. Clicking one through the actual
+Search handler loaded its native `/p/.../` document successfully. The selected
+video and its containing article nevertheless had the single-item guard's
+`blocked` markers and computed hidden visibility. The live selected video URL
+also matched the exact post's structured video versions. This established a
+viewer-containment failure after successful navigation, rather than an
+unapproved result or a failed native open.
+
+The first live repair check exposed an additional identity mismatch: the
+`/p/<code>/` destination's own article contained a username-prefixed
+`/<author>/reel/<same-code>/` link. The guard compared route kind as well as
+shortcode, so it could never select this article. DOM and native containment
+now recognize post/Reel permalink aliases for the exact same case-sensitive
+shortcode. Different shortcodes, the general Reels feed, and Story identities
+remain separate. The regression fixture includes that real mixed-permalink
+structure; native tests cover both alias directions and different-item denials.
+
+A new regression reproduced permanent rejection when an empty player shell
+arrived before measurable layout and then acquired its source. Before a card
+had been selected, the guard recorded that shell as permanently rejected. The
+repair conceals unselected shells without binding or rejecting their sources
+until the selected card exists. Source recycling, alternate posts, and onward
+gestures retain their existing independent restrictions.
+
+Live Search layout inspection found grid rows with three fixed tracks inside a
+virtualized vertical container. Hiding a cell retained unused tracks. Approved
+cells now share the row's available width, and fully filtered rows disappear.
+The original row containers remain intact for Instagram's virtualizer. Layout
+ownership follows reparented anchors, drops disconnected rows, and clears when
+leaving Search, including a Search with an empty query.
+
+The expanded Search fixture also reproduced a second instability: a like/view
+counter increment changed the text-verdict fingerprint and re-hid the tile.
+The fingerprint now compares qualification boundaries, exact author identity,
+and the same text inputs. Every open still independently requires fresh,
+qualifying counts; changes that remove qualification or change text revoke
+approval. Popularity thresholds and text policy were not relaxed.
+
+Regression coverage now uses the observed nested three-column layout and
+checks removed columns, empty rows, counter updates, query revocation, and
+route cleanup. The destination test uses a locally encoded H.264 fixture and
+checks decoded playback progress after delayed player hydration, in addition
+to element visibility and the navigation boundary. Its mounted media/gesture
+fixtures remain retained for the test process, avoiding the simulator's known
+immediate-teardown `InvalidTransition` error. Eleven focused simulator tests
+passed together, including the real native Search handler, actual decoded
+post/Reel playback, alias URL boundaries, recycled media, recipient/comment
+containment, pinch, and onward-swipe prevention. Fourteen targeted Node checks,
+the TypeScript build, and repository lint also passed.
+
+The final combined installation is Vigil `0.3.212 (215)` / phone suite
+`0.3.232 (235)`. The supported updater confirmed the exact installed and live
+supervised policy fingerprint `67485da8b67d`, matching deployment receipt,
+signing, companions, and service launches. Other policy work was concurrent in
+the shared checkout; those changes were preserved and the final transaction
+was rechecked against the current live source after that policy update.
+
+Final live verification reopened the exact previously blank basketball post
+through its approved Search result. Its article and video were now allowed and
+visible; the normal video playback request resolved, readyState reached 4, and
+playback advanced beyond eight seconds. The live guard continued to reject a
+different post. A separate niche-meme Search produced 36 allowed results and
+6 denied results. A two-result row had two 201.5-pixel tracks filling its
+404-pixel width instead of retaining an empty third column. Instagram also
+returned profile-reader rate limits during this diagnostic session; unverifiable
+account evidence remained fail-closed and did not bypass the popularity rule.

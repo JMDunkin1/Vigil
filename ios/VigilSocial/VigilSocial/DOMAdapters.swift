@@ -2127,7 +2127,7 @@ enum DOMAdapters {
       const searchField = node => node instanceof HTMLInputElement
         && node.matches('input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"]')
         && !node.closest('[data-vigil-instagram-recipient-sheet], [data-vigil-instagram-comments-sheet]');
-      let typedQuery = null, currentQuery = '', queryReady = false, generation = 0, opening = false;
+      let typedQuery = null, currentQuery = '', currentSearch = false, queryReady = false, generation = 0, opening = false;
       const readQuery = () => {
         if (!isSearchURL()) return '';
         const url = canonicalURL(location.href);
@@ -2242,12 +2242,17 @@ enum DOMAdapters {
       const fresh = record => record && Date.now() >= record.at && Date.now() - record.at < 300000;
       const decisions = new Map(), resultChecks = new Map();
       const elementStates = new WeakMap();
+      const linkTiles = new WeakMap(), layoutTiles = new Set(), layoutRows = new Set();
       const lookupQueue = [];
       let lookupsRunning = 0, scanScheduled = false;
       const fingerprint = route => {
         const media = mediaRecords.get(route.code), account = accountRecords.get(media?.author);
-        return JSON.stringify([media?.author, media?.likes, media?.views, media?.text,
-          account?.followers, account?.biography]);
+        // A like/view increment is not a new text-safety decision. Compare the
+        // eligibility boundary, identity and text; allowsResult independently
+        // rechecks the current, fresh counts on every navigation.
+        return JSON.stringify([media?.author, media?.text, account?.biography,
+          media?.likes >= popularity.likes || media?.views >= popularity.views,
+          account?.followers >= popularity.followers]);
       };
       const hasQuery = () => isSearchURL() && queryReady && Boolean(currentQuery) && currentQuery === readQuery();
       const allowsResult = value => {
@@ -2321,28 +2326,75 @@ enum DOMAdapters {
         }
         return tile;
       };
-      const paintResult = (link, route, state) => {
-        link.dataset.vigilInstagramReferenceResult = state;
-        const tile = resultTile(link, route);
-        tile.dataset.vigilInstagramReferenceTile = state;
-        const row = tile.parentElement;
+      const paintRow = row => {
         if (!row || row.matches('main, [role="main"], nav, [role="navigation"], form')
             || row.querySelector('input, textarea, nav, [role="navigation"]')) return;
         const cells = [...row.children];
         const ownsOnlyTiles = cells.length > 1 && cells.every(cell => cell.hasAttribute('data-vigil-instagram-reference-tile'));
-        if (ownsOnlyTiles && cells.every(cell => cell.dataset.vigilInstagramReferenceTile !== 'allowed')) {
-          row.dataset.vigilInstagramReferenceEmptyRow = 'true';
-        } else row.removeAttribute('data-vigil-instagram-reference-empty-row');
+        const visible = cells.filter(cell => cell.dataset.vigilInstagramReferenceTile === 'allowed').length;
+        if (ownsOnlyTiles) {
+          layoutRows.add(row);
+          row.dataset.vigilInstagramReferenceRow = String(Math.min(3, visible));
+          if (!visible) row.dataset.vigilInstagramReferenceEmptyRow = 'true';
+          else row.removeAttribute('data-vigil-instagram-reference-empty-row');
+        } else {
+          layoutRows.delete(row);
+          row.removeAttribute('data-vigil-instagram-reference-row');
+          row.removeAttribute('data-vigil-instagram-reference-empty-row');
+        }
+      };
+      const paintResult = (link, route, state) => {
+        link.dataset.vigilInstagramReferenceResult = state;
+        const tile = resultTile(link, route), previousTile = linkTiles.get(link);
+        if (previousTile && previousTile !== tile) {
+          previousTile.removeAttribute('data-vigil-instagram-reference-tile');
+          layoutTiles.delete(previousTile);
+          paintRow(previousTile.parentElement);
+        }
+        linkTiles.set(link, tile);
+        layoutTiles.add(tile);
+        tile.dataset.vigilInstagramReferenceTile = state;
+        paintRow(tile.parentElement);
+      };
+      const clearResultLayout = () => {
+        for (const tile of layoutTiles) tile.removeAttribute('data-vigil-instagram-reference-tile');
+        for (const row of layoutRows) {
+          row.removeAttribute('data-vigil-instagram-reference-row');
+          row.removeAttribute('data-vigil-instagram-reference-empty-row');
+        }
+        layoutTiles.clear(); layoutRows.clear();
       };
       function scanResults() {
         if (!isSearchURL()) return;
+        // Instagram virtualizes its rows. Retired DOM must not accumulate in
+        // layout ownership while the user scrolls through search results.
+        for (const tile of layoutTiles) if (!tile.isConnected) layoutTiles.delete(tile);
+        for (const row of layoutRows) if (!row.isConnected) layoutRows.delete(row);
         for (const link of document.querySelectorAll('main a[href], [role="main"] a[href]')) {
           if (link.closest('nav, [role="navigation"]')) continue;
           const route = mediaRoute(link.href);
-          if (!route) continue;
+          if (!route) {
+            if (link.hasAttribute('data-vigil-instagram-reference-result')) {
+              link.removeAttribute('data-vigil-instagram-reference-result');
+              elementStates.delete(link);
+              const tile = linkTiles.get(link);
+              linkTiles.delete(link);
+              if (tile && !tile.querySelector('[data-vigil-instagram-reference-result]')) {
+                tile.removeAttribute('data-vigil-instagram-reference-tile');
+                layoutTiles.delete(tile);
+                paintRow(tile.parentElement);
+              }
+            }
+            continue;
+          }
           const signature = fingerprint(route), previous = elementStates.get(link);
           if (previous?.epoch === generation && previous.path === route.path
-              && (previous.pending || previous.signature === signature && fresh(previous))) continue;
+              && (previous.pending || previous.signature === signature && fresh(previous))) {
+            // A retained/reparented anchor needs its new wrapper painted even
+            // when its verified evidence did not change.
+            paintResult(link, route, previous.pending ? 'pending' : allowsResult(link.href) ? 'allowed' : 'denied');
+            continue;
+          }
           const state = { epoch: generation, path: route.path, signature, pending: false, at: Date.now() };
           elementStates.set(link, state);
           paintResult(link, route, 'pending');
@@ -2367,15 +2419,17 @@ enum DOMAdapters {
       }
       const updateSearch = async (retry = false) => {
         const query = readQuery();
-        if (query === currentQuery && !retry) return;
+        const search = isSearchURL();
+        if (query === currentQuery && search === currentSearch && !retry) return;
         const epoch = ++generation;
         currentQuery = query;
+        currentSearch = search;
         queryReady = false;
         opening = false;
         approvals.clear();
         decisions.clear();
-        if (isSearchURL()) document.documentElement.dataset.vigilInstagramReferenceSearch = 'pending';
-        else delete document.documentElement.dataset.vigilInstagramReferenceSearch;
+        if (search) document.documentElement.dataset.vigilInstagramReferenceSearch = 'pending';
+        else { delete document.documentElement.dataset.vigilInstagramReferenceSearch; clearResultLayout(); }
         scanResults();
         document.dispatchEvent(new Event('__vigilReferenceSearchChanged'));
         if (query && await textSafe(query) && epoch === generation && readQuery() === query) {
@@ -2401,6 +2455,20 @@ enum DOMAdapters {
         html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-tile]:not([data-vigil-instagram-reference-tile="allowed"]),
         html[data-vigil-instagram-reference-search="pending"] [data-vigil-instagram-reference-result],
         html[data-vigil-instagram-reference-search] :is(main, [role="main"]) video { display:none !important; }
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row]:where(:not([data-vigil-instagram-reference-row="0"])) {
+          display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+          column-gap:1px !important; min-width:0 !important; width:100% !important;
+        }
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row="1"] {
+          grid-template-columns:minmax(0,1fr) !important;
+        }
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row="2"] {
+          grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+        }
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row] > [data-vigil-instagram-reference-tile="allowed"] {
+          width:auto !important; min-width:0 !important; max-width:none !important;
+          grid-column:auto !important; grid-row:auto !important;
+        }
       `;
       document.documentElement.append(style);
       new MutationObserver(scheduleResultScan).observe(document.documentElement, {
@@ -2484,6 +2552,10 @@ enum DOMAdapters {
       };
       let pinnedID = '';
       let pinnedKind = '';
+      // Instagram uses /p/, /reel/ and username-prefixed permalinks for the
+      // same shortcode, including inside an opened video's own article.
+      const matchesPinnedItem = route => Boolean(route && route.id === pinnedID
+        && (route.kind === pinnedKind || ['p', 'reel'].includes(route.kind) && ['p', 'reel'].includes(pinnedKind)));
       let pinnedURL = '';
       const replacePinnedRoute = history.replaceState.bind(history);
       let pinnedVideo = null;
@@ -2689,7 +2761,7 @@ enum DOMAdapters {
           reportNativeScrollLock(true);
           return true;
         }
-        if (route && pinnedID && (route.id !== pinnedID || route.kind !== pinnedKind) && pinnedURL) {
+        if (route && pinnedID && !matchesPinnedItem(route) && pinnedURL) {
           // History traversal can activate entries created before this viewer
           // opened. Keep the same item even when no pushState call occurs.
           try { replacePinnedRoute(history.state, '', pinnedURL); } catch (_) {}
@@ -2789,7 +2861,7 @@ enum DOMAdapters {
             if (/^\/stories(?:\/|$)/i.test(url.pathname) && (!route || route.id !== pinnedID)) return true;
           } catch (_) {}
         }
-        return reelsDestination || Boolean(route && (route.id !== pinnedID || route.kind !== pinnedKind));
+        return reelsDestination || Boolean(route && !matchesPinnedItem(route));
       };
       const cancel = event => {
         if (event.cancelable) event.preventDefault();
@@ -2900,7 +2972,7 @@ enum DOMAdapters {
         const article = media.closest('article, [role="article"]');
         if (article && [...article.querySelectorAll('a[href]')].some(link => {
           const route = mediaRoute(link.href);
-          return route?.id === pinnedID && route.kind === pinnedKind;
+          return matchesPinnedItem(route);
         })) return true;
         const box = media.getBoundingClientRect();
         return box.width >= 180 && box.height >= 140;
@@ -2921,8 +2993,8 @@ enum DOMAdapters {
         for (let node = media.parentElement; node && !node.matches('body, main, [role="main"]'); node = node.parentElement) {
           if (mediaGroups(node).length > 1 && !horizontalCarousel(node)) break;
           const routes = [...node.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
-          if (routes.some(route => route.id !== pinnedID || route.kind !== pinnedKind)) break;
-          if (routes.some(route => route.id === pinnedID && route.kind === pinnedKind)) identityCard = node;
+          if (routes.some(route => !matchesPinnedItem(route))) break;
+          if (routes.some(matchesPinnedItem)) identityCard = node;
           if (node === modalContext || node.matches('[role="dialog"], [aria-modal="true"]')) break;
         }
         if (identityCard) return identityCard;
@@ -2938,12 +3010,12 @@ enum DOMAdapters {
       };
       const cardMatches = card => {
         const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
-        return !routes.length || routes.some(route => route.id === pinnedID && route.kind === pinnedKind);
+        return !routes.length || routes.some(matchesPinnedItem);
       };
       const emptyMediaSource = source => !source.trim() || /^about:blank(?:[?#]|$)/i.test(source.trim());
       const exactPostCard = card => {
         const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
-        return routes.length > 0 && routes.every(route => route.id === pinnedID && route.kind === pinnedKind);
+        return routes.length > 0 && routes.every(matchesPinnedItem);
       };
       const loadedCarouselManifest = card => {
         // Read only the loaded Sidecar props for this exact shortcode. React's
@@ -3085,12 +3157,24 @@ enum DOMAdapters {
               const card = cardFor(media);
               const exact = [...card.querySelectorAll('a[href]')].some(link => {
                 const route = mediaRoute(link.href);
-                return route?.id === pinnedID && route.kind === pinnedKind;
+                return matchesPinnedItem(route);
               });
               return (exact || (box.bottom > 0 && box.top < innerHeight)) && cardMatches(card);
             });
           const media = pinnedVideo?.isConnected ? pinnedVideo : candidates[0];
           pinnedCard = media ? cardFor(media) : null;
+        }
+        if (!pinnedCard) {
+          // React inserts empty player shells before the post has measurable
+          // layout. Keep those cards concealed, but do not bind their sources
+          // or permanently reject them before a selected card exists. Doing
+          // so stranded the real Search destination in a gray blocked state
+          // when its empty video acquired a source after the first layout.
+          for (const media of (modalContext || document).querySelectorAll('video, img')) {
+            if (!contentMedia(media)) continue;
+            cardFor(media).dataset.vigilSingleReelCard = 'blocked';
+          }
+          return;
         }
         // Opening comments can move the selected video out of its article
         // while retaining the article in the page. Preserve that exact source
@@ -3103,7 +3187,7 @@ enum DOMAdapters {
           const media = [...(movedCard.matches('video, img') ? [movedCard] : []),
             ...movedCard.querySelectorAll('video, img')].filter(contentMedia);
           if (movedCard !== pinnedCard && remembered && !remembered.rejected && remembered.source === pinnedSource
-              && routes.every(route => route.id === pinnedID && route.kind === pinnedKind)
+              && routes.every(matchesPinnedItem)
               && media.length === 1 && media[0] === pinnedVideo) {
             pinnedCard = movedCard;
             remembered.card = movedCard;
@@ -3176,7 +3260,7 @@ enum DOMAdapters {
           if (card !== remembered.card) remembered.rejected = true;
           if (remembered.source === null) {
             const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
-            const matches = route => route.id === pinnedID && route.kind === pinnedKind;
+            const matches = matchesPinnedItem;
             if (card !== pinnedCard || routes.some(route => !matches(route))) remembered.rejected = true;
             const selectedVideo = media === pinnedVideo && (activeModal(modalContext)
               || mediaRoute(location.href)?.id === pinnedID);
