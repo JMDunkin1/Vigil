@@ -451,6 +451,55 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(boundary.carouselRegions.isEmpty)
     }
 
+    @MainActor
+    func testInstagramRecipientTouchYieldsBeforeKeyboardMovesThePicker() throws {
+        let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let boundary = InstagramSharedItemPanGuard(in: page)
+        boundary.isEnabled = true
+        boundary.scrollingRegions = [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)]
+        let touch = FixtureLocatedTouch()
+        touch.point = CGPoint(x: 100, y: 700)
+        XCTAssertFalse(boundary.gestureRecognizer(boundary, shouldReceive: touch),
+                       "The recipient input must retain its touch before the pan threshold and keyboard animation")
+        // The same touch has not ended. The keyboard raises the sheet and
+        // shrinks the native canvas before a slight finger movement arrives.
+        boundary.scrollingRegions = [CGRect(x: 0, y: 0.1, width: 1, height: 0.3)]
+        page.frame.size.height = 500
+        XCTAssertFalse(boundary.blocksCurrentTouch(translation: CGPoint(x: 1, y: -12)),
+                       "Changed geometry must never turn the search press into a cancelling pan")
+    }
+
+    @MainActor
+    func testInstagramBackgroundAndCarouselGesturesKeepTheirTouchDownBoundary() throws {
+        let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let boundary = InstagramSharedItemPanGuard(in: page)
+        boundary.isEnabled = true
+        boundary.scrollingRegions = [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)]
+        let touch = FixtureLocatedTouch()
+        touch.point = CGPoint(x: 100, y: 200)
+        XCTAssertTrue(boundary.gestureRecognizer(boundary, shouldReceive: touch))
+        boundary.scrollingRegions = [CGRect(x: 0, y: 0.1, width: 1, height: 0.3)]
+        XCTAssertTrue(boundary.blocksCurrentTouch(translation: CGPoint(x: 0, y: -40)),
+                      "A picker moving over an existing Reel swipe must not authorize that swipe")
+        let secondTouch = FixtureLocatedTouch()
+        secondTouch.point = touch.point
+        XCTAssertFalse(boundary.gestureRecognizer(boundary, shouldReceive: secondTouch))
+        XCTAssertTrue(boundary.blocksCurrentTouch(translation: CGPoint(x: 0, y: -40)),
+                      "A second touch in the picker must not release the original background swipe")
+        boundary.reset()
+        boundary.scrollingRegions = []
+        boundary.carouselRegions = [CGRect(x: 0, y: 0.1, width: 1, height: 0.3)]
+        XCTAssertTrue(boundary.gestureRecognizer(boundary, shouldReceive: touch))
+        boundary.carouselRegions = []
+        XCTAssertFalse(boundary.blocksCurrentTouch(translation: CGPoint(x: -40, y: 0)),
+                       "The original post carousel keeps horizontal panning while its layout moves")
+        XCTAssertTrue(boundary.blocksCurrentTouch(translation: CGPoint(x: 0, y: -40)), "Vertical carousel swipes stay contained")
+        boundary.reset()
+        XCTAssertTrue(boundary.gestureRecognizer(boundary, shouldReceive: touch))
+        XCTAssertTrue(boundary.blocksCurrentTouch(translation: CGPoint(x: -40, y: 0)),
+                      "The next gesture cannot reuse the previous carousel's permission")
+    }
+
     func testInstagramNativeGestureRegionsRejectMalformedGeometry() {
         XCTAssertEqual(SocialWebViewStore.instagramGestureRegions([[0.0, 0.5, 1.0, 0.5]]), [CGRect(x: 0, y: 0.5, width: 1, height: 0.5)])
         XCTAssertEqual(SocialWebViewStore.instagramGestureRegions([[-0.5, 0.0, 1.0, 1.0]]), [CGRect(x: 0, y: 0, width: 0.5, height: 1)])
@@ -13754,6 +13803,11 @@ private actor HangingFirstFourMediaClassifier: MediaSafetyClassifying {
         }
         return .safe
     }
+}
+
+private final class FixtureLocatedTouch: UITouch {
+    var point = CGPoint.zero
+    override func location(in view: UIView?) -> CGPoint { point }
 }
 
 private final class FixtureScriptMessageHandler: NSObject, WKScriptMessageHandler {

@@ -29,7 +29,8 @@ final class InstagramWebView: WKWebView {
 final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
     var scrollingRegions: [CGRect] = []
     var carouselRegions: [CGRect] = []
-    private var touchOrigin = CGPoint.zero
+    private weak var trackedTouch: UITouch?
+    private var touchAllowsCarousel = false
 
     init(in webView: WKWebView) {
         super.init(target: nil, action: nil)
@@ -45,9 +46,19 @@ final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecogn
 
     @objc private func containPan() {}
 
+    override func reset() {
+        super.reset()
+        trackedTouch = nil
+        touchAllowsCarousel = false
+    }
+
+    private func normalizedPoint(_ point: CGPoint) -> CGPoint? {
+        guard let view, view.bounds.width > 0, view.bounds.height > 0 else { return nil }
+        return CGPoint(x: point.x / view.bounds.width, y: point.y / view.bounds.height)
+    }
+
     func blocksPan(from point: CGPoint, translation: CGPoint) -> Bool {
-        guard isEnabled, let view, view.bounds.width > 0, view.bounds.height > 0 else { return false }
-        let normalized = CGPoint(x: point.x / view.bounds.width, y: point.y / view.bounds.height)
+        guard isEnabled, let normalized = normalizedPoint(point) else { return false }
         if scrollingRegions.contains(where: { $0.contains(normalized) }) { return false }
         if abs(translation.x) > abs(translation.y),
            carouselRegions.contains(where: { $0.contains(normalized) }) { return false }
@@ -55,12 +66,28 @@ final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecogn
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        touchOrigin = touch.location(in: view)
+        guard isEnabled, let point = normalizedPoint(touch.location(in: view)) else { return false }
+        // Yield the whole recipient/comments touch immediately. Waiting for
+        // the pan threshold lets a keyboard-driven layout move its exception
+        // away from the touch and turn a search tap into a cancelling pan.
+        if scrollingRegions.contains(where: { $0.contains(point) }) { return false }
+        // An additional finger must not replace the first touch's boundary.
+        if trackedTouch == nil {
+            trackedTouch = touch
+            touchAllowsCarousel = carouselRegions.contains { $0.contains(point) }
+        }
         return true
     }
 
+    func blocksCurrentTouch(translation: CGPoint) -> Bool {
+        guard isEnabled, trackedTouch != nil else { return false }
+        // Both permissions belong to the original touch, even if the picker,
+        // carousel, or native WebView bounds change before movement begins.
+        return !(touchAllowsCarousel && abs(translation.x) > abs(translation.y))
+    }
+
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        blocksPan(from: touchOrigin, translation: translation(in: view))
+        blocksCurrentTouch(translation: translation(in: view))
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
