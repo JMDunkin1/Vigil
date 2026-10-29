@@ -117,6 +117,37 @@ async function main() {
   assert.equal(await run('location.pathname'), '/reel/Shared123/');
   console.log('Instagram recipient sheet: passed');
 
+  // The initial shortlist has no textbox. It must already retain native
+  // presses, rather than becoming the media modal before Search mounts.
+  await win.loadURL('https://www.instagram.com/reel/Shared123/');
+  await run(guard);
+  await run(stable);
+  await run(`document.body.innerHTML='<style>body{margin:0}video{width:390px;height:700px}#recipients{position:fixed;inset:80px 0 0;background:white;display:flex;flex-direction:column;overflow:hidden}#people{min-height:0;overflow-y:auto;flex:1}</style><video></video><button id="next" aria-label="Next reel">Next</button><div role="dialog" id="recipients"><button id="open-search"><svg aria-label="Search"></svg></button><div id="field"></div><div id="people"><button id="recipient"><img alt="Friend" style="width:40px;height:40px">Friend</button></div></div>';
+    window.searchPresses=[];window.searchClicks=0;
+    const opener=document.getElementById('open-search');
+    for(const type of ['pointerdown','pointerup','touchstart','touchend'])opener.addEventListener(type,()=>searchPresses.push(type));
+    opener.addEventListener('click',()=>{searchClicks++;document.getElementById('field').innerHTML='<input id="query" placeholder="Search">';document.getElementById('query').focus();});`);
+  await settle();
+  assert.deepEqual(await run(`(() => {
+    const opener=document.getElementById('open-search');
+    for(const type of ['pointerdown','pointerup'])opener.dispatchEvent(new PointerEvent(type,{
+      bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,isPrimary:true,clientX:20,clientY:90}));
+    for(const type of ['touchstart','touchend']){const event=new Event(type,{bubbles:true,cancelable:true});
+      Object.defineProperty(event,'touches',{value:type==='touchend'?[]:[{clientX:20,clientY:90}]});opener.dispatchEvent(event);}
+    return {presses:searchPresses,overflow:getComputedStyle(document.getElementById('recipients')).overflowY};
+  })()`),{presses:['pointerdown','pointerup','touchstart','touchend'],overflow:'hidden'},
+  'the unopened search keeps its complete site lifecycle and authored flex scroller');
+  await run(`document.getElementById('open-search').click()`);
+  await settle();
+  assert.deepEqual(await run(`(() => {
+    const query=document.getElementById('query');query.value='a distant friend';query.dispatchEvent(new Event('input',{bubbles:true}));
+    window.dispatchEvent(new Event('resize'));
+    history.pushState({},'','/reel/Other/');
+    return {focused:document.activeElement===query,value:query.value,clicks:searchClicks,
+      touchAction:getComputedStyle(document.getElementById('recipient')).touchAction,path:location.pathname};
+  })()`),{focused:true,value:'a distant friend',clicks:1,touchAction:'auto',path:'/reel/Shared123/'});
+  console.log('Instagram recipient shortlist-to-search transition: passed');
+
   await win.loadURL('https://www.instagram.com/p/Shared123/');
   await run(guard);
   await run(`document.body.innerHTML='<article><a href="/p/Shared123/">Post</a><img id="photo" src="/photo.svg" style="width:300px;height:300px"></article>';`);

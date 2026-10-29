@@ -14025,6 +14025,80 @@ extension VigilSocialTests {
     }
 
     @MainActor
+    func testInstagramRecipientShortlistPreservesSearchActivationAndLayoutBeforeTextboxMounts() async throws {
+        let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
+        controller.add(bridge, name: "vigil")
+        controller.addUserScript(WKUserScript(source: DOMAdapters.controlsScript(for: .instagram),
+                                              injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let window = UIWindow(frame: webView.frame)
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(webView)
+        window.isHidden = false
+        defer {
+            webView.removeFromSuperview()
+            window.isHidden = true
+            controller.removeScriptMessageHandler(forName: "vigil")
+        }
+        let loaded = expectation(description: "Recipient shortlist with a search button")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString(#"""
+            <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            body{margin:0}video{width:390px;height:700px}
+            #recipients{position:fixed;inset:100px 0 0;background:white;display:flex;flex-direction:column;overflow:hidden}
+            #people{flex:1;min-height:0;overflow-y:auto}#people>div{height:1400px}
+            </style></head><body><video></video><button id="next" aria-label="Next reel">Next</button>
+            <div role="dialog" id="recipients"><button id="open-search"><svg aria-label="Search"></svg></button>
+            <div id="field"></div><div id="people"><div><button id="recipient"><img alt="Friend" style="width:40px;height:40px">Friend</button></div></div></div>
+            <script>window.searchPresses=[];window.searchClicks=0;
+            const opener=document.getElementById('open-search');
+            for(const type of ['pointerdown','pointerup','touchstart','touchend'])opener.addEventListener(type,()=>searchPresses.push(type));
+            opener.addEventListener('click',()=>{searchClicks++;
+              document.getElementById('field').innerHTML='<input id="query" placeholder="Search">';
+              document.getElementById('query').focus();});</script></body></html>
+            """#, baseURL: URL(string: "https://www.instagram.com/reel/Shared123/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        let presses = try await webView.evaluateJavaScript(#"""
+            (()=>{const opener=document.getElementById('open-search');
+              for(const type of ['pointerdown','pointerup'])opener.dispatchEvent(new PointerEvent(type,{
+                bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,isPrimary:true,clientX:20,clientY:110}));
+              for(const type of ['touchstart','touchend']){const event=new Event(type,{bubbles:true,cancelable:true});
+                Object.defineProperty(event,'touches',{value:type==='touchend'?[]:[{clientX:20,clientY:110}]});opener.dispatchEvent(event);}
+              return [searchPresses.join(',')==='pointerdown,pointerup,touchstart,touchend',searchClicks===0,
+                getComputedStyle(document.getElementById('recipients')).overflowY==='hidden',
+                getComputedStyle(document.getElementById('people')).overflowY==='auto'];})()
+            """#) as? [Bool]
+        XCTAssertEqual(presses, [true, true, true, true], "Search must keep the site's press lifecycle and original flex scroller")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let initialMessage = bridge.messages.last { $0["type"] as? String == "reelScrollLock" }
+        XCTAssertEqual(initialMessage?["locked"] as? Bool, true)
+        XCTAssertFalse(SocialWebViewStore.instagramGestureRegions(initialMessage?["scrollingRegions"]).isEmpty,
+                       "The shortlist must yield native scrolling before an editable field exists")
+        _ = try await webView.evaluateJavaScript("document.getElementById('open-search').click()")
+        try await waitForJavaScriptCondition("document.activeElement.id==='query'", in: webView)
+        let search = try await webView.evaluateJavaScript(#"""
+            (()=>{const query=document.getElementById('query');query.value='a distant friend';
+              query.dispatchEvent(new Event('input',{bubbles:true}));window.dispatchEvent(new Event('resize'));
+              history.pushState({},'','/reel/Other456/');
+              return [document.activeElement===query,query.value==='a distant friend',searchClicks===1,
+                getComputedStyle(document.getElementById('recipient')).touchAction==='auto',
+                location.pathname==='/reel/Shared123/'];})()
+            """#) as? [Bool]
+        XCTAssertEqual(search, [true, true, true, true, true])
+        _ = try await webView.evaluateJavaScript("document.getElementById('recipients').remove();true")
+        try await Task.sleep(nanoseconds: 50_000_000)
+        let closedMessage = bridge.messages.last { $0["type"] as? String == "reelScrollLock" }
+        XCTAssertEqual(closedMessage?["locked"] as? Bool, true)
+        XCTAssertTrue(SocialWebViewStore.instagramGestureRegions(closedMessage?["scrollingRegions"]).isEmpty,
+                      "Closing the picker restores the full Reel pan boundary")
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
     func testInstagramRecipientSearchButtonUsesSiteActivationBeforeTextboxMounts() async throws {
         for inDialog in [false, true] {
             let wrapper = inDialog ? "<div role='dialog' aria-label='Share'>" : "<div>"
@@ -14184,4 +14258,48 @@ extension VigilSocialTests {
             try await waitForJavaScriptCondition("document.querySelector('article').dataset.vigilSingleReelCard==='blocked'", in: webView)
         }
     }
+}
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramRecipientPickerCannotExemptReopenedLandscapeReel() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+            body{margin:0}#portal{position:fixed;inset:0;background:white}video{width:390px;height:120px}
+            </style></head><body><main><button id="preview">Shared video</button></main><script>
+            window.reopened=false;
+            document.getElementById('preview').onclick=()=>{
+              document.getElementById('portal')?.remove();
+              const portal=document.createElement('div');portal.id='portal';portal.setAttribute('role','dialog');
+              portal.innerHTML=(reopened?'<div style="display:none"><input placeholder="Search"></div>':'')
+                +'<video id="reel"></video><button id="send">Send</button>';
+              document.body.append(portal);
+            };
+            </script></body></html>
+            """#, path: "/direct/t/friend/")
+        _ = try await webView.evaluateJavaScript("document.getElementById('preview').click()")
+        try await waitForJavaScriptCondition("document.documentElement.hasAttribute('data-vigil-single-reel')", in: webView)
+        _ = try await webView.evaluateJavaScript(#"""
+            document.getElementById('portal').innerHTML='<input placeholder="Search" id="recipient"><button>Friend</button>';
+            """#)
+        try await waitForJavaScriptCondition("document.getElementById('portal').dataset.vigilInstagramRecipientSheet === 'true'", in: webView)
+        let picker = try await webView.evaluateJavaScript(#"""
+            (()=>{const e=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+              document.getElementById('recipient').dispatchEvent(e);return !e.defaultPrevented;})()
+            """#) as? Bool
+        XCTAssertEqual(picker, true, "The actual recipient picker stays usable")
+        _ = try await webView.evaluateJavaScript("document.getElementById('portal').style.display='none'")
+        try await waitForJavaScriptCondition("!document.documentElement.hasAttribute('data-vigil-single-reel')", in: webView)
+        _ = try await webView.evaluateJavaScript("reopened=true;document.getElementById('preview').click()")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let state = try await webView.evaluateJavaScript(#"""
+            (()=>{const e=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+              document.getElementById('reel').dispatchEvent(e);
+              return [document.documentElement.hasAttribute('data-vigil-single-reel'),e.defaultPrevented,
+                getComputedStyle(document.getElementById('reel')).touchAction==='pinch-zoom',
+                !document.getElementById('portal').hasAttribute('data-vigil-instagram-recipient-sheet')];})()
+            """#) as? [Bool]
+        XCTAssertEqual(state, [true, true, true, true], "Retained search controls never authorize an opened media viewer")
+    }
+
 }

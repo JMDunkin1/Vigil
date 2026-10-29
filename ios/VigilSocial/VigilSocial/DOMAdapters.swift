@@ -2230,7 +2230,6 @@ enum DOMAdapters {
           touch-action: auto !important;
         }
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] {
-          overflow-y: auto !important;
           overscroll-behavior: contain !important;
         }
       `;
@@ -2429,17 +2428,30 @@ enum DOMAdapters {
       const recipientSearchSelector = 'input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"]';
       const recipientSheet = target => {
         const dialog = target?.closest?.('[role="dialog"], [aria-modal="true"]');
-        if (!dialog || dialog === modalContext || (pinnedCard && dialog.contains(pinnedCard))
-            || dialog.closest('[aria-hidden="true"], [hidden]')) return null;
+        if (!dialog || !activeModal(dialog) || (pinnedCard && dialog.contains(pinnedCard))) return null;
         // Direct's retained thread can itself be a dialog with a Search box.
         // It is not a recipient sheet and must never exempt its opened media.
         if (dialog.matches('main, [role="main"]') || dialog.querySelector('main, [role="main"], article, [role="article"]')
             || [...dialog.querySelectorAll('video, img')].some(media => {
+              if (!activeModal(media)) return false;
+              // A landscape or not-yet-laid-out player is still a viewer.
+              // Its height must never turn a retained Search box into a pan exception.
+              if (media instanceof HTMLVideoElement) return true;
               const box = media.getBoundingClientRect();
               return box.width >= 180 && box.height >= 140;
             })) return null;
-        const search = dialog.querySelector(recipientSearchSelector);
-        return search?.closest('[role="dialog"], [aria-modal="true"]') === dialog ? dialog : null;
+        const owns = node => node.closest('[role="dialog"], [aria-modal="true"]') === dialog
+          && activeModal(node) && node.getClientRects().length > 0;
+        if ([...dialog.querySelectorAll(recipientSearchSelector)].some(owns)) return dialog;
+        // The shortlist initially exposes a Search button, then mounts the
+        // real textbox on activation. Preserve that first native press/focus
+        // lifecycle and never bind the picker as the shared-media viewer.
+        const searchControl = [...dialog.querySelectorAll('button, [role="button"]')].some(control => {
+          if (!owns(control)) return false;
+          return [control, ...control.querySelectorAll('[aria-label], title')].some(node =>
+            /\bsearch\b/i.test(node.getAttribute('aria-label') || node.textContent || ''));
+        });
+        return searchControl ? dialog : null;
       };
       const normalizeRecipientSheets = () => {
         for (const dialog of document.querySelectorAll('[role="dialog"], [aria-modal="true"]')) {
@@ -2948,7 +2960,7 @@ enum DOMAdapters {
         }, true);
       }
       new MutationObserver(reconcile).observe(document.documentElement, {
-        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'data-vigil-instagram-comments-sheet']
+        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'role', 'aria-modal', 'aria-label', 'placeholder', 'type', 'name', 'data-vigil-instagram-comments-sheet']
       });
       reconcile();
     })();
