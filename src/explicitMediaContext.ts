@@ -25,6 +25,12 @@ export const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
   "nhentai", "hanime", "redgifs", "youjizz", "tnaflix", "tube8", "jerkmate",
   // Verified adult comic brands also occur in search/discovery pages and mirrors.
   "toonily", "omegascans", "manhwabuddy", "mangadna", "manghaha", "mangaforfree", "manhwaclub", "webtoonscan", "pornhwa",
+  // Include reported readers and distinctive brands from the reviewed whole-site
+  // inventory so app listings, alternatives, and new mirrors are also covered.
+  // Ambiguous names such as Manta and INKR stay domain-only.
+  "qtoon", "comicle", "mangabuddy", "mangameow", "mangaball", "kuramanga", "comizy",
+  "nyrascans", "mangavyvy", "hiperdex", "tappytoon", "toomics", "lezhin", "lezhinus", "lezhinx",
+  "daycomics", "toptoon", "coolmic", "mangaplaza", "ebookrenta", "webcomicsapp", "lalatoon",
   "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls",
   "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"
 ] as const;
@@ -32,6 +38,7 @@ export const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
 // Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
 // product IDs. Ordinary subjects retain their own accents and spellings.
 export const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+  { pattern: /(?:^|[^\p{L}\p{N}])q[\s_.\p{Pd}]+toon(?=$|[^\p{L}\p{N}])/giu.source, replacement: " qtoon " },
   { pattern: /(?:^|[^\p{L}\p{N}])(?:omega[\s_.\p{Pd}]+scans)(?=$|[^\p{L}\p{N}])/giu.source, replacement: " omegascans " },
   { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+dna(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangadna " },
   { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+for[\s_.\p{Pd}]+free(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangaforfree " },

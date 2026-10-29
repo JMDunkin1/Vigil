@@ -13,6 +13,8 @@ import { generatedNativeExplicitMedia } from "../scripts/generate-native-explici
 import { now, usageFixture } from "./test-helpers.mjs";
 
 const chartDomains = ["toonily.me", "omegascans.org", "manhwabuddy.com", "mangadna.com", "manghaha.com", "toonily.com", "mangaforfree.com", "manhwaclub.net"];
+const reportedDomains = ["qtoon.com", "qtoon.net", "qtoon.org", "qtoon.ai", "comicle.com",
+  "comicle-manga-manhwa-comics.soft112.com", "line-webtoon.soft112.com", "manta-unlimited-trending-webtoons.soft112.com"];
 const state = defaultState();
 state.settings.adultBlocklistEnabled = false;
 state.deviceControls.ios.enabled = true;
@@ -25,26 +27,37 @@ const guard = (url: string) => Boolean(runInContext(`explicitSearchBlockRedirect
 const search = (query: string) => `https://catalog.example/search?q=${encodeURIComponent(query)}`;
 const blockedQueries = [
   ...chartDomains.map(domain => `${domain.split(".")[0]} alternatives`),
+  "qtoon", "Q Toon alternatives", "q—toon mirrors", "ＱＴＯＯＮ", "q\u200btoon", "comicle alternatives",
+  "mangabuddy alternatives", "mangameow", "mangaball", "kuramanga", "comizy", "nyrascans", "mangavyvy", "hiperdex",
+  "tappytoon", "toomics", "lezhin", "lezhinus", "lezhinx", "daycomics", "toptoon", "coolmic", "mangaplaza", "ebookrenta", "webcomicsapp", "lalatoon",
   "Omega Scans alternatives", "omega—scans mirrors", "Manga DNA competitors", "manga for free alternatives",
   "manhwa buddy", "manhwa club", "ｔｏｏｎｉｌｙ alternatives", "toon\u200bily", "pornhwa",
   "smut manga", "comics smut", "mature doujinshi", "erotica webtoons", "explicit manga", "manga r-19", "19+ webtoon"
 ];
-const allowedQueries = ["corn smut fungus", "manga drawing tutorials", "comic book history", "uncensored interview", "mature gardening", "manga chapter 19", "nottoonily", "omegascanscope", "mangadnasequence"];
+const allowedQueries = ["corn smut fungus", "manga drawing tutorials", "comic book history", "uncensored interview", "mature gardening", "manga chapter 19", "nottoonily", "omegascanscope", "mangadnasequence",
+  "notqtoon", "qtoonscope", "comiclearning", "manta ray", "toptoonscope", "comic drawing software"];
 const blockedUrls = [
   ...blockedQueries.flatMap(query => [search(query), search(encodeURIComponent(query))]),
-  ...chartDomains.flatMap(domain => [
-    `https://${domain}/`, `http://reader.${domain}/ordinary-title`,
-    `https://www.semrush.com/website/${domain}/competitors/`
+  ...[...chartDomains, ...reportedDomains].flatMap(domain => [
+    `https://${domain}/`, `http://reader.${domain}/ordinary-title`
   ]),
-  "https://reader.toonily.example/", "https://example.org/manga-dna/alternatives"
+  ...[...chartDomains, "qtoon.com", "qtoon.net", "qtoon.org", "qtoon.ai", "comicle.com"].map(domain =>
+    `https://www.semrush.com/website/${domain}/competitors/`),
+  "https://reader.toonily.example/", "https://example.org/manga-dna/alternatives",
+  "https://comicle-manga-manhwa-comics.soft112.com/comicle-manga-manhwa-comics-alternatives.html",
+  "https://qtoon-manga-manhua-comics.soft112.com/", "https://example.org/q-toon/alternatives",
+  "https://example.org/reviews/qtoon.ai/", "https://example.org/comicle-manga-alternatives/"
 ];
 const allowedUrls = [
   ...allowedQueries.map(search),
   "https://example.org/?nonce=toonily&return=https%3A%2F%2Fmangadna.com",
   "https://example.org/account?token=omegascans",
-  "https://example.org/assets/logo.png#toonily"
+  "https://example.org/assets/logo.png#toonily",
+  "https://example.org/?nonce=qtoon&return=https%3A%2F%2Fqtoon.org",
+  "https://example.org/account?token=comicle", "https://example.org/assets/logo.png#qtoon",
+  "https://example.org/reference/comiclearning", "https://text-editor.soft112.com/"
 ];
-for (const domain of chartDomains) {
+for (const domain of [...chartDomains, ...reportedDomains]) {
   assert.ok(browserPermanentBlockedDomains().includes(domain), `offline static deny: ${domain}`);
   for (const profile of state.profiles) assert.ok(shouldBlockSite(profile, `reader.${domain}`), `${profile.id}: ${domain}`);
   const targets = iosPolicyTargets(state, now);

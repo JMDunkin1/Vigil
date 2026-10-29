@@ -19,7 +19,8 @@ state.deviceControls.ios.enabled = true;
 state.settings.adultBlocklistEnabled = false;
 assert.equal(new Set(DEFAULT_MATURE_COMIC_BLOCKED_SITES).size, DEFAULT_MATURE_COMIC_BLOCKED_SITES.length,
   "reviewed comic domains must not waste phone capacity on duplicate entries");
-for (const requestedDomain of ["comicland.org", "manhwaread.com", "manhwaread.org", "toon-hub.com"]) {
+for (const requestedDomain of ["comicland.org", "manhwaread.com", "manhwaread.org", "toon-hub.com",
+  "qtoon.com", "qtoon.net", "qtoon.org", "qtoon.ai", "comicle.com", "comicle-manga-manhwa-comics.soft112.com"]) {
   assert.ok(DEFAULT_MATURE_COMIC_BLOCKED_SITES.some(domain => domain === requestedDomain), requestedDomain);
 }
 for (const profile of state.profiles) {
@@ -59,7 +60,6 @@ const targets = iosPolicyTargets(state);
 assert.ok(targets.deniedUrls.length <= 500);
 assert.ok(targets.supplementalDeniedUrls.length >= DEFAULT_MATURE_COMIC_BLOCKED_SITES.length * 2,
   "the supplemental payload retains every comic deny alongside displaced priority rules");
-assert.ok(targets.supplementalDeniedUrls.length <= 500);
 for (const domain of DEFAULT_MATURE_COMIC_BLOCKED_SITES) {
   for (const scheme of ["http", "https"]) {
     assert.ok(targets.supplementalDeniedUrls.includes(`${scheme}://${domain}/`));
@@ -76,15 +76,17 @@ for (const domain of [...DEFAULT_MATURE_ART_BLOCKED_SITES, ...DEFAULT_ADULT_PROD
 }
 const profile = parsePlist(buildIosConfigurationProfile(state)) as { PayloadContent: Array<Record<string, unknown>> };
 const filters = profile.PayloadContent.filter(payload => payload.PayloadType === "com.apple.webcontent-filter");
-assert.equal(filters.length, 2);
-assert.equal(new Set(filters.map(payload => payload.PayloadUUID)).size, 2);
+// Supplemental inventory now spans several payloads. Enforce Apple's cap on
+// every emitted payload and prove that chunking loses no curated URLs.
+assert.equal(filters.length, 1 + Math.ceil(targets.supplementalDeniedUrls.length / 500));
+assert.equal(new Set(filters.map(payload => payload.PayloadUUID)).size, filters.length);
 for (const filter of filters) {
   assert.equal(filter.FilterType, "BuiltIn");
   assert.equal(filter.AutoFilterEnabled, true);
   assert.ok((filter.DenyListURLs as string[]).length <= 500);
 }
 assert.deepEqual(filters[0].DenyListURLs, targets.deniedUrls);
-assert.deepEqual(filters[1].DenyListURLs, targets.supplementalDeniedUrls);
+assert.deepEqual(filters.slice(1).flatMap(filter => filter.DenyListURLs), targets.supplementalDeniedUrls);
 state.deviceControls.ios.enabled = false;
 const disabled = parsePlist(buildIosConfigurationProfile(state)) as { PayloadContent: Array<Record<string, unknown>> };
 assert.equal(disabled.PayloadContent.some(payload => payload.PayloadType === "com.apple.webcontent-filter"), false);

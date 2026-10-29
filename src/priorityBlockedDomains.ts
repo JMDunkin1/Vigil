@@ -254,6 +254,16 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
 ] as const;
 
 export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
+  // User report and QToon reader/alternative audit: research/2026-10-29-comic-coverage.md.
+  "qtoon.com",
+  "qtoon.net",
+  "qtoon.org",
+  "qtoon.ai",
+  "comicle.com",
+  // App directories are discovery surfaces too; scope these to the listings.
+  "comicle-manga-manhwa-comics.soft112.com",
+  "line-webtoon.soft112.com",
+  "manta-unlimited-trending-webtoons.soft112.com",
   // User-requested whole-site adult-comic ban, including every subdomain.
   "theblank.net",
   // First-party adult catalog evidence: research/2026-10-12-adult-comic-audit.json.
