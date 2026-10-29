@@ -219,3 +219,39 @@ different post. A separate niche-meme Search produced 36 allowed results and
 404-pixel width instead of retaining an empty third column. Instagram also
 returned profile-reader rate limits during this diagnostic session; unverifiable
 account evidence remained fail-closed and did not bypass the popularity rule.
+
+## Uniform Search grid — prepared for later installation
+
+The user confirmed playback works and requested a denser, more consistent
+Instagram-like layout. The previous one/two-result row expansion made some
+thumbnails half-screen or full-screen width while other rows retained three
+columns, reducing how many items could be seen at once.
+
+Search now uses three equal square columns with one-pixel gaps. Only proven
+groups consisting entirely of result rows are packed into the shared grid;
+their original React row and cell nodes are retained without reparenting.
+Approved cells fill holes across consecutive source rows, and an incomplete
+last row keeps the same small tile size. Thumbnail cropping applies only to
+managed Search cells. The opened player, its source identity, native approval,
+popularity thresholds, text policy, and onward-navigation restrictions are
+unchanged. This increases on-screen density without admitting additional
+unqualified results.
+
+Layout ownership recognizes a one-result source row and retained rows whose
+CSS display is `contents`. It drops disconnected groups, clears on route exit,
+and releases a group if account/search controls appear within it. Regression
+coverage checks equal sizes at 390- and 430-pixel phone widths, packing across
+source rows, newly loaded rows, one-result final rows, recycled denied links,
+removed rows, and controls added after the initial render. The existing real
+decoded-video and single-item containment regressions remain in the check set.
+
+The paired iPhone was unreachable. The user explicitly chose preparation for
+later installation, so no phone update was attempted for this layout change;
+live Instagram pagination and on-phone visual verification remain pending.
+
+Validation: all eleven focused simulator regressions passed with the compact
+grid. After the final control-isolation and thumbnail-scoping adjustments,
+the layout/query test, real decoded-video opening test, and delayed-player
+test passed again. Fourteen targeted Node checks and repository lint passed.
+The layout test retains the original source parents while checking lazy row
+addition, removal/recycling, a single-cell last row, and responsive sizing.

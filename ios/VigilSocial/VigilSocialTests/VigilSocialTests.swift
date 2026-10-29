@@ -10222,6 +10222,7 @@ final class VigilSocialTests: XCTestCase {
               let item={shortcode:'Reference'+scenario,like_count:0,play_count:0,owner:{username:'creator'+scenario},caption:{text:'basketball reference'}};
               if(scenario==='likes'||scenario==='sensitive')item.like_count=window.referenceLikeCount;
               if(scenario==='views')item.play_count=10000;
+              if(scenario?.startsWith('more'))item.play_count=10000;
               if(scenario==='below'){item.like_count=999;item.play_count=9999;}
               if(scenario==='missing')item={};
               if(scenario==='wrongpost')item={shortcode:'Other456',like_count:999999};
@@ -10258,16 +10259,62 @@ final class VigilSocialTests: XCTestCase {
         let opened = try await webView.evaluateJavaScript("window.referenceOpened") as? [String]
         XCTAssertEqual(opened, ["/p/Referencelikes/", "/p/Referenceviews/", "/p/Referencefollowers/"])
         let layout = try await webView.evaluateJavaScript(#"""
-            (()=>{const row=document.getElementById('row-0').getBoundingClientRect();
-              const end=document.getElementById('tile-views').getBoundingClientRect();
-              return {filled:Math.abs(end.right-row.right)<2,empty:getComputedStyle(document.getElementById('row-6')).display==='none'};})()
+            (()=>{const grid=document.getElementById('grid').getBoundingClientRect();
+              const tiles=['likes','views','followers'].map(id=>document.getElementById('tile-'+id).getBoundingClientRect());
+              const width=(grid.width-2)/3;
+              return {consistent:tiles.every(r=>Math.abs(r.width-width)<1&&Math.abs(r.height-r.width)<1),
+                packed:tiles.every(r=>Math.abs(r.top-tiles[0].top)<1)&&Math.abs(tiles[2].right-grid.right)<1,
+                sourceRowsRetained:document.getElementById('followers').closest('.row').id==='row-3',
+                empty:getComputedStyle(document.getElementById('row-6')).display==='none'};})()
             """#) as? [String: Bool]
-        XCTAssertEqual(layout, ["filled": true, "empty": true], "filtered results must not leave a reserved blank right column")
+        XCTAssertEqual(layout, ["consistent": true, "packed": true, "sourceRowsRetained": true, "empty": true],
+            "approved tiles must pack across retained source rows into three equal square columns")
+        webView.frame.size.width = 430
+        try await waitForJavaScriptCondition("Math.abs(document.getElementById('grid').getBoundingClientRect().width-430)<1", in: webView)
+        let resized = try await webView.evaluateJavaScript(#"""
+            (()=>{const grid=document.getElementById('grid').getBoundingClientRect();
+              return ['likes','views','followers'].every(id=>{
+                const r=document.getElementById('tile-'+id).getBoundingClientRect();
+                return Math.abs(r.width-(grid.width-2)/3)<1&&Math.abs(r.height-r.width)<1;
+              });})()
+            """#) as? Bool
+        XCTAssertEqual(resized, true, "a wider phone keeps three equally sized square tiles")
         let checksBefore = try await webView.evaluateJavaScript("window.referenceTextRequests") as? Int
         _ = try await webView.evaluateJavaScript("window.referenceLikeCount=1001;void fetch('/p/Referencelikes/?metrics=1');")
         try await Task.sleep(nanoseconds: 100_000_000)
         let checksAfter = try await webView.evaluateJavaScript("window.referenceTextRequests") as? Int
         XCTAssertEqual(checksAfter, checksBefore, "ordinary counter updates must not re-hide and reclassify an approved tile")
+        _ = try await webView.evaluateJavaScript(#"""
+            for(const [index,group] of [['morea','moreb','morec'],['mored']].entries()){
+              const row=document.createElement('div');row.className='row';row.id='lazy-row-'+index;
+              row.innerHTML=group.map(id=>'<div class="tile" id="tile-'+id+'"><div class="thumb"><a id="'+id+'" href="/p/Reference'+id+'/">Reference</a></div></div>').join('');
+              document.getElementById('grid').append(row);
+            }true;
+            """#)
+        try await waitForJavaScriptCondition("['morea','moreb','morec','mored'].every(id=>document.getElementById(id).dataset.vigilInstagramReferenceResult==='allowed')", in: webView)
+        let lazyLayout = try await webView.evaluateJavaScript(#"""
+            (()=>{const grid=document.getElementById('grid'), width=(grid.getBoundingClientRect().width-2)/3;
+              const tiles=[...grid.querySelectorAll('[data-vigil-instagram-reference-tile="allowed"]')];
+              return tiles.length===7&&tiles.every(tile=>{
+                const r=tile.getBoundingClientRect();return Math.abs(r.width-width)<1&&Math.abs(r.height-width)<1;
+              })&&getComputedStyle(document.getElementById('lazy-row-1')).display==='contents';})()
+            """#) as? Bool
+        XCTAssertEqual(lazyLayout, true, "newly loaded rows and a one-result final row keep the same compact tile size")
+        _ = try await webView.evaluateJavaScript("document.getElementById('morea').href='/p/Referencebelow/';document.getElementById('lazy-row-1').remove();true;")
+        try await waitForJavaScriptCondition("document.getElementById('morea').dataset.vigilInstagramReferenceResult==='denied'", in: webView)
+        let recycledLayout = try await webView.evaluateJavaScript(#"""
+            (()=>{const grid=document.getElementById('grid'), tiles=[...grid.querySelectorAll('[data-vigil-instagram-reference-tile="allowed"]')];
+              return grid.dataset.vigilInstagramReferenceGrid==='true'&&tiles.length===5&&tiles.every(tile=>{
+                const r=tile.getBoundingClientRect();return Math.abs(r.width-(grid.clientWidth-2)/3)<1;
+              });})()
+            """#) as? Bool
+        XCTAssertEqual(recycledLayout, true, "recycling a denied tile and retiring a row preserve the remaining grid")
+        _ = try await webView.evaluateJavaScript("document.getElementById('grid').insertAdjacentHTML('beforeend','<input id=grid-control aria-label=Account>');true;")
+        try await waitForJavaScriptCondition("!document.getElementById('grid').hasAttribute('data-vigil-instagram-reference-grid')", in: webView)
+        let controlVisible = try await webView.evaluateJavaScript("document.getElementById('grid-control').getClientRects().length>0") as? Bool
+        XCTAssertEqual(controlVisible, true, "a newly inserted account/search control must not become part of the media grid")
+        _ = try await webView.evaluateJavaScript("document.getElementById('grid-control').remove();true;")
+        try await waitForJavaScriptCondition("document.getElementById('grid').dataset.vigilInstagramReferenceGrid==='true'", in: webView)
         let popup = try await webView.evaluateJavaScript("document.getElementById('vigil-instagram-reference-status')!==null") as? Bool
         XCTAssertEqual(popup, false, "denied results disappear without a per-result popup")
         _ = try await webView.evaluateJavaScript("document.getElementById('likes').href='/p/Referencebelow/'; true;")
@@ -10280,7 +10327,7 @@ final class VigilSocialTests: XCTestCase {
         let allHidden = try await webView.evaluateJavaScript("[...document.querySelectorAll('#grid a')].every(link=>getComputedStyle(link).display==='none')") as? Bool
         XCTAssertEqual(allHidden, true)
         _ = try await webView.evaluateJavaScript("history.pushState({},'', '/');true;")
-        let clearedLayout = try await webView.evaluateJavaScript("!document.documentElement.hasAttribute('data-vigil-instagram-reference-search') && document.querySelectorAll('[data-vigil-instagram-reference-row], [data-vigil-instagram-reference-tile]').length===0") as? Bool
+        let clearedLayout = try await webView.evaluateJavaScript("!document.documentElement.hasAttribute('data-vigil-instagram-reference-search') && document.querySelectorAll('[data-vigil-instagram-reference-grid], [data-vigil-instagram-reference-row], [data-vigil-instagram-reference-tile]').length===0") as? Bool
         XCTAssertEqual(clearedLayout, true, "leaving an empty Search must release its retained layout markers")
         webView.navigationDelegate = nil
     }

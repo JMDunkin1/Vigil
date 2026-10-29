@@ -2242,7 +2242,7 @@ enum DOMAdapters {
       const fresh = record => record && Date.now() >= record.at && Date.now() - record.at < 300000;
       const decisions = new Map(), resultChecks = new Map();
       const elementStates = new WeakMap();
-      const linkTiles = new WeakMap(), layoutTiles = new Set(), layoutRows = new Set();
+      const linkTiles = new WeakMap(), layoutTiles = new Set(), layoutRows = new Set(), layoutGrids = new Set();
       const lookupQueue = [];
       let lookupsRunning = 0, scanScheduled = false;
       const fingerprint = route => {
@@ -2320,17 +2320,46 @@ enum DOMAdapters {
           if (!routes.length || routes.some(candidate => candidate.path !== route.path)) break;
           const siblings = [...node.parentElement?.children || []].filter(sibling =>
             [...sibling.querySelectorAll('a[href]')].some(anchor => mediaRoute(anchor.href)));
-          if (node.matches('li, [role="listitem"]') || siblings.length > 1
-              && (/grid|flex/.test(getComputedStyle(node.parentElement).display)
-                || node.parentElement.hasAttribute('data-vigil-instagram-reference-empty-row'))) { tile = node; break; }
+          const parent = node.parentElement, display = parent ? getComputedStyle(parent).display : '';
+          if (node.matches('li, [role="listitem"]') || parent
+              && (siblings.length > 1 || display.includes('grid') || parent.hasAttribute('data-vigil-instagram-reference-row'))
+              && (/grid|flex/.test(display) || parent.hasAttribute('data-vigil-instagram-reference-row'))) { tile = node; break; }
         }
         return tile;
       };
+      const paintGrid = grid => {
+        if (!grid) return;
+        if (grid.matches('main, [role="main"], nav, [role="navigation"], form')
+            || grid.querySelector('input, textarea, nav, [role="navigation"]')) {
+          grid.removeAttribute('data-vigil-instagram-reference-grid');
+          layoutGrids.delete(grid);
+          return;
+        }
+        const rows = [...grid.children];
+        // Flatten only a proven group of result rows. Keep React's original
+        // row/cell nodes in place; headings, account results and controls never
+        // become grid cells. Allowed items can then fill holes across rows.
+        if (rows.length && rows.every(row => row.hasAttribute('data-vigil-instagram-reference-row'))) {
+          grid.dataset.vigilInstagramReferenceGrid = 'true';
+          layoutGrids.add(grid);
+        } else {
+          grid.removeAttribute('data-vigil-instagram-reference-grid');
+          layoutGrids.delete(grid);
+        }
+      };
       const paintRow = row => {
-        if (!row || row.matches('main, [role="main"], nav, [role="navigation"], form')
-            || row.querySelector('input, textarea, nav, [role="navigation"]')) return;
+        if (!row) return;
+        if (row.matches('main, [role="main"], nav, [role="navigation"], form')
+            || row.querySelector('input, textarea, nav, [role="navigation"]')) {
+          layoutRows.delete(row);
+          row.removeAttribute('data-vigil-instagram-reference-row');
+          row.removeAttribute('data-vigil-instagram-reference-empty-row');
+          paintGrid(row.parentElement);
+          return;
+        }
         const cells = [...row.children];
-        const ownsOnlyTiles = cells.length > 1 && cells.every(cell => cell.hasAttribute('data-vigil-instagram-reference-tile'));
+        const ownsOnlyTiles = cells.length > 0 && cells.every(cell => cell.hasAttribute('data-vigil-instagram-reference-tile'))
+          && (/grid|flex|contents/.test(getComputedStyle(row).display) || layoutRows.has(row));
         const visible = cells.filter(cell => cell.dataset.vigilInstagramReferenceTile === 'allowed').length;
         if (ownsOnlyTiles) {
           layoutRows.add(row);
@@ -2342,6 +2371,7 @@ enum DOMAdapters {
           row.removeAttribute('data-vigil-instagram-reference-row');
           row.removeAttribute('data-vigil-instagram-reference-empty-row');
         }
+        paintGrid(row.parentElement);
       };
       const paintResult = (link, route, state) => {
         link.dataset.vigilInstagramReferenceResult = state;
@@ -2362,7 +2392,8 @@ enum DOMAdapters {
           row.removeAttribute('data-vigil-instagram-reference-row');
           row.removeAttribute('data-vigil-instagram-reference-empty-row');
         }
-        layoutTiles.clear(); layoutRows.clear();
+        for (const grid of layoutGrids) grid.removeAttribute('data-vigil-instagram-reference-grid');
+        layoutTiles.clear(); layoutRows.clear(); layoutGrids.clear();
       };
       function scanResults() {
         if (!isSearchURL()) return;
@@ -2370,6 +2401,7 @@ enum DOMAdapters {
         // layout ownership while the user scrolls through search results.
         for (const tile of layoutTiles) if (!tile.isConnected) layoutTiles.delete(tile);
         for (const row of layoutRows) if (!row.isConnected) layoutRows.delete(row);
+        for (const grid of layoutGrids) if (!grid.isConnected) layoutGrids.delete(grid);
         for (const link of document.querySelectorAll('main a[href], [role="main"] a[href]')) {
           if (link.closest('nav, [role="navigation"]')) continue;
           const route = mediaRoute(link.href);
@@ -2457,17 +2489,30 @@ enum DOMAdapters {
         html[data-vigil-instagram-reference-search] :is(main, [role="main"]) video { display:none !important; }
         html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row]:where(:not([data-vigil-instagram-reference-row="0"])) {
           display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important;
-          column-gap:1px !important; min-width:0 !important; width:100% !important;
+          gap:1px !important; min-width:0 !important; width:100% !important;
         }
-        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row="1"] {
-          grid-template-columns:minmax(0,1fr) !important;
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-grid="true"] {
+          display:grid !important; grid-template-columns:repeat(3,minmax(0,1fr)) !important;
+          grid-auto-flow:row !important; align-items:start !important; gap:1px !important;
+          min-width:0 !important; width:100% !important;
         }
-        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row="2"] {
-          grid-template-columns:repeat(2,minmax(0,1fr)) !important;
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-grid="true"]
+          > [data-vigil-instagram-reference-row]:where(:not([data-vigil-instagram-reference-row="0"])) {
+          display:contents !important;
         }
         html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row] > [data-vigil-instagram-reference-tile="allowed"] {
-          width:auto !important; min-width:0 !important; max-width:none !important;
-          grid-column:auto !important; grid-row:auto !important;
+          width:100% !important; min-width:0 !important; max-width:none !important;
+          height:auto !important; min-height:0 !important; aspect-ratio:1 !important; overflow:hidden !important;
+          box-sizing:border-box !important;
+          grid-column:auto !important; grid-row:auto !important; margin:0 !important;
+        }
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row] > [data-vigil-instagram-reference-tile="allowed"] > :first-child,
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row] > [data-vigil-instagram-reference-tile="allowed"] a[data-vigil-instagram-reference-result="allowed"] {
+          display:block !important; width:100% !important; height:100% !important;
+        }
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-row] > [data-vigil-instagram-reference-tile="allowed"]
+          [data-vigil-instagram-reference-result="allowed"] img {
+          width:100% !important; height:100% !important; object-fit:cover !important;
         }
       `;
       document.documentElement.append(style);
