@@ -3,6 +3,59 @@ import WebKit
 @testable import VigilSocial
 
 final class SocialNotificationsTests: XCTestCase {
+    func testInstagramEnableLinkIsExactAndCannotSupplyDestinations() throws {
+        for value in ["vigilsocial://notifications/instagram", "vigil-instagram://notifications/instagram"] {
+            XCTAssertTrue(InstagramMessageAlerts.isEnableURL(try XCTUnwrap(URL(string: value))))
+        }
+        for value in ["https://notifications/instagram", "vigilsocial://notifications/instagram?url=https://example.com",
+                      "vigilsocial://notifications/instagram#other", "vigilsocial://notifications/snapchat",
+                      "vigilsocial://notifications/instagram/"] {
+            XCTAssertFalse(InstagramMessageAlerts.isEnableURL(try XCTUnwrap(URL(string: value))))
+        }
+    }
+
+    @MainActor
+    func testInstagramMessageBaselineIsIsolatedFromThePage() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.loadHTMLString("<html><body>Inbox fixture</body></html>", baseURL: SocialNotifications.instagramInboxURL)
+        try await waitForAlertCondition("document.readyState === 'complete'", in: webView)
+        _ = try await webView.callAsyncJavaScript(#"""
+            Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
+            globalThis.fixtureTime = 1800000000000;
+            globalThis.fixtureItems = [];
+            Date.now = () => globalThis.fixtureTime;
+            globalThis.fetch = async url => {
+              const response = new Response(JSON.stringify({status:'ok',inbox:{threads:[{
+                thread_id:'thread',viewer_id:100,muted:false,pending:false,items:globalThis.fixtureItems
+              }]}}), {status:200,headers:{'content-type':'application/json'}});
+              Object.defineProperty(response, 'url', {value:url});
+              return response;
+            };
+            return true;
+            """#, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let initial = try await webView.callAsyncJavaScript(InstagramMessageAlerts.inboxScript,
+            arguments: ["generation": "first"], in: nil, contentWorld: .defaultClient) as? [String: Any]
+        XCTAssertEqual(initial?["status"] as? String, "ready")
+        XCTAssertEqual(initial?["hasMessage"] as? Bool, false)
+        _ = try await webView.callAsyncJavaScript(#"""
+            globalThis.fixtureTime += 1000;
+            globalThis.fixtureItems = [{item_id:'new',user_id:200,item_type:'text',text:'Private text',
+                timestamp:String(BigInt(Date.now())*1000n)}];
+            return true;
+            """#, arguments: [:], in: nil, contentWorld: .defaultClient)
+        let incoming = try await webView.callAsyncJavaScript(InstagramMessageAlerts.inboxScript,
+            arguments: ["generation": "first"], in: nil, contentWorld: .defaultClient) as? [String: Any]
+        XCTAssertEqual(incoming?["hasMessage"] as? Bool, true)
+        XCTAssertEqual(Set(incoming?.keys.map { $0 } ?? []), ["status", "hasMessage"])
+        let isolated = try await webView.evaluateJavaScript("globalThis.__vigilInstagramMessageBaseline === undefined") as? Bool
+        XCTAssertEqual(isolated, true)
+        let resumed = try await webView.callAsyncJavaScript(InstagramMessageAlerts.inboxScript,
+            arguments: ["generation": "resumed"], in: nil, contentWorld: .defaultClient) as? [String: Any]
+        XCTAssertEqual(resumed?["hasMessage"] as? Bool, false)
+    }
+
     @MainActor
     func testWebAlertPermissionSurvivesDocumentRecreationAndPreservesOtherScripts() async throws {
         let controller = WKUserContentController()

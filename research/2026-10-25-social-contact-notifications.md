@@ -1,5 +1,10 @@
 # Snapchat and Instagram contact notifications
 
+Implementation update: [October 29 Instagram message alerts](2026-10-29-instagram-message-alerts.md)
+adds opt-in foreground text-message alerts. The historical findings below
+describe the earlier baseline. Calls and background delivery remain unresolved;
+the user requested that the new build stay ready for later installation.
+
 Prepared October 25, 2026; rechecked against the newer source on October 29,
 2026. The user will connect the iPhone later. This records the requested behavior
 and the checks needed before changing the phone; it does not represent an

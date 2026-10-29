@@ -8,6 +8,7 @@ struct VigilSocialApp: App {
     @UIApplicationDelegateAdaptor(SocialAppDelegate.self) private var appDelegate
     @StateObject private var container = SocialContainerStore()
     @ObservedObject private var launcherShortcut = SocialLauncherShortcut.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -49,17 +50,29 @@ struct VigilSocialApp: App {
                 }
                 .task {
                     let store = container
-                    SocialNotifications.shared.openService = { [weak store] service in store?.select(service) }
+                    SocialNotifications.shared.openService = { [weak store] service in
+                        if service == .instagram { store?.open(SocialNotifications.instagramInboxURL) }
+                        else { store?.select(service) }
+                    }
                     await SocialNotifications.shared.refreshAuthorization()
                     SocialNotifications.shared.rescheduleReminders(preferences: store.preferences)
                 }
                 .onOpenURL { url in
-                    if (container.isCombined || container.initialService == .instagram),
+                    if (container.isCombined || container.initialService == .instagram), InstagramMessageAlerts.isEnableURL(url) {
+                        Task {
+                            await SocialNotifications.shared.setEnabled(true, for: .instagram)
+                            container.open(SocialNotifications.instagramInboxURL)
+                        }
+                    } else if (container.isCombined || container.initialService == .instagram),
                        url.scheme == "vigil-instagram", url.host == "safari-settings" {
                         openFocusedExtensionSettings()
                     } else {
                         container.open(url)
                     }
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { Task { await SocialNotifications.shared.refreshAuthorization() } }
+                    else { SocialNotifications.shared.invalidateWebAlerts() }
                 }
         }
     }

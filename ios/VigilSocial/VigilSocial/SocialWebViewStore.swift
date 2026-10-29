@@ -939,6 +939,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func suspendAllMedia(relinquishExternalPlayback: Bool = true) {
+        managedWebViews.forEach { SocialNotifications.shared.invalidateWebAlerts(in: $0) }
         stopYouTubeExternalPlayback()
         externalPlaybackMayRelinquish = SocialMediaSuspensionPolicy.relinquishesGlobalAudio(
             requested: relinquishExternalPlayback, serviceIsVisible: playbackServiceIsVisible)
