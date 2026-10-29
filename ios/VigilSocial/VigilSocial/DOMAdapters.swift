@@ -2646,7 +2646,7 @@ enum DOMAdapters {
           // substantial horizontal groups can authorize additional videos.
           if (boxes.some((box, index) => box.width < 180 || box.height < 140
               || (index > 0 && box.left < boxes[index - 1].right - 1))) continue;
-          return { track, viewport, manifest: viewport !== track ? loadedCarouselManifest(card) : null,
+          return { track, viewport, manifest: loadedCarouselManifest(card),
             rejected: false, slides: slides.map(node => ({ node,
             media: [...(node.matches('video, img') ? [node] : node.querySelectorAll('video, img'))]
               .filter(contentMedia).map(media => ({ node: media,
@@ -2668,7 +2668,12 @@ enum DOMAdapters {
           if (remembered.source === null && !emptyMediaSource(source)) remembered.source = source;
           if (remembered.source === null ? emptyMediaSource(source) : remembered.source === source) return true;
         }
-        const slot = media.closest('li'), manifest = postCarousel.manifest?.[video ? 'video' : 'image'];
+        // Native scroll carousels also mount later slides lazily, and may use
+        // div slots instead of li. The exact post's loaded manifest is proof
+        // for either layout; the slot must still belong directly to this track.
+        let slot = media;
+        while (slot && slot.parentElement !== postCarousel.track) slot = slot.parentElement;
+        const manifest = postCarousel.manifest?.[video ? 'video' : 'image'];
         if (!manifest || slot?.parentElement !== postCarousel.track) return false;
         const srcset = media.getAttribute('srcset');
         const sources = srcset ? srcset.split(',').map(entry => entry.trim().split(/\s+/)[0])
@@ -3035,6 +3040,7 @@ enum DOMAdapters {
           a[href^="/audio/"], a[href^="/music/"], a[href^="/effects/"]
         ),
         [data-vigil-hidden-feature],
+        [data-vigil-instagram-retained-home="true"],
         [data-vigil-instagram-search-discovery="true"],
         a:is([href^="https://www.threads.net/"], [href^="https://www.threads.com/"],
             [href^="https://threads.net/"], [href^="https://threads.com/"], [href^="barcelona:"]),
@@ -7343,6 +7349,7 @@ enum DOMAdapters {
             a[href^="/audio/"], a[href^="/music/"], a[href^="/effects/"]
           ),
           [data-vigil-hidden-feature],
+          [data-vigil-instagram-retained-home="true"],
           [data-vigil-instagram-search-discovery="true"],
           a:is([href^="https://www.threads.net/"], [href^="https://www.threads.com/"],
             [href^="https://threads.net/"], [href^="https://threads.com/"], [href^="barcelona:"]),
@@ -8721,7 +8728,10 @@ enum DOMAdapters {
             : Promise.resolve(null);
           instagramModuleLoads.set(name, promise);
         }
-        return instagramModuleLoads.get(name);
+        const pending = instagramModuleLoads.get(name);
+        const result = await pending;
+        if (!result && instagramModuleLoads.get(name) === pending) instagramModuleLoads.delete(name);
+        return result;
       };
       const exactInstagramUser = (entries, username) => {
         for (const entry of entries || []) {
@@ -8844,6 +8854,16 @@ enum DOMAdapters {
       const friendshipLookupQueue = [];
       const maxConcurrentFriendshipLookups = 3;
       let activeFriendshipLookups = 0;
+      const friendshipRecovery = new Map();
+      let friendshipRecoveryTimer = 0;
+      const scheduleFriendshipRecovery = () => {
+        clearTimeout(friendshipRecoveryTimer);
+        friendshipRecoveryTimer = 0;
+        const next = Math.min(...[...friendshipRecovery.values()]
+          .filter(entry => entry.attempts <= 3).map(entry => entry.retryAt));
+        if (Number.isFinite(next)) friendshipRecoveryTimer = setTimeout(
+          () => retryUnavailableFriendships(), Math.max(0, next - Date.now()));
+      };
       const drainFriendshipLookupQueue = () => {
         while (activeFriendshipLookups < maxConcurrentFriendshipLookups
             && friendshipLookupQueue.length) {
@@ -8871,6 +8891,7 @@ enum DOMAdapters {
                 throw new Error('relationship lookup omitted mutual-follow fields');
               }
               recordFriendshipDiagnostic('verified', { mutual });
+              friendshipRecovery.delete(username);
               friendshipCache.set(username, mutual);
               persistFriendship(username, mutual);
               return mutual;
@@ -8886,6 +8907,10 @@ enum DOMAdapters {
           // viewer-scoped cache with a false negative.
           friendshipLookupFailed = true;
           recordFriendshipDiagnostic('unavailable');
+          const attempts = (friendshipRecovery.get(username)?.attempts || 0) + 1;
+          friendshipRecovery.set(username, { ...friendshipRecovery.get(username), attempts,
+            retryAt: Date.now() + 5000 * 3 ** Math.min(attempts - 1, 2) });
+          scheduleFriendshipRecovery();
           return null;
         });
         friendshipChecks.set(username, check);
@@ -9556,6 +9581,38 @@ enum DOMAdapters {
           flushHomeStoryRelationships();
         });
       };
+      const retryUnavailableFriendships = (force = false) => {
+        clearTimeout(friendshipRecoveryTimer);
+        friendshipRecoveryTimer = 0;
+        const now = Date.now();
+        const ready = new Set([...friendshipRecovery].filter(([username, entry]) =>
+          !friendshipChecks.has(username) && now - (entry.startedAt || 0) >= 1000
+          && (force || (entry.attempts <= 3 && (entry.retryAt <= now || !Number.isFinite(entry.retryAt)))))
+          .map(([username]) => username));
+        // Park offscreen failures until this surface returns. Retrying never
+        // grants access: unavailable nodes remain concealed during fresh proof.
+        for (const username of ready) friendshipRecovery.get(username).retryAt = Infinity;
+        if (instagramRoute() === 'feed') {
+          const posts = homeCards().filter(card => card.dataset.vigilInstagramHomeRelationship === 'unavailable'
+            && ready.has(homeCardAuthor(card)));
+          const stories = homeStoryControls().filter(control => control.dataset.vigilInstagramStoryRelationship === 'unavailable'
+            && ready.has(storyAuthor(control)));
+          const mounted = new Set([...posts.map(homeCardAuthor), ...stories.map(storyAuthor)]);
+          for (const username of mounted) friendshipRecovery.get(username).startedAt = now;
+          posts.forEach(card => { delete card.dataset.vigilInstagramHomeRelationship; classifyHomeCard(card); });
+          stories.forEach(control => { delete control.dataset.vigilInstagramStoryRelationship; classifyHomeStory(control); });
+          if (mounted.size) {
+            recordFriendshipDiagnostic('recovery', { accounts: mounted.size });
+            reconcileFriendsEmptyState();
+          }
+        }
+        scheduleFriendshipRecovery();
+      };
+      window.addEventListener('online', () => retryUnavailableFriendships(true));
+      window.addEventListener('pageshow', () => retryUnavailableFriendships(true));
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') retryUnavailableFriendships(true);
+      });
       const removeStoryPlaceholders = () => {
         document.querySelectorAll('[data-vigil-instagram-story-placeholders="true"]')
           .forEach((element) => element.remove());
@@ -9798,6 +9855,8 @@ enum DOMAdapters {
         return '';
       };
       const homeFeedRegionHeights = new WeakMap();
+      const homeFeedRegionMembers = new WeakMap();
+      const departedHomeRegions = new WeakSet();
       const clearHomeFeedRegionLayout = (region) => {
         [...region.querySelectorAll('[data-vigil-instagram-feed-layout], [data-vigil-instagram-feed-gap]'), region]
           .forEach((node) => {
@@ -9864,7 +9923,8 @@ enum DOMAdapters {
             homeFeedRegionRefreshTimers.delete(region);
             // Retained Home streams must stay fail-closed behind Stories and
             // Direct, even when recycled children lose article semantics.
-            if (instagramRoute() === 'profile' && !region.querySelector('[data-vigil-instagram-home-relationship]')) {
+            if (instagramRoute() === 'profile' && !region.hasAttribute('data-vigil-instagram-retained-home')
+                && !region.querySelector('[data-vigil-instagram-home-relationship], [data-vigil-instagram-retained-home]')) {
               region.removeAttribute('data-vigil-instagram-feed-region');
               clearHomeFeedRegionLayout(region);
             } else if (region.dataset.vigilInstagramFeedRegion !== 'closed') {
@@ -9904,6 +9964,10 @@ enum DOMAdapters {
           }
         });
         regions.forEach((region) => {
+          departedHomeRegions.delete(region);
+          const members = homeFeedRegionMembers.get(region) || new WeakSet();
+          [region, ...region.querySelectorAll('*')].forEach(node => members.add(node));
+          homeFeedRegionMembers.set(region, members);
           const allRegionCards = cards.filter((card) => region.contains(card));
           const regionCards = allRegionCards.filter((card) => !card.hasAttribute('data-vigil-hidden-feature'));
           const hasVerifiedPost = regionCards.some((card) => {
@@ -10011,18 +10075,47 @@ enum DOMAdapters {
           // to reveal the old feed during every delayed destination render.
           delete document.documentElement.dataset.vigilInstagramHomeFilter;
           if (instagramRoute() === 'profile') {
+            const regions = [...document.querySelectorAll('[data-vigil-instagram-feed-region]')];
+            for (const region of regions) {
+              if (departedHomeRegions.has(region)) continue;
+              departedHomeRegions.add(region);
+              // React can reuse the stream shell for Profile while retaining
+              // old Home descendants. Conceal those descendants individually
+              // so a verified profile branch can release its enclosing shell.
+              [region, ...region.querySelectorAll('*')].forEach(node => {
+                if (homeFeedRegionMembers.get(region)?.has(node)) node.dataset.vigilInstagramRetainedHome = 'true';
+              });
+            }
             document.querySelectorAll('[data-vigil-instagram-story-relationship]')
               .forEach((control) => {
                 if (isProfileControl(control)) clearStoryClassification(control);
               });
             const username = validInstagramUsername(location.pathname.split('/').filter(Boolean)[0]);
-            homeCards().filter((card) => card.hasAttribute('data-vigil-instagram-home-relationship'))
-              .forEach((article) => {
-                if (username && homeCardAuthor(article) === username) {
-                  delete article.dataset.vigilInstagramHomeRelationship;
-                  delete article.dataset.vigilInstagramHomeAuthor;
-                }
+            const profileBranches = new Set(homeCards().filter(article => username && homeCardAuthor(article) === username));
+            // Grids often have no author header. Newly mounted post links are
+            // destination content; old Home links remain tagged and concealed.
+            for (const region of regions) {
+              for (const link of region.querySelectorAll('a[href]')) {
+                if (homeFeedRegionMembers.get(region)?.has(link)) continue;
+                let path = '';
+                try { path = new URL(link.href, location.href).pathname; } catch (_) { continue; }
+                if (/^\/(p|reels?)\/[A-Za-z0-9_-]+\/?$/.test(path)) profileBranches.add(link);
+              }
+            }
+            profileBranches.forEach((article) => {
+              delete article.dataset.vigilInstagramHomeRelationship;
+              delete article.dataset.vigilInstagramHomeAuthor;
+              [article, ...article.querySelectorAll('[data-vigil-instagram-retained-home]')].forEach(node => {
+                delete node.dataset.vigilInstagramRetainedHome;
               });
+              for (let node = article.parentElement; node && node !== document.body; node = node.parentElement) {
+                delete node.dataset.vigilInstagramRetainedHome;
+                if (node.hasAttribute('data-vigil-instagram-feed-region')) {
+                  node.removeAttribute('data-vigil-instagram-feed-region');
+                  clearHomeFeedRegionLayout(node);
+                }
+              }
+            });
           }
           removeFriendsState();
           removeStoryPlaceholders();
@@ -10031,6 +10124,10 @@ enum DOMAdapters {
           return;
         }
         document.documentElement.dataset.vigilInstagramHomeFilter = 'true';
+        document.querySelectorAll('[data-vigil-instagram-retained-home]').forEach(node => {
+          delete node.dataset.vigilInstagramRetainedHome;
+        });
+        retryUnavailableFriendships();
         void hydrateViewerUsername().then(() => withHomeScrollAnchor(() => {
           // A slow identity request may finish after the user opens Profile.
           // Never run Home's avatar classifier against that destination tree.

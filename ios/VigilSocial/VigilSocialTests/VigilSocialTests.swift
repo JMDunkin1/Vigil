@@ -14302,4 +14302,110 @@ extension VigilSocialTests {
         XCTAssertEqual(state, [true, true, true, true], "Retained search controls never authorize an opened media viewer")
     }
 
+    @MainActor
+    func testInstagramUnavailableFriendsRecoverOnReconnectWithoutReloading() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><script>
+            window.available=false;window.lookups=0;
+            window.fetch=async input=>{
+              lookups++;
+              if(!available)return {ok:false,status:503};
+              const url=new URL(input,location.href),username=url.searchParams.get('username')||url.searchParams.get('query')||'viewer';
+              const user={username,friendship_status:{following:true,followed_by:username==='friend'}};
+              return {ok:true,json:async()=>({user,data:{user},users:[{user}]})};
+            };
+            </script></head><body><nav><a href="/viewer/" aria-label="Profile">Profile</a></nav><main>
+            <div role="list"><a id="story" href="/stories/friend/">friend's story</a></div>
+            <div id="stream"><article id="post"><header><a href="/friend/">friend</a></header>Post</article>
+            <article id="stranger"><header><a href="/stranger/">stranger</a></header>Other</article></div>
+            </main></body></html>
+            """#)
+        try await waitForJavaScriptCondition("document.getElementById('post').dataset.vigilInstagramHomeRelationship === 'unavailable' && document.getElementById('story').dataset.vigilInstagramStoryRelationship === 'unavailable'", in: webView)
+        _ = try await webView.evaluateJavaScript("available=true;window.dispatchEvent(new Event('online'))")
+        try await Task.sleep(nanoseconds: 400_000_000)
+        let state = try await webView.evaluateJavaScript(#"""
+            [document.getElementById('post').dataset.vigilInstagramHomeRelationship==='friend',
+             document.getElementById('story').dataset.vigilInstagramStoryRelationship==='friend',
+             document.getElementById('stranger').dataset.vigilInstagramHomeRelationship==='other']
+            """#) as? [Bool]
+        XCTAssertEqual(state, [true, true, true], "Only fresh mutual-follow proof can reveal a previously unavailable account")
+    }
+
+    @MainActor
+    func testInstagramProfileReusingHomeRegionRevealsOnlyProfilePosts() async throws {
+        let webView = try await instagramRepairFixture(#"""
+            <html><head><script>
+            window.fetch=async input=>{
+              const url=new URL(input,location.href),username=url.searchParams.get('username')||url.searchParams.get('query')||'viewer';
+              const user={username,friendship_status:{following:true,followed_by:username==='friend'}};
+              return {ok:true,json:async()=>({user,data:{user},users:[{user}]})};
+            };
+            </script></head><body><nav><a href="/viewer/" aria-label="Profile">Profile</a></nav><main>
+            <div id="stream"><article id="home-post"><header><a href="/friend/">friend</a></header>Home post</article>
+            <article id="other"><header><a href="/stranger/">stranger</a></header>Filtered</article></div>
+            </main></body></html>
+            """#)
+        try await waitForJavaScriptCondition("document.getElementById('home-post').dataset.vigilInstagramHomeRelationship === 'friend'", in: webView)
+        _ = try await webView.evaluateJavaScript(#"""
+            history.pushState({},'', '/profilefriend/');
+            document.getElementById('stream').insertAdjacentHTML('beforeend',
+              '<article id="profile-post"><header><a href="/profilefriend/">profilefriend</a></header>Profile post</article>');
+            """#)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let state = try await webView.evaluateJavaScript(#"""
+            (()=>{const visible=id=>{for(let n=document.getElementById(id);n;n=n.parentElement){
+              const s=getComputedStyle(n);if(s.display==='none'||s.visibility==='hidden')return false;}return true;};
+              return [visible('profile-post'),!visible('other'),!visible('home-post')];})()
+            """#) as? [Bool]
+        XCTAssertEqual(state, [true, true, true], "A reused profile shell must not inherit Home's whole-region concealment or expose the retained feed")
+        _ = try await webView.evaluateJavaScript("history.pushState({},'', '/')")
+        try await waitForJavaScriptCondition("document.getElementById('home-post').dataset.vigilInstagramHomeRelationship==='friend'", in: webView)
+        _ = try await webView.evaluateJavaScript(#"""
+            history.pushState({},'', '/anotherprofile/');
+            document.getElementById('stream').insertAdjacentHTML('beforeend',
+              '<section id="grid"><a href="/p/ProfilePhoto/"><img alt="Profile photo"></a></section>');
+            """#)
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let grid = try await webView.evaluateJavaScript(#"""
+            (()=>{for(let n=document.getElementById('grid');n;n=n.parentElement){
+              const s=getComputedStyle(n);if(s.display==='none'||s.visibility==='hidden')return false;}
+              return getComputedStyle(document.getElementById('home-post')).display==='none';})()
+            """#) as? Bool
+        XCTAssertEqual(grid, true, "New authorless profile grids stay usable after returning through Home")
+    }
+}
+
+extension VigilSocialTests {
+    @MainActor
+    func testInstagramNativeCarouselLoadsFourthPhotoOnlyFromSelectedPostManifest() async throws {
+        for wrapped in [false, true] {
+            for exact in [false, true] {
+                let slides = (1...3).map { index in
+                    let image = "<img src=\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='390' height='500'/%3E#\(index)\">"
+                    return wrapped ? "<div class='slide'>\(image)</div>" : image
+                }.joined()
+                let webView = try await instagramRepairFixture("""
+                    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+                    body{margin:0}#track{display:flex;overflow-x:auto;width:390px;height:500px}
+                    .slide,img{flex:none;width:390px;height:500px}
+                    </style></head><body><article><a href="/p/Dump123/">Post</a><div id="track">\(slides)</div></article><script>
+                    document.getElementById('track')['__reactProps$fixture']={children:{props:{post:{
+                      code:'\(exact ? "Dump123" : "Other123")',isSidecar:true,sidecarChildren:[
+                        {id:'one',isVideo:false,src:'https://example.com/first.jpg'},
+                        {id:'four',isVideo:false,src:'https://example.com/fourth.jpg'}]}}}};
+                    </script></body></html>
+                    """, path: "/p/Dump123/")
+                try await waitForJavaScriptCondition("document.querySelector('article').dataset.vigilSingleReelCard==='allowed'", in: webView)
+                _ = try await webView.evaluateJavaScript("""
+                    document.getElementById('track').insertAdjacentHTML('beforeend',
+                      '\(wrapped ? "<div class=slide>" : "")<img id=fourth src=https://example.com/fourth.jpg>\(wrapped ? "</div>" : "")');
+                    """)
+                try await Task.sleep(nanoseconds: 100_000_000)
+                let allowed = try await webView.evaluateJavaScript("document.querySelector('article').dataset.vigilSingleReelCard==='allowed'") as? Bool
+                XCTAssertEqual(allowed, exact, "Lazy photos need the exact selected post's source manifest (wrapped=\(wrapped))")
+                _ = try await webView.evaluateJavaScript("document.getElementById('fourth').src='https://example.com/recommendation.jpg'")
+                try await waitForJavaScriptCondition("document.querySelector('article').dataset.vigilSingleReelCard==='blocked'", in: webView)
+            }
+        }
+    }
 }
