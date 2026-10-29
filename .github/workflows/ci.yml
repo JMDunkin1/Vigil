@@ -38,6 +38,10 @@ jobs:
           PYIOSBACKUP_PYTHON: python
         run: npm run check
 
+      - name: Test Instagram Send panel WebKit containment
+        timeout-minutes: 3
+        run: node scripts/test-instagram-send-webkit.mjs
+
       - name: Test Instagram shared post browser regressions
         timeout-minutes: 3
         shell: bash

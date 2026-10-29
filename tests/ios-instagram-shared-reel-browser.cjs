@@ -4,6 +4,8 @@ const fs = require('node:fs');
 const assert = require('node:assert/strict');
 const source = fs.readFileSync('ios/VigilSocial/VigilSocial/DOMAdapters.swift', 'utf8');
 const guard = source.match(/static let instagramSingleReelGuard = #"""([\s\S]*?)"""#/)[1];
+const sendRoundtripHTML = fs.readFileSync('ios/VigilSocial/VigilSocialTests/VigilSocialTests.swift', 'utf8')
+  .match(/static let instagramSendRoundtripHTML = #"""([\s\S]*?)"""#/)[1];
 
 async function main() {
   await app.whenReady();
@@ -12,7 +14,8 @@ async function main() {
     ? new Response('<svg xmlns="http://www.w3.org/2000/svg" width="390" height="700"><rect width="390" height="700" fill="purple"/></svg>', {
       headers: { 'content-type': 'image/svg+xml' }
     })
-    : new Response('<!doctype html><html><body></body></html>', {
+    : new Response(new URL(request.url).searchParams.has('send-roundtrip')
+      ? sendRoundtripHTML : '<!doctype html><html><body></body></html>', {
       headers: { 'content-type': 'text/html' }
     }));
   const run = async code => {
@@ -20,6 +23,58 @@ async function main() {
     await win.webContents.executeJavaScript('new Promise(resolve => setTimeout(resolve, 0))');
     return result;
   };
+  const waitFor = async condition => {
+    for (let attempt = 0; attempt < 120; attempt++) {
+      if (await run(condition)) return;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.fail(`Send roundtrip did not settle: ${condition}`);
+  };
+  const openSendFixture = async mode => {
+    await win.loadURL('https://www.instagram.com/direct/t/friend/?send-roundtrip=1');
+    await run(`window.fixtureLocks=[];window.__vigilDocumentID='send-fixture';
+      Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{vigil:{
+        postMessage:payload=>fixtureLocks.push(payload)
+      }}}});true;`);
+    await run(guard);
+    await run(`fixtureMode=${JSON.stringify(mode)};document.getElementById('preview').click()`);
+    await waitFor(`document.documentElement.hasAttribute('data-vigil-single-reel')`);
+  };
+  for (const mode of ['aria', 'display', 'opacity', 'opening-gap', 'closing-gap', 'remount', 'anonymous']) {
+    await openSendFixture(mode);
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await run(`document.getElementById('send').click()`);
+      await waitFor(`document.getElementById('picker')?.dataset.vigilInstagramRecipientSheet==='true'`);
+      assert.equal(await run(`document.documentElement.hasAttribute('data-vigil-single-reel')`), true,
+        `${mode}: Send must not release the already-pinned Direct Reel`);
+      assert.equal(await run(`(() => {
+        const event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+        document.getElementById('recipients').dispatchEvent(event);document.getElementById('query').focus();
+        return !event.defaultPrevented && document.activeElement.id==='query';
+      })()`), true, `${mode}: recipient scrolling and search keep their native lifecycle`);
+      await run(`document.getElementById('dismiss').click()`);
+      await waitFor(`!document.getElementById('viewer').hasAttribute('aria-hidden')`);
+      assert.equal(await run('fixtureContained()'), true,
+        `${mode}: closing Send restores CSS, swipe, Next, and route containment while playback taps work`);
+      assert.equal(await run(`fixtureLocks.filter(message=>message.type==='reelScrollLock').every(message=>message.locked)`), true,
+        `${mode}: no native unlock may occur between opening and dismissing Send`);
+      assert.deepEqual(await run(`fixtureLocks.filter(message=>message.type==='reelScrollLock').at(-1).scrollingRegions`), [],
+        `${mode}: a dismissed picker leaves no native scrolling exception`);
+    }
+    await run(`document.getElementById('viewer').remove()`);
+    await waitFor(`!document.documentElement.hasAttribute('data-vigil-single-reel')`);
+    assert.equal(await run(`fixtureLocks.filter(message=>message.type==='reelScrollLock').at(-1).locked`), false,
+      `${mode}: actually closing the viewer releases the native lock`);
+  }
+  await openSendFixture('aria');
+  await run(`document.getElementById('send').click()`);
+  await waitFor(`document.getElementById('picker')?.dataset.vigilInstagramRecipientSheet==='true'`);
+  await run(`document.getElementById('viewer').remove();document.getElementById('picker').remove()`);
+  await waitFor(`!document.documentElement.hasAttribute('data-vigil-single-reel')`);
+  assert.equal(await run(`fixtureLocks.filter(message=>message.type==='reelScrollLock').at(-1).locked`), false,
+    'closing the viewer under Send must expire the transition hold and restore Direct');
+  console.log('VIGIL_INSTAGRAM_SEND_ROUNDTRIP_COMPLETE');
+  if (process.argv.includes('--send-roundtrip-only')) { win.destroy(); return; }
   for (const path of ['/p/Shared123/']) {
     await win.loadURL(`https://www.instagram.com${path}`);
     await run(guard);

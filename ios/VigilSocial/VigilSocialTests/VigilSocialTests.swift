@@ -14876,3 +14876,114 @@ extension VigilSocialTests {
         }
     }
 }
+
+extension VigilSocialTests {
+    static let instagramSendRoundtripHTML = #"""
+    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0}#thread{height:844px;overflow:auto}#thread>div{height:1600px}
+    #viewer{position:fixed;inset:0;background:white;z-index:2}#reel-stack{height:844px;overflow-y:auto}
+    video{display:block;width:390px;height:700px}.reel-card{height:844px}
+    #picker{position:fixed;inset:150px 0 0;background:white;z-index:3}
+    #recipients{height:400px;overflow:auto}#recipients>div{height:1200px}
+    </style></head><body><main id="thread"><button id="preview">Received Reel</button><div>Conversation</div></main><script>
+    window.fixtureMode='aria';window.fixtureVideoClicks=0;
+    window.fixtureViewer=()=>'<div id="reel-stack"><div class="reel-card"><video id="reel" onclick="fixtureVideoClicks++"></video>'
+      +'<button id="send" aria-label="Send post"><svg aria-label="Share Post"></svg></button></div>'
+      +'<div class="reel-card"><video></video><button id="next" aria-label="Next reel">Next</button></div></div>';
+    window.fixtureHide=()=>{
+      const viewer=document.getElementById('viewer');
+      if(fixtureMode==='display')viewer.style.display='none';
+      else if(fixtureMode==='opacity')viewer.style.opacity='0';
+      else viewer.setAttribute('aria-hidden','true');
+    };
+    window.fixtureDismiss=()=>{
+      document.getElementById('picker').remove();
+      const restore=()=>{
+        let viewer=document.getElementById('viewer');
+        if(fixtureMode==='remount'){const replacement=viewer.cloneNode(true);viewer.replaceWith(replacement);viewer=replacement;}
+        viewer.removeAttribute('aria-hidden');viewer.style.display='';viewer.style.opacity='';
+        document.getElementById('send').onclick=fixtureSend;
+      };
+      if(fixtureMode==='closing-gap')setTimeout(restore,100);else restore();
+    };
+    window.fixtureSend=()=>{
+      fixtureHide();
+      const show=()=>{const picker=document.createElement('div');picker.id='picker';picker.setAttribute('role','dialog');
+        picker.innerHTML='<button aria-label="Search people">Search</button><input id="query" placeholder="Search">'
+          +'<div id="recipients"><div><button><img style="width:40px;height:40px" alt="Friend">Friend</button></div></div>'
+          +'<button id="dismiss" onclick="fixtureDismiss()">Close</button>';
+        document.body.append(picker);};
+      if(fixtureMode==='opening-gap')setTimeout(show,100);else show();
+    };
+    document.getElementById('preview').onclick=()=>{
+      const viewer=document.createElement('div');viewer.id='viewer';
+      if(fixtureMode!=='anonymous')viewer.setAttribute('role','dialog');
+      viewer.innerHTML=fixtureViewer();document.body.append(viewer);document.getElementById('send').onclick=fixtureSend;
+    };
+    window.fixtureContained=()=>{
+      const reel=document.getElementById('reel');
+      const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:200});reel.dispatchEvent(wheel);
+      reel.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:500}));
+      const move=new PointerEvent('pointermove',{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:100});reel.dispatchEvent(move);
+      reel.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:100}));
+      const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+      reel.click();history.pushState({},'', '/reel/Other456/');
+      return wheel.defaultPrevented&&move.defaultPrevented&&next.defaultPrevented&&fixtureVideoClicks>0
+        &&document.documentElement.hasAttribute('data-vigil-single-reel')
+        &&getComputedStyle(reel).touchAction==='pinch-zoom'&&location.pathname==='/direct/t/friend/';
+    };
+    </script></body></html>
+    """#
+
+    @MainActor
+    func testInstagramClosingSendPreservesDirectReelContainment() async throws {
+        for mode in ["aria", "display", "opacity", "opening-gap", "closing-gap", "remount", "anonymous"] {
+            let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
+            controller.add(bridge, name: "vigil")
+            controller.addUserScript(WKUserScript(source: "window.__vigilDocumentID='send-roundtrip';" + DOMAdapters.instagramSingleReelGuard,
+                                                  injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = controller
+            configuration.websiteDataStore = .nonPersistent()
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+            let window = UIWindow(frame: webView.frame)
+            window.rootViewController = UIViewController()
+            window.rootViewController?.view.addSubview(webView)
+            window.isHidden = false
+            defer { webView.removeFromSuperview(); window.isHidden = true; controller.removeScriptMessageHandler(forName: "vigil") }
+            let loaded = expectation(description: "Send roundtrip \(mode)")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            webView.navigationDelegate = delegate
+            webView.loadHTMLString(Self.instagramSendRoundtripHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+            await fulfillment(of: [loaded], timeout: 5)
+            _ = try await webView.evaluateJavaScript("fixtureMode='\(mode)';document.getElementById('preview').click()")
+            try await waitForJavaScriptCondition("document.documentElement.hasAttribute('data-vigil-single-reel')", in: webView)
+            for _ in 0..<2 {
+                _ = try await webView.evaluateJavaScript("document.getElementById('send').click()")
+                try await waitForJavaScriptCondition("document.getElementById('picker')?.dataset.vigilInstagramRecipientSheet==='true'", in: webView)
+                let picker = try await webView.evaluateJavaScript(#"""
+                    (()=>{const e=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});document.getElementById('recipients').dispatchEvent(e);
+                      document.getElementById('query').focus();return !e.defaultPrevented&&document.activeElement.id==='query'
+                        &&document.documentElement.hasAttribute('data-vigil-single-reel');})()
+                    """#) as? Bool
+                XCTAssertEqual(picker, true, "Send keeps native input and the original item pin: \(mode)")
+                _ = try await webView.evaluateJavaScript("document.getElementById('dismiss').click()")
+                try await waitForJavaScriptCondition("!document.getElementById('viewer').hasAttribute('aria-hidden')", in: webView)
+                let contained = try await webView.evaluateJavaScript("fixtureContained()") as? Bool
+                XCTAssertEqual(contained, true, "Closing Send must preserve the same Reel's swipe and navigation boundary: \(mode)")
+                try await Task.sleep(nanoseconds: 50_000_000)
+                let locks = bridge.messages.filter { $0["type"] as? String == "reelScrollLock" }
+                XCTAssertTrue(locks.allSatisfy { $0["locked"] as? Bool == true }, "A foreground sheet must never emit an unlock: \(mode)")
+                XCTAssertTrue(SocialWebViewStore.instagramGestureRegions(locks.last?["scrollingRegions"]).isEmpty,
+                              "Closing Send clears every native picker exception: \(mode)")
+            }
+            _ = try await webView.evaluateJavaScript("document.getElementById('viewer').remove()")
+            try await waitForJavaScriptCondition("!document.documentElement.hasAttribute('data-vigil-single-reel')", in: webView)
+            let chat = try await webView.evaluateJavaScript(#"""
+                (()=>{const e=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});document.getElementById('thread').dispatchEvent(e);return !e.defaultPrevented;})()
+                """#) as? Bool
+            XCTAssertEqual(chat, true, "Actually closing the viewer restores Direct scrolling: \(mode)")
+            webView.navigationDelegate = nil
+        }
+    }
+}

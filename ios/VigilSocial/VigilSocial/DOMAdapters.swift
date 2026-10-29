@@ -2622,6 +2622,10 @@ enum DOMAdapters {
       let modalContext = null;
       let viewerOrigin = null;
       let viewerBackground = null;
+      let sheetOpeningUntil = 0;
+      let sheetClosingUntil = 0;
+      let sheetWasVisible = false;
+      let sheetTransitionTimer = 0;
       let directPath = '';
       let concealmentScope = null;
       const classifications = new Map();
@@ -2759,6 +2763,10 @@ enum DOMAdapters {
         modalContext = null;
         viewerOrigin = null;
         viewerBackground = null;
+        sheetOpeningUntil = sheetClosingUntil = 0;
+        sheetWasVisible = false;
+        clearTimeout(sheetTransitionTimer);
+        sheetTransitionTimer = 0;
         sharedIntent = null;
         directPath = '';
         concealmentScope?.removeAttribute('data-vigil-single-reel-scope');
@@ -2829,7 +2837,10 @@ enum DOMAdapters {
             sharedIntent = null;
           }
         }
-        if (!route && pinnedID && modalContext && !modalContext.isConnected && location.pathname.startsWith('/direct/')) {
+        const sheetContinuation = !route && pinnedID && modalContext && location.pathname.startsWith('/direct/')
+          && continueViewerThroughSheet();
+        if (!route && pinnedID && modalContext && (!modalContext.isConnected
+            || sheetContinuation && !activeViewer(modalContext)) && location.pathname.startsWith('/direct/')) {
           // React may replace the portal as well as the player. Transfer only
           // to another foreground viewer, never to the retained chat dialog.
           const replacement = foregroundModal(viewerOrigin, viewerBackground);
@@ -2837,7 +2848,7 @@ enum DOMAdapters {
         }
         // A player can briefly have no media during a React remount. Its
         // visible viewer, rather than a video URL or dimensions, owns the lock.
-        const viewerStillOpen = pinnedID && modalContext && activeViewer(modalContext);
+        const viewerStillOpen = pinnedID && modalContext && (activeViewer(modalContext) || sheetContinuation);
         if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
@@ -3001,6 +3012,49 @@ enum DOMAdapters {
       const inSheet = target => target instanceof Element && (Boolean(target.closest(
         '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
       )) || Boolean(recipientSheet(target)) || commentsDismissControl(target));
+      const scheduleSheetTransitionCheck = until => {
+        clearTimeout(sheetTransitionTimer);
+        sheetTransitionTimer = setTimeout(() => { sheetTransitionTimer = 0; reconcile(); }, Math.max(0, until - Date.now()));
+      };
+      const rememberSheetOpening = target => {
+        if (!pinnedID || !modalContext || !activeViewer(modalContext) || inSheet(target)) return;
+        const control = target?.closest?.('button, [role="button"], a[href]');
+        if (!control || !modalContext.contains(control)) return;
+        const labels = [control, ...control.querySelectorAll('[aria-label], title')].map(node =>
+          String(node.getAttribute('aria-label') || node.textContent || '').replace(/\s+/g, ' ').trim());
+        if (!labels.some(label => /^(?:(?:send|share)(?: (?:post|reel|video|to))?|comments?|view(?: all)?(?: \d+)? comments?)$/i.test(label))) return;
+        // A sheet may mount one render after Instagram aria-hides the viewer.
+        // Retain this already-pinned item through that bounded presentation gap.
+        sheetOpeningUntil = Date.now() + 1500;
+        scheduleSheetTransitionCheck(sheetOpeningUntil);
+      };
+      const continueViewerThroughSheet = () => {
+        const sheets = [...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"]'),
+          ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)];
+        const showing = sheets.some(sheet => sheet !== viewerBackground && !sheet.contains(viewerOrigin)
+          && nativeGestureRegion(sheet, true));
+        if (showing) {
+          sheetWasVisible = true;
+          sheetOpeningUntil = sheetClosingUntil = 0;
+          clearTimeout(sheetTransitionTimer);
+          sheetTransitionTimer = 0;
+          return true;
+        }
+        if (sheetWasVisible) {
+          sheetWasVisible = false;
+          sheetClosingUntil = Date.now() + 1000;
+          scheduleSheetTransitionCheck(sheetClosingUntil);
+        }
+        if (sheetClosingUntil && activeViewer(modalContext)) {
+          sheetClosingUntil = 0;
+          clearTimeout(sheetTransitionTimer);
+          sheetTransitionTimer = 0;
+        }
+        // Keep identity and the native lock while a Send/comments portal hides
+        // or remounts the Reel. A genuine close with no returning viewer expires
+        // on the scheduled check, so the retained chat is never pinned forever.
+        return Date.now() < Math.max(sheetOpeningUntil, sheetClosingUntil);
+      };
       const restoreScroll = () => lockedScroll.forEach((position, node) => {
         if (!node.isConnected || (modalContext && !modalContext.contains(node))) {
           node.removeAttribute('data-vigil-single-reel-scroll');
@@ -3464,6 +3518,7 @@ enum DOMAdapters {
               || (!allowsCarouselPan(event.target) && ['ArrowLeft', 'ArrowRight'].includes(event.key)))) cancel(event);
       }, true);
       window.addEventListener('click', event => {
+        rememberSheetOpening(event.target);
         const link = event.target?.closest?.('a[href]');
         if (!pinnedID && link) rememberShare(link.href, link);
         if (!pinnedID && (!link || link.getAttribute('href') === '#') && location.pathname.startsWith('/direct/') && !inSheet(event.target)
