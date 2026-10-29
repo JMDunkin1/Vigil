@@ -99,3 +99,47 @@ The user was asked for 3–5 intended search topics or reference examples to mak
 that validation relevant. No new automatic badge allowance, replacement numeric
 cutoff, additional usage quota, or enforcement exception was installed during
 this follow-up.
+
+## Search-result filtering and gray-viewer repair
+
+The user requested that results below the current eligibility rule disappear
+rather than produce a popup, and reported that qualifying results still opened
+to gray viewers. The eligibility thresholds remain provisional and unchanged.
+
+Result checks now run before tiles become visible. A bounded-concurrency queue
+uses the existing structured-metadata readers and native text verdict; unknown
+or denied results remain hidden. Each result cell is hidden individually, and
+rows containing only hidden result cells collapse. Account search and query
+controls remain available. Later responses, newly mounted tiles, changed
+permalinks, and query changes trigger classification without per-result toast
+messages. Evidence revisions and expiry invalidate previous approvals.
+
+Approved taps now send a document-bound native open request. The real host
+rechecks the exact current approval, rejects noncanonical/foreign/parameterized
+destinations, and loads the selected permalink with WKWebView. Its navigation
+delegate independently checks the approval; the new document installs the
+existing single-item guard. This addresses the retained-Search-viewer path in
+which Search's concealed-preview CSS can also conceal the selected media.
+The phone was unreachable, so that path was not inspected in the user's live
+session and no installed-version diagnosis is claimed.
+
+Eight focused iOS Simulator tests passed, including prefiltering/cell collapse,
+photo and video/Reel destination visibility, default account-only Search,
+native URL boundaries, and the existing gesture/recycled-media containment
+regressions. Fourteen targeted Node checks and the TypeScript build also passed.
+The earlier Electron completion limitation still applies. Repository-wide lint also passed after adding the missing `void` annotation
+to the suggestions fixture's existing top-level promise. That one-line test
+harness correction preserves its behavior.
+
+Concurrent notification and suggestions edits appeared during this work; those
+changes were preserved. The user explicitly requested preparation for later
+installation, so this repair was not installed and no phone update was run.
+
+The destination-rendering test was then strengthened to use the real
+SocialWebViewStore, its native message handler, bundled text classifier,
+installed scripts, and navigation policy. Only the destination server document
+is substituted. That test passed for photos, post videos, and Reels, including
+visible media elements, absence of Search preview CSS, and blocked next-item
+swipes/History changes. These are fixture visibility checks; they do not prove
+live Instagram streaming or on-phone behavior. The final test harness preserves
+the host's script controller without removing/readding its installed scripts.

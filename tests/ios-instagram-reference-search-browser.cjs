@@ -14,9 +14,8 @@ const stable = extract('instagramStable');
 async function main() {
   await app.whenReady();
   const win = new BrowserWindow({ show: false, width: 390, height: 844, webPreferences: { sandbox: true } });
-  let payload = {}, profile = {}, delay = 0, captureNavigations = false;
-  const navigations = [], requests = [];
-  win.webContents.on('will-navigate', (event, url) => { if (captureNavigations) { event.preventDefault(); navigations.push(url); } });
+  let payload = {}, profile = {}, delay = 0;
+  const requests = [];
   win.webContents.session.protocol.handle('https', async request => {
     const url = new URL(request.url);
     requests.push(url.pathname);
@@ -35,17 +34,25 @@ async function main() {
   const run = code => win.webContents.executeJavaScript(code);
   const settle = (ms = 100) => run(`new Promise(resolve => setTimeout(resolve, ${ms}))`);
   const load = async (query = 'basketball', textVerdict = 'safe') => {
-    captureNavigations = false; navigations.length = 0; requests.length = 0;
+    requests.length = 0;
     await win.loadURL(`https://www.instagram.com/explore/search/keyword/${query ? `?q=${encodeURIComponent(query)}` : ''}`);
-    await run(`window.__vigilDocumentID='fixture-document';window.textRequests=[];window.textVerdict=${JSON.stringify(textVerdict)};
+    await run(`window.__vigilDocumentID='fixture-document';window.textRequests=[];window.openRequests=[];window.textVerdict=${JSON.stringify(textVerdict)};
       window.webkit={messageHandlers:{vigil:{postMessage: payload=>{
-        if(payload.type!=='instagramSearchText')return;
-        window.textRequests.push(payload.text);
-        setTimeout(()=>window.__vigilResolveInstagramSearchText(payload.documentID,payload.requestID,window.textVerdict),0);
+        if(payload.type==='instagramSearchText'){
+          window.textRequests.push(payload.text);
+          setTimeout(()=>window.__vigilResolveInstagramSearchText(payload.documentID,payload.requestID,
+            payload.text.includes('sensitive_reference')?'sensitive':window.textVerdict),0);
+        }
+        if(payload.type==='instagramSearchOpen')setTimeout(()=>{
+          if(window.__vigilInstagramReferenceSearch.allowsResult(payload.destination))window.openRequests.push(new URL(payload.destination,location.href).href);
+          window.__vigilResolveInstagramSearchOpen(payload.documentID,payload.requestID);
+        },0);
       }}}};window.__vigilBridge=()=>{};void 0;`);
     await run(reference + single + stable);
-    await settle();
-    captureNavigations = true;
+    await settle(150);
+    if(query && textVerdict==='safe')assert.equal(await run(`new Promise(resolve=>{let ticks=0;const poll=()=>{
+      if(['allowed','denied'].includes(document.getElementById('result').dataset.vigilInstagramReferenceResult))return resolve(true);
+      if(++ticks>400)return resolve(false);setTimeout(poll,10);};poll();})`),true,'prefilter settles');
   };
   const click = async () => { await run("document.getElementById('result').click()"); await settle(250); };
   const record = (likes = 0, views = 0) => ({ shortcode: 'Target123', like_count: likes, play_count: views,
@@ -61,53 +68,55 @@ async function main() {
     if (scenario === 'wrong-post') payload = { ...record(999999), shortcode: 'Other456', comments: [{ like_count: 999999 }] };
     if (scenario === 'wrong-account') profile = { username: 'lookalike', follower_count: 999999 };
     await load();
+    const expected = ['viral-likes', 'viral-views', 'big-account'].includes(scenario);
     assert.deepEqual(await run(`({query:window.__vigilInstagramReferenceSearch.hasQuery(),
       result:getComputedStyle(document.getElementById('result')).display!=='none',
       tag:getComputedStyle(document.getElementById('tag')).display!=='none',
       posts:getComputedStyle(document.getElementById('posts')).display!=='none',
       places:getComputedStyle(document.getElementById('places')).display!=='none',
       reels:getComputedStyle(document.getElementById('reels')).display!=='none'})`),
-    { query: true, result: true, tag: false, posts: true, places: false, reels: false }, scenario);
+    { query: true, result: expected, tag: false, posts: true, places: false, reels: false }, scenario);
     // An SPA router must not skip the tap's verification.
-    await run("history.pushState({},'', '/p/Target123/')");
+    await run("history.pushState({},'', '/p/Other456/')");
     assert.ok((await run('location.pathname')).startsWith('/explore/'), `${scenario}: unverified History destination`);
     await click();
-    const expected = ['viral-likes', 'viral-views', 'big-account'].includes(scenario);
-    assert.equal(navigations.length, expected ? 1 : 0, scenario);
+    const opened=await run('window.openRequests');
+    assert.equal(opened.length, expected ? 1 : 0, scenario);
     assert.equal(await run("window.__vigilInstagramReferenceSearch.allowsResult('/p/Target123/')"), expected, scenario);
     assert.equal(await run("window.__vigilInstagramReferenceSearch.allowsResult('/p/Other456/')"), false, scenario);
-    if (expected) assert.equal(navigations[0], 'https://www.instagram.com/p/Target123/', scenario);
-    else assert.match(await run("document.getElementById('vigil-instagram-reference-status').textContent"), /followers|could not|unavailable/, scenario);
+    if (expected) assert.equal(opened[0], 'https://www.instagram.com/p/Target123/', scenario);
+    assert.equal(await run("document.getElementById('vigil-instagram-reference-status')===null"), true, 'no per-result popup');
     console.log('Instagram reference search:', scenario, 'passed');
   }
   payload = record(1000); profile = {}; delay = 0;
   await load('');
   assert.equal(await run("getComputedStyle(document.getElementById('result')).display"), 'none', 'no default discovery grid');
-  await click(); assert.equal(navigations.length, 0, 'no-query results never open');
+  await click(); assert.equal((await run('window.openRequests.length')), 0, 'no-query results never open');
   await run("const input=document.querySelector('input');input.value='basketball';input.dispatchEvent(new Event('input',{bubbles:true}))");
-  await settle(); await click(); assert.equal(navigations.length, 1, 'typed query enables reference lookup');
+  await settle(); await click(); assert.equal((await run('window.openRequests.length')), 1, 'typed query enables reference lookup');
   await run("document.querySelector('input').value='';document.querySelector('input').dispatchEvent(new Event('input',{bubbles:true}))");
   await settle();
   assert.equal(await run('window.__vigilInstagramReferenceSearch.hasQuery()'), false, 'clearing query revokes access');
   await load('basketball', 'unknown'); await click();
-  assert.equal(navigations.length, 0, 'unavailable classifier never authorizes search');
+  assert.equal((await run('window.openRequests.length')), 0, 'unavailable classifier never authorizes search');
   assert.equal(await run("getComputedStyle(document.getElementById('result')).display"), 'none');
-  await load(); await run("window.textVerdict='sensitive'"); await click();
-  assert.equal(navigations.length, 0, 'popular content still needs a safe text verdict');
-  await load(); delay = 150;
+  payload.caption.text='sensitive_reference';await load();await click();
+  assert.equal((await run('window.openRequests.length')), 0, 'popular content still needs a safe text verdict');
+  payload=record(1000);await load(); delay = 150;
   await run("document.getElementById('result').click();const input=document.querySelector('input');input.value='different query';input.dispatchEvent(new Event('input',{bubbles:true}))");
   await settle(350);
-  assert.equal(navigations.length, 0, 'old-query completion cannot navigate');
+  assert.equal((await run('window.openRequests.length')), 0, 'old-query completion cannot navigate');
   delay = 0;
   await load();
   await run("document.getElementById('result').href='/reel/Target123/';void fetch('/fixture-response')");
   await settle(); requests.length = 0; await click();
-  assert.equal(navigations[0], 'https://www.instagram.com/reel/Target123/', 'same-origin search metadata supports Reels');
+  assert.equal(await run('window.openRequests[0]'), 'https://www.instagram.com/reel/Target123/', 'same-origin search metadata supports Reels');
   assert.equal(requests.includes('/reel/Target123/'), false, 'reuse verified structured response data');
   await load();
   await run("document.getElementById('result').click();document.getElementById('result').href='/p/Other456/'");
   await settle(250);
-  assert.equal(navigations.length, 0, 'recycled tile cannot inherit an in-flight authorization');
+  assert.deepEqual(await run('window.openRequests'), ['https://www.instagram.com/p/Target123/'],
+    'a recycled tile cannot redirect the exact originally approved item to a different post');
   await load();
   await run("history.pushState({},'', '/explore/search/keyword/?q=another');");
   assert.equal(await run('window.__vigilInstagramReferenceSearch.hasQuery()'), false, 'new URL query closes prepaint access');

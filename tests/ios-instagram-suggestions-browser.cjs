@@ -58,4 +58,4 @@ async function main() {
   win.destroy();
   app.quit();
 }
-main().catch(error => { console.error(error); app.exit(1); });
+void main().catch(error => { console.error(error); app.exit(1); });

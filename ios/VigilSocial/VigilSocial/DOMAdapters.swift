@@ -2177,6 +2177,7 @@ enum DOMAdapters {
             if (value && typeof value === 'object') queue.push(value);
           }
         }
+        if (typeof scheduleResultScan === 'function') scheduleResultScan();
       };
       const parseJSON = text => {
         if (typeof text !== 'string' || text.length > 4000000) return;
@@ -2238,20 +2239,132 @@ enum DOMAdapters {
         pendingText.delete(requestID);
         resolve?.(verdict);
       };
-      let notice = null;
-      const showNotice = text => {
-        if (!document.body) return;
-        if (!notice) {
-          notice = document.createElement('div');
-          notice.id = 'vigil-instagram-reference-status';
-          notice.setAttribute('role', 'status');
-          notice.setAttribute('aria-live', 'polite');
-          notice.style.cssText = 'position:fixed;left:20px;right:20px;bottom:80px;z-index:2147483646;padding:12px 16px;border-radius:12px;background:#202020;color:white;text-align:center;font:14px -apple-system,BlinkMacSystemFont,sans-serif;pointer-events:none';
-          document.body.append(notice);
-        }
-        notice.textContent = text;
-        notice.hidden = !text;
+      const fresh = record => record && Date.now() >= record.at && Date.now() - record.at < 300000;
+      const decisions = new Map(), resultChecks = new Map();
+      const elementStates = new WeakMap();
+      const lookupQueue = [];
+      let lookupsRunning = 0, scanScheduled = false;
+      const fingerprint = route => {
+        const media = mediaRecords.get(route.code), account = accountRecords.get(media?.author);
+        return JSON.stringify([media?.author, media?.likes, media?.views, media?.text,
+          account?.followers, account?.biography]);
       };
+      const hasQuery = () => isSearchURL() && queryReady && Boolean(currentQuery) && currentQuery === readQuery();
+      const allowsResult = value => {
+        const route = mediaRoute(value), decision = route && decisions.get(route.path);
+        const media = route && mediaRecords.get(route.code), account = media && accountRecords.get(media.author);
+        const popular = fresh(media) && (media.likes >= popularity.likes || media.views >= popularity.views
+          || fresh(account) && account.followers >= popularity.followers);
+        return Boolean(hasQuery() && route && popular && approvals.get(route.path) === generation
+          && decision?.allowed && fresh(decision) && decision.fingerprint === fingerprint(route));
+      };
+      const pumpLookups = () => {
+        while (lookupsRunning < 3 && lookupQueue.length) {
+          const job = lookupQueue.shift();
+          if (job.epoch !== generation || !hasQuery()) { job.resolve(null); continue; }
+          lookupsRunning++;
+          void job.run().then(job.resolve, () => job.resolve(null)).finally(() => {
+            lookupsRunning--;
+            pumpLookups();
+          });
+        }
+      };
+      const checkResult = (route, epoch, query) => {
+        const saved = decisions.get(route.path);
+        if (fresh(saved) && saved.fingerprint === fingerprint(route)) return Promise.resolve(saved);
+        const key = `${epoch}:${route.path}`;
+        if (resultChecks.has(key)) return resultChecks.get(key);
+        const check = new Promise(resolve => {
+          lookupQueue.push({ epoch, resolve, run: async () => {
+            if (!fresh(mediaRecords.get(route.code))) await fetchData(route.path, true);
+            if (epoch !== generation || !hasQuery()) return null;
+            const media = mediaRecords.get(route.code);
+            let account = media?.author ? accountRecords.get(media.author) : null;
+            const popularPost = fresh(media) && (media.likes >= popularity.likes || media.views >= popularity.views);
+            if (!popularPost && media?.author && !fresh(account)) {
+              // Reuse the same existing profile reader as the mutual-follow gate.
+              await fetchData(`/api/v1/users/web_profile_info/?username=${encodeURIComponent(media.author)}`);
+              account = accountRecords.get(media.author);
+              if (!fresh(account)) { await fetchData(`/${media.author}/`, true); account = accountRecords.get(media.author); }
+            }
+            if (epoch !== generation || !hasQuery()) return null;
+            const popularAccount = fresh(account) && account.followers >= popularity.followers;
+            const evidence = fingerprint(route);
+            const allowed = Boolean(fresh(media) && (popularPost || popularAccount)
+              && await textSafe([query, media.author, media.text, account?.biography || ''].join('\n')));
+            if (epoch !== generation || !hasQuery()) return null;
+            if (evidence !== fingerprint(route)) return null;
+            const decision = { allowed, fingerprint: evidence, at: Date.now() };
+            boundedSet(decisions, route.path, decision);
+            if (allowed) boundedSet(approvals, route.path, epoch);
+            else approvals.delete(route.path);
+            return decision;
+          } });
+        });
+        resultChecks.set(key, check);
+        void check.finally(() => { if (resultChecks.get(key) === check) resultChecks.delete(key); });
+        pumpLookups();
+        return check;
+      };
+      const resultTile = (link, route) => {
+        let tile = link;
+        for (let node = link.parentElement, depth = 0; node && depth < 6; node = node.parentElement, depth++) {
+          if (node.matches('main, [role="main"], nav, [role="navigation"], [role="dialog"], [aria-modal="true"], form')
+              || node.querySelector('input, textarea, nav, [role="navigation"]')) break;
+          const routes = [...node.querySelectorAll('a[href]')].map(anchor => mediaRoute(anchor.href)).filter(Boolean);
+          if (!routes.length || routes.some(candidate => candidate.path !== route.path)) break;
+          const siblings = [...node.parentElement?.children || []].filter(sibling =>
+            [...sibling.querySelectorAll('a[href]')].some(anchor => mediaRoute(anchor.href)));
+          if (node.matches('li, [role="listitem"]') || siblings.length > 1
+              && (/grid|flex/.test(getComputedStyle(node.parentElement).display)
+                || node.parentElement.hasAttribute('data-vigil-instagram-reference-empty-row'))) { tile = node; break; }
+        }
+        return tile;
+      };
+      const paintResult = (link, route, state) => {
+        link.dataset.vigilInstagramReferenceResult = state;
+        const tile = resultTile(link, route);
+        tile.dataset.vigilInstagramReferenceTile = state;
+        const row = tile.parentElement;
+        if (!row || row.matches('main, [role="main"], nav, [role="navigation"], form')
+            || row.querySelector('input, textarea, nav, [role="navigation"]')) return;
+        const cells = [...row.children];
+        const ownsOnlyTiles = cells.length > 1 && cells.every(cell => cell.hasAttribute('data-vigil-instagram-reference-tile'));
+        if (ownsOnlyTiles && cells.every(cell => cell.dataset.vigilInstagramReferenceTile !== 'allowed')) {
+          row.dataset.vigilInstagramReferenceEmptyRow = 'true';
+        } else row.removeAttribute('data-vigil-instagram-reference-empty-row');
+      };
+      function scanResults() {
+        if (!isSearchURL()) return;
+        for (const link of document.querySelectorAll('main a[href], [role="main"] a[href]')) {
+          if (link.closest('nav, [role="navigation"]')) continue;
+          const route = mediaRoute(link.href);
+          if (!route) continue;
+          const signature = fingerprint(route), previous = elementStates.get(link);
+          if (previous?.epoch === generation && previous.path === route.path
+              && (previous.pending || previous.signature === signature && fresh(previous))) continue;
+          const state = { epoch: generation, path: route.path, signature, pending: false, at: Date.now() };
+          elementStates.set(link, state);
+          paintResult(link, route, 'pending');
+          if (!hasQuery()) continue;
+          state.pending = true;
+          const epoch = generation, query = currentQuery, originalHref = link.href;
+          void checkResult(route, epoch, query).then(decision => {
+            if (epoch !== generation || !hasQuery() || !link.isConnected
+                || link.href !== originalHref || elementStates.get(link) !== state) return;
+            state.pending = false;
+            if (!decision) { elementStates.delete(link); scheduleResultScan(); return; }
+            state.signature = decision.fingerprint;
+            state.at = decision.at;
+            paintResult(link, route, decision.allowed ? 'allowed' : 'denied');
+          });
+        }
+      }
+      function scheduleResultScan() {
+        if (scanScheduled) return;
+        scanScheduled = true;
+        queueMicrotask(() => { scanScheduled = false; scanResults(); });
+      }
       const updateSearch = async (retry = false) => {
         const query = readQuery();
         if (query === currentQuery && !retry) return;
@@ -2260,23 +2373,20 @@ enum DOMAdapters {
         queryReady = false;
         opening = false;
         approvals.clear();
+        decisions.clear();
         if (isSearchURL()) document.documentElement.dataset.vigilInstagramReferenceSearch = 'pending';
         else delete document.documentElement.dataset.vigilInstagramReferenceSearch;
+        scanResults();
         document.dispatchEvent(new Event('__vigilReferenceSearchChanged'));
-        if (!query) { showNotice(''); return; }
-        if (await textSafe(query) && epoch === generation && readQuery() === query) {
+        if (query && await textSafe(query) && epoch === generation && readQuery() === query) {
           queryReady = true;
           document.documentElement.dataset.vigilInstagramReferenceSearch = 'ready';
-          showNotice('');
-        } else if (epoch === generation) {
-          showNotice('Search results could not be verified. Try searching again.');
+          // Pending nodes must be scheduled again after the query's own verdict.
+          for (const link of document.querySelectorAll('[data-vigil-instagram-reference-result]')) elementStates.delete(link);
+          scanResults();
         }
-        document.dispatchEvent(new Event('__vigilReferenceSearchChanged'));
-      };
-      const hasQuery = () => isSearchURL() && queryReady && Boolean(currentQuery) && currentQuery === readQuery();
-      const allowsResult = value => {
-        const route = mediaRoute(value);
-        return Boolean(hasQuery() && route && approvals.get(route.path) === generation);
+        if (epoch === generation) document.dispatchEvent(new Event('__vigilReferenceSearchChanged'));
+        pumpLookups();
       };
       const blocksDestination = value => isSearchURL() && Boolean(mediaRoute(value)) && !allowsResult(value);
       window.__vigilInstagramReferenceSearch = Object.freeze({
@@ -2284,60 +2394,48 @@ enum DOMAdapters {
       });
       const style = document.createElement('style');
       style.textContent = `
-        html[data-vigil-instagram-reference-search="pending"] :is(main, [role="main"]) a:is([href^="/p/"], [href^="/reel/"], [href^="/reels/"]),
+        html[data-vigil-instagram-reference-search] :is(main, [role="main"]) a:is(
+          [href*="/p/"], [href*="/reel/"], [href*="/reels/"]
+        ):not([data-vigil-instagram-reference-result="allowed"]),
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-empty-row="true"],
+        html[data-vigil-instagram-reference-search] [data-vigil-instagram-reference-tile]:not([data-vigil-instagram-reference-tile="allowed"]),
+        html[data-vigil-instagram-reference-search="pending"] [data-vigil-instagram-reference-result],
         html[data-vigil-instagram-reference-search] :is(main, [role="main"]) video { display:none !important; }
       `;
       document.documentElement.append(style);
+      new MutationObserver(scheduleResultScan).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['href']
+      });
       window.addEventListener('input', event => {
         if (!isSearchURL() || !searchField(event.target)) return;
         typedQuery = event.target.value;
         void updateSearch();
       }, true);
-      window.addEventListener('click', async event => {
+      let pendingOpen = '';
+      window.__vigilResolveInstagramSearchOpen = (documentID, requestID) => {
+        if (documentID !== window.__vigilDocumentID || requestID !== pendingOpen) return;
+        pendingOpen = '';
+        opening = false;
+      };
+      window.addEventListener('click', event => {
         if (!isSearchURL()) return;
-        const link = event.target?.closest?.('a[href]');
-        const route = link && mediaRoute(link.href);
+        const link = event.target?.closest?.('a[href]'), route = link && mediaRoute(link.href);
         if (!route) return;
-        // Always consume the original activation. Native navigation below
-        // opens exactly the verified permalink, avoiding a retained search
-        // modal that can turn gray or become an immersive recommendations feed.
         event.preventDefault();
         event.stopImmediatePropagation();
-        if (!hasQuery() || opening) return;
-        const epoch = generation, query = currentQuery, originalHref = link.href;
+        if (!allowsResult(link.href) || opening) return;
         opening = true;
-        showNotice('Checking this result…');
-        const fresh = record => record && Date.now() >= record.at && Date.now() - record.at < 300000;
-        if (!fresh(mediaRecords.get(route.code))) await fetchData(route.path, true);
-        const media = mediaRecords.get(route.code);
-        let account = media?.author ? accountRecords.get(media.author) : null;
-        const popularPost = fresh(media) && (media.likes >= popularity.likes || media.views >= popularity.views);
-        if (!popularPost && media?.author && !fresh(account)) {
-          // This existing compatibility endpoint is also used by the mutual-
-          // follow reader. No new API endpoint or persisted GraphQL ID.
-          await fetchData(`/api/v1/users/web_profile_info/?username=${encodeURIComponent(media.author)}`);
-          account = accountRecords.get(media.author);
-          if (!fresh(account)) { await fetchData(`/${media.author}/`, true); account = accountRecords.get(media.author); }
-        }
-        const popularAccount = fresh(account) && account.followers >= popularity.followers;
-        let allowed = false;
-        if (fresh(media) && (popularPost || popularAccount)) {
-          allowed = await textSafe([query, media.author, media.text, account?.biography || ''].join('\n'));
-        }
-        // A completed lookup can never open a result from an old query, an
-        // edited/recycled tile, a departed page, or a changed navigation epoch.
-        if (epoch !== generation || !hasQuery()) return;
-        opening = false;
-        if (!link.isConnected || link.href !== originalHref) { showNotice('Search changed. Tap a result again.'); return; }
-        if (!allowed) {
-          showNotice(fresh(media) && (popularPost || popularAccount)
-            ? 'This result is unavailable under your content rules.'
-            : `This result needs ${popularity.followers.toLocaleString('en-US')} account followers, ${popularity.likes.toLocaleString('en-US')} likes, or ${popularity.views.toLocaleString('en-US')} views. Unavailable counts cannot qualify.`);
-          return;
-        }
-        approvals.set(route.path, epoch);
-        showNotice('');
-        location.assign(route.path);
+        pendingOpen = crypto.randomUUID();
+        try {
+          // Let the native host verify the current approval and load a fresh
+          // document. Instagram can intercept location.assign into a retained
+          // Search modal whose concealed preview CSS makes the viewer gray.
+          window.webkit.messageHandlers.vigil.postMessage({ type: 'instagramSearchOpen',
+            documentID: String(window.__vigilDocumentID || ''), requestID: pendingOpen, destination: route.path });
+        } catch (_) { pendingOpen = ''; opening = false; }
+      }, true);
+      document.addEventListener('play', event => {
+        if (isSearchURL() && event.target instanceof HTMLVideoElement) event.target.pause();
       }, true);
       for (const name of ['pushState', 'replaceState']) {
         const original = history[name];

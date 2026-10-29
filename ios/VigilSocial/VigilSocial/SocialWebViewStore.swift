@@ -1355,6 +1355,36 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
+        case "instagramSearchOpen":
+            guard service == .instagram, frame.isMainFrame,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  let documentID = body["documentID"] as? String,
+                  let requestID = body["requestID"] as? String, UUID(uuidString: requestID) != nil,
+                  let destination = body["destination"] as? String, destination.utf8.count <= 2048,
+                  let webView = message.webView, let sourceURL = webView.url,
+                  InstagramReferenceSearchPolicy.isSearch(sourceURL),
+                  let url = URL(string: destination, relativeTo: sourceURL)?.absoluteURL,
+                  InstagramReferenceSearchPolicy.isMediaResult(url), service.allowsNavigation(to: url),
+                  url.query == nil, url.fragment == nil, url.host?.lowercased() == sourceURL.host?.lowercased() else { return }
+            Task { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                let allowed = (try? await webView.callAsyncJavaScript(
+                    "return window.__vigilInstagramReferenceSearch?.allowsResult(destination) === true;",
+                    arguments: ["destination": url.absoluteString], in: frame, contentWorld: .page)) as? Bool == true
+                guard webView.url == sourceURL,
+                      Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: self.mainDocumentIDs[service]) else { return }
+                if allowed {
+                    // A native document load avoids Instagram intercepting an
+                    // assigned URL into its retained, concealed Search viewer.
+                    // The navigation delegate independently checks the same
+                    // approval and the destination installs the single-item guard.
+                    webView.load(URLRequest(url: url))
+                }
+                _ = try? await webView.callAsyncJavaScript(
+                    "window.__vigilResolveInstagramSearchOpen?.(documentID, requestID);",
+                    arguments: ["documentID": documentID, "requestID": requestID],
+                    in: frame, contentWorld: .page)
+            }
         case "instagramSearchText":
             guard service == .instagram, frame.isMainFrame,
                   Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
