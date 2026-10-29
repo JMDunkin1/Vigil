@@ -1322,7 +1322,7 @@ function cleanupInstagramSocialFeatures(): void {
       "article",
       "section",
       "div[role='dialog']"
-    ], ["suggested for you", "suggested posts"], instagramCleanupContainer);
+    ], ["suggested for you", "suggestions for you", "suggested posts"], instagramCleanupContainer);
   }
   if (settings.explore) {
     hideSocialMatches([

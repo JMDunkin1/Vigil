@@ -7622,6 +7622,7 @@ enum DOMAdapters {
             a[href^="/audio/"], a[href^="/music/"], a[href^="/effects/"]
           ),
           [data-vigil-hidden-feature],
+          [data-vigil-instagram-suggestions],
           [data-vigil-instagram-retained-home="true"],
           [data-vigil-instagram-search-discovery="true"],
           a:is([href^="https://www.threads.net/"], [href^="https://www.threads.com/"],
@@ -8759,6 +8760,7 @@ enum DOMAdapters {
                 || card.querySelector('a[href*="/explore/people/suggested"]')
                 || exactLeafLabel(card, [
                   'suggested for you',
+                  'suggestions for you',
                   'suggested posts',
                   'suggested reels',
                   'because you watched',
@@ -8771,6 +8773,49 @@ enum DOMAdapters {
             card.dataset.vigilHiddenFeature = 'ads';
           }
           if (inspected >= 80) break;
+        }
+      };
+      const markSuggestedAccountModules = (root) => {
+        // Account carousels are often plain divs, outside any feed article.
+        // Revisit enclosing wrappers when React inserts only a heading, card,
+        // or text node, and clear our marker when a wrapper is recycled.
+        const boundary = 'html, body, main, nav, header, footer, article, form, [role="main"], [role="navigation"], [role="article"], [role="dialog"], [aria-modal="true"]';
+        let scope = root;
+        if (root instanceof Element) {
+          scope = root.closest('[data-vigil-instagram-suggestions]') || root;
+          for (let depth = 0; depth < 8 && scope.parentElement
+              && !scope.matches(boundary) && !scope.parentElement.matches(boundary); depth += 1) {
+            scope = scope.parentElement;
+          }
+        }
+        const marked = [
+          ...(scope.matches?.('[data-vigil-instagram-suggestions]') ? [scope] : []),
+          ...scope.querySelectorAll('[data-vigil-instagram-suggestions]')
+        ];
+        marked.forEach(node => node.removeAttribute('data-vigil-instagram-suggestions'));
+        if (featureState('suggested') === 'available') return;
+        const labels = new Set(['suggestions for you', 'suggested for you', 'suggested accounts']);
+        const selector = 'h1, h2, h3, h4, span, div, a';
+        const candidates = [
+          ...(scope.matches?.(selector) ? [scope] : []), ...scope.querySelectorAll(selector)
+        ];
+        for (const label of candidates) {
+          if (label.children.length || !labels.has(String(label.textContent || label.getAttribute('aria-label') || '')
+              .replace(/\s+/g, ' ').trim().toLowerCase())
+              || label.closest('nav, header, footer, form, [role="navigation"], [role="dialog"], [aria-modal="true"]')) continue;
+          let target = label;
+          for (let parent = label.parentElement, depth = 0; parent && depth < 8;
+              parent = parent.parentElement, depth += 1) {
+            // Never consume the surrounding feed, Stories, post, or composer.
+            if (parent.matches(boundary) || parent.querySelector(
+              'article, [role="article"], nav, [role="navigation"], input, textarea, video, a[href^="/p/"], a[href^="/reel/"], a[href^="/stories/"]'
+            )) break;
+            const follows = [...parent.querySelectorAll('button, [role="button"], a')].some(control =>
+              /^follow$/i.test(String(control.textContent || control.getAttribute('aria-label') || '').trim())
+            );
+            if (follows) { target = parent; break; }
+          }
+          target.dataset.vigilInstagramSuggestions = 'true';
         }
       };
       // A normal follow is not proof of a social relationship. Home cards stay
@@ -10575,6 +10620,7 @@ enum DOMAdapters {
           pendingRoots.clear();
           roots.slice(0, 24).forEach((candidate) => {
             markFilteredCards(candidate);
+            markSuggestedAccountModules(candidate);
             markNativeAppPrompts(candidate);
             markAccountOnlySearch(candidate);
           });
@@ -10620,6 +10666,7 @@ enum DOMAdapters {
       }, 1000);
 
       markFilteredCards(document);
+      markSuggestedAccountModules(document);
       markNativeAppPrompts(document);
       markAccountOnlySearch(document);
       normalizeCommentSheets();
