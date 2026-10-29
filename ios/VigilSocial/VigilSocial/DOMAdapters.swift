@@ -4215,6 +4215,18 @@ enum DOMAdapters {
               pendingMedia.add(element);
               scheduleMediaWork();
             };
+            // An explicit group export can include attachments outside the
+            // viewport. Inspect them through the ordinary classifier without
+            // scrolling the chat or changing any verdict/visibility gate.
+            document.addEventListener('vigilSnapchatInspectPhoto', event => {
+              const photo = event.target;
+              if (photo instanceof HTMLImageElement && photo.closest('.aXEpU .ET_CR')
+                  && ['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+                  && location.protocol === 'https:' && /^\/web(?:\/|$)/.test(location.pathname)
+                  && document.hasFocus() && document.visibilityState === 'visible'
+                  && document.documentElement.dataset.vigilPageVerdict === 'safe'
+                  && photo.dataset.vigilMediaVerdict !== 'sensitive') queueMedia(photo, true);
+            });
             const submitMedia = async (element, captureKind) => {
               const id = ensureMediaIdentity(element);
               const fingerprint = mediaFingerprint(element);
@@ -5907,7 +5919,21 @@ enum DOMAdapters {
             touch-action: manipulation;
           }
           .vigil-snap-export:disabled { opacity: .7; }
+          .vigil-snap-group-export {
+            flex: 0 0 100%; box-sizing: border-box; display: flex;
+            flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0 4px;
+            color: var(--sigTextPrimary, #16191c); font: 14px/1.4 -apple-system, sans-serif;
+          }
+          .vigil-snap-group-export button {
+            min-height: 44px; padding: 10px 14px; border-radius: 20px;
+            border: 1px solid var(--sigTextSecondary, #777);
+            background: var(--sigBackgroundPrimary, #fff); color: inherit;
+            font: inherit; touch-action: manipulation;
+          }
+          .vigil-snap-group-export [hidden] { display: none; }
+          .vigil-snap-group-export [role="status"] { flex-basis: 100%; }
         }
+        @media (min-width: 601px) { .vigil-snap-group-export { display: none; } }
         @media (min-width: 601px) { .vigil-snap-chat-title, .vigil-snap-search, .vigil-snap-tabs, .vigil-snap-return-chat { display: none; } }
       `;
       document.documentElement.appendChild(style);
@@ -5948,47 +5974,72 @@ enum DOMAdapters {
       const set = (element, name, value) => {
         if (element.getAttribute(name) !== value) element.setAttribute(name, value);
       };
-      // Export only the currently displayed, policy-approved photo. Never
+      // Export only explicitly selected, policy-approved photo attachments. Never
       // screenshot the page, capture a live camera, or remove privacy shields.
       let pendingExport = null;
-      const exportLayers = surface => [...surface.querySelectorAll('.b2f4R img, .b2f4R video, .RdKti img, .RdKti video, .BN1L1 img, .BN1L1 video')]
+      let activeGroupExport = null;
+      const groupExportStates = new WeakMap();
+      const stopGroupExport = () => { if (activeGroupExport) activeGroupExport.stopped = true; };
+      // Photos authorization can briefly take focus without leaving this
+      // document. Every write still rechecks focus; backgrounding/navigation
+      // permanently stops the group, including if the user later returns.
+      for (const event of ['pagehide', 'popstate']) addEventListener(event, stopGroupExport);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') stopGroupExport();
+      });
+      document.addEventListener('__vigilRouteChanged', () => {
+        if (activeGroupExport && location.href !== activeGroupExport.url) stopGroupExport();
+      });
+      const exportLayers = surface => [...surface.querySelectorAll(surface.matches('.ET_CR > div')
+        ? 'img, video' : '.b2f4R img, .b2f4R video, .RdKti img, .RdKti video, .BN1L1 img, .BN1L1 video')]
         .filter(media => !media.srcObject && renderVisible(media) && (media.currentSrc || media.src));
       const exportMedia = surface => {
         const media = exportLayers(surface)[0];
         return media instanceof HTMLImageElement && media.dataset.vigilMediaVerdict === 'safe' ? media : null;
       };
+      const exportPrivacyRoot = surface => surface.closest('.aXEpU') || surface;
       const exportAllowed = (surface, media) => surface.isConnected && document.hasFocus()
         && document.visibilityState === 'visible' && document.documentElement.dataset.vigilPageVerdict === 'safe'
-        && !surface.matches('.ATeie') && !surface.querySelector('.ATeie')
-        && ![...surface.querySelectorAll('.ejVI4, .eNF_J')].some(renderVisible)
+        && !surface.closest('.ATeie') && !exportPrivacyRoot(surface).querySelector('.ATeie')
+        && ![...exportPrivacyRoot(surface).querySelectorAll('.ejVI4, .eNF_J')].some(renderVisible)
         && exportMedia(surface) === media && exportLayers(surface).every(layer =>
           layer.dataset.vigilMediaVerdict === 'safe' && !/blur\(/.test(getComputedStyle(layer).filter));
       window.__vigilValidateSnapchatExport = id => Boolean(pendingExport?.id === id
+        && (!pendingExport.groupJob || groupJobCurrent(pendingExport.groupJob))
         && exportAllowed(pendingExport.surface, pendingExport.media)
         && JSON.stringify(exportLayers(pendingExport.surface).map(layer => layer.currentSrc || layer.src)) === pendingExport.sources);
       window.__vigilCompleteSnapchatExport = (id, success, detail) => {
         if (pendingExport?.id !== id) return;
-        const { button } = pendingExport;
+        const { button, resolve } = pendingExport;
         clearTimeout(pendingExport.timeout);
         pendingExport = null;
         button.disabled = false;
         button.textContent = success ? 'Saved to Camera Roll' : (detail || 'Could not save. Try again');
+        resolve({ success, detail });
       };
-      const beginPhotoExport = async (surface, button) => {
-          if (pendingExport) return;
+      const beginPhotoExport = async (surface, button, groupJob = null) => {
+          if (pendingExport) return { success: false, detail: 'Finish the current save first' };
           const media = exportMedia(surface);
           if (!media || !exportAllowed(surface, media)) {
-            button.textContent = 'Open the photo to save it'; return;
+            button.textContent = 'Open the photo to save it';
+            return { success: false, detail: 'Photo unavailable or blocked' };
           }
           const id = crypto.randomUUID();
-          pendingExport = { id, surface, media, button,
+          let resolve;
+          const completion = new Promise(done => { resolve = done; });
+          pendingExport = { id, surface, media, button, resolve, groupJob,
             sources: JSON.stringify(exportLayers(surface).map(layer => layer.currentSrc || layer.src)),
-            timeout: setTimeout(() => window.__vigilCompleteSnapchatExport(id, false, 'Save timed out. Try again'), 60000) };
-          button.disabled = true; button.textContent = 'Saving…';
+            // A slow Photos transaction may still commit. Do not release the
+            // queue or offer a duplicate retry until native completion arrives.
+            timeout: setTimeout(() => {
+              if (pendingExport?.id === id) button.textContent = 'Still waiting for Photos…';
+            }, 60000) };
+          button.disabled = true;
+          button.textContent = groupJob ? `Saving ${groupJob.state.saved.size + 1} of ${groupJob.items.length}…` : 'Saving…';
+          const canvas = document.createElement('canvas');
           try {
             // Chat Snaps can have separate caption/sticker image layers.
             // Compose their original pixels, including the complete frame.
-            const canvas = document.createElement('canvas');
             canvas.width = media.naturalWidth; canvas.height = media.naturalHeight;
             if (!canvas.width || !canvas.height || canvas.width * canvas.height > 80_000_000) throw new Error('Image unavailable');
             const context = canvas.getContext('2d');
@@ -6009,6 +6060,8 @@ enum DOMAdapters {
             window.__vigilBridge({ type: 'snapchatExport', requestID: id, mimeType: blob.type,
               base64: dataURL.slice(dataURL.indexOf(',') + 1) });
           } catch (_) { window.__vigilCompleteSnapchatExport(id, false, 'Could not save. Try again'); }
+          finally { canvas.width = 0; canvas.height = 0; }
+          return completion;
       };
       const installExport = surface => {
         const existing = surface.querySelector('.vigil-snap-export');
@@ -6020,9 +6073,99 @@ enum DOMAdapters {
         button.textContent = 'Save to Camera Roll'; button.setAttribute('aria-live', 'polite');
         button.addEventListener('click', event => {
           event.preventDefault(); event.stopPropagation();
-          void beginPhotoExport(surface, button);
+          if (!activeGroupExport) void beginPhotoExport(surface, button);
         });
         surface.appendChild(button);
+      };
+      // Snapchat renders one external-media message as .ET_CR, with one
+      // direct div per attachment. Never merge different photos into layers,
+      // traverse chat history, or invoke private messaging/download APIs.
+      const groupAttachments = group => [...group.children].filter(node => node.tagName === 'DIV');
+      const groupPhotos = group => groupAttachments(group).filter(item => {
+        const layers = [...item.querySelectorAll('img, video')];
+        return layers.length && layers.every(layer => layer instanceof HTMLImageElement);
+      });
+      const groupSources = items => JSON.stringify(items.map(item =>
+        [...item.querySelectorAll('img, video')].map(layer => layer.currentSrc || layer.src || '')));
+      const groupJobCurrent = job => !job.stopped && job.group.isConnected && location.href === job.url
+        && document.hasFocus() && document.visibilityState === 'visible'
+        && document.documentElement.dataset.vigilPageVerdict === 'safe'
+        && !job.group.closest('.ATeie') && !exportPrivacyRoot(job.group).querySelector('.ATeie')
+        && ![...exportPrivacyRoot(job.group).querySelectorAll('.ejVI4, .eNF_J')].some(renderVisible)
+        && groupPhotos(job.group).length === job.items.length
+        && groupPhotos(job.group).every((item, index) => item === job.items[index])
+        && groupSources(job.items) === job.sources;
+      const beginGroupExport = async (group, button, stop, status) => {
+        if (activeGroupExport || pendingExport) return;
+        const items = groupPhotos(group), sources = groupSources(items);
+        let state = groupExportStates.get(group);
+        if (!state || state.sources !== sources || items.some((item, index) => item !== state.items[index])) {
+          state = { sources, items, saved: new Set() }; groupExportStates.set(group, state);
+        }
+        const job = { group, items, sources, state, url: location.href, stopped: false };
+        activeGroupExport = job; button.disabled = true; stop.hidden = false; status.textContent = '';
+        let detail = '';
+        try {
+          for (const item of items) {
+            if (state.saved.has(item)) continue;
+            if (!groupJobCurrent(job)) throw new Error('Save stopped');
+            button.disabled = true; button.textContent = `Checking ${state.saved.size + 1} of ${items.length}…`;
+            const layers = [...item.querySelectorAll('img')];
+            layers.forEach(layer => layer.dispatchEvent(new Event('vigilSnapchatInspectPhoto', { bubbles: true })));
+            const deadline = Date.now() + 15000;
+            while (!exportMedia(item) || layers.some(layer => layer.dataset.vigilMediaVerdict !== 'safe')) {
+              if (!groupJobCurrent(job)) throw new Error('Save stopped');
+              if (layers.some(layer => layer.dataset.vigilMediaVerdict === 'sensitive')) throw new Error('Photo blocked');
+              if (Date.now() >= deadline) throw new Error('Photo could not be checked. Try again');
+              await new Promise(done => setTimeout(done, 100));
+            }
+            if (!groupJobCurrent(job)) throw new Error('Save stopped');
+            const result = await beginPhotoExport(item, button, job);
+            if (!result.success) throw new Error(result.detail || 'Could not save. Try again');
+            state.saved.add(item);
+          }
+        } catch (error) { detail = error.message; }
+        finally {
+          activeGroupExport = null; button.disabled = false; stop.hidden = true;
+          const saved = state.saved.size, total = items.length;
+          status.textContent = `${saved} of ${total} photos saved to Camera Roll${detail ? '. ' + detail : ''}`;
+          button.textContent = saved === total ? `Saved ${total} photos to Camera Roll` : `Save remaining ${total - saved} photos`;
+          button.disabled = saved === total;
+        }
+      };
+      const installGroupExport = group => {
+        const items = groupPhotos(group), attachments = groupAttachments(group);
+        let controls = group.querySelector(':scope > .vigil-snap-group-export');
+        // Wait for Snapchat to mount every attachment, including video items.
+        const available = items.length > 1 && attachments.every(item => item.querySelector('img, video'));
+        if (controls) {
+          controls.hidden = !available;
+          if (!activeGroupExport && controls.photoSources !== groupSources(items)) {
+            groupExportStates.delete(group);
+            controls.photoSources = groupSources(items);
+            controls.querySelector('button').textContent = `Save ${items.length} photos to Camera Roll`;
+            controls.querySelector('button').disabled = false;
+            controls.querySelector('[role="status"]').textContent = '';
+          }
+          return;
+        }
+        if (!available || typeof window.__vigilBridge !== 'function') return;
+        controls = document.createElement('section'); controls.className = 'vigil-snap-group-export';
+        controls.photoSources = groupSources(items);
+        controls.setAttribute('aria-label', 'Save photo group');
+        const button = document.createElement('button'); button.type = 'button';
+        button.textContent = `Save ${items.length} photos to Camera Roll`;
+        const stop = document.createElement('button'); stop.type = 'button'; stop.textContent = 'Stop'; stop.hidden = true;
+        const status = document.createElement('span'); status.setAttribute('role', 'status');
+        controls.append(button, stop, status); group.appendChild(controls);
+        button.addEventListener('click', event => {
+          event.preventDefault(); event.stopPropagation();
+          void beginGroupExport(group, button, stop, status);
+        });
+        stop.addEventListener('click', event => {
+          event.preventDefault(); event.stopPropagation();
+          if (activeGroupExport?.group === group) activeGroupExport.stopped = true;
+        });
       };
       const reconcile = () => {
         scheduled = false;
@@ -6064,6 +6207,7 @@ enum DOMAdapters {
         else shell.removeAttribute('data-vigil-snap-media');
         if (viewer) installExport(viewer.closest('.ecBYF'));
         for (const preview of document.querySelectorAll('.BN1L1:has(img)')) installExport(preview);
+        for (const group of main.querySelectorAll('.aXEpU .ET_CR')) installGroupExport(group);
         if (detail) preferredPanel = 'feed';
         // Hiding the formerly focused feed can leave embedded WebKit without
         // a native responder. Ask the host to restore real focus for this chat;

@@ -1422,8 +1422,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
                   let webView = message.webView,
                   SnapchatMediaPolicy.isTrustedDocument(webView.url),
-                  playbackServiceIsVisible, !playbackIsBackgrounded,
-                  hasRecentConfirmedAccess, accessRestriction?() != true,
                   !snapchatExportInProgress,
                   let requestID = body["requestID"] as? String, UUID(uuidString: requestID) != nil,
                   let documentID = body["documentID"] as? String,
@@ -1433,10 +1431,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   encoded.utf8.count <= SnapchatMediaPolicy.maximumEncodedBytes,
                   let data = Data(base64Encoded: encoded), !data.isEmpty,
                   data.count <= SnapchatMediaPolicy.maximumMediaBytes else { return }
+            // saveSnapchatMedia checks foreground access and the live policy
+            // before classification and again before writing. Refresh stale
+            // receipts there for each photo, including a long-running group.
             snapchatExportInProgress = true
             Task { [weak self, weak webView] in
-                guard let self, let webView else { return }
-                defer { self.snapchatExportInProgress = false }
+                guard let self else { return }
+                guard let webView else { self.snapchatExportInProgress = false; return }
                 await self.saveSnapchatMedia(data, mimeType: mimeType, requestID: requestID,
                                             documentID: documentID, in: webView)
             }
@@ -2554,6 +2555,9 @@ extension SocialWebViewStore {
     private func saveSnapchatMedia(_ data: Data, mimeType: String, requestID: String,
                                    documentID: String, in webView: WKWebView) async {
         func complete(_ success: Bool, _ detail: String = "Could not save. Try again") async {
+            // Release before acknowledging: a group can immediately submit its
+            // next photo from the JavaScript completion promise.
+            snapchatExportInProgress = false
             _ = try? await webView.callAsyncJavaScript(
                 "window.__vigilCompleteSnapchatExport?.(id, success, detail);",
                 arguments: ["id": requestID, "success": success, "detail": detail], in: nil, contentWorld: .page)

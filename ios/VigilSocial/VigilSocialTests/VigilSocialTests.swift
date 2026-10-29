@@ -2531,6 +2531,201 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(completed, true, "A failed save must be retryable and successful writes confirmed")
     }
 
+    private static let snapchatPhotoGroupFixtureScript = #"""
+    window.fixtureMountPhotoGroup = (count, approved=true) => {
+      openChat('Alex');
+      const group=document.createElement('div');group.className='ET_CR';group.id='fixture-photo-group';
+      group.style.cssText='display:flex;flex-flow:row wrap;max-width:300px';
+      for(let i=0;i<count;i++) {
+        const item=document.createElement('div');item.style.cssText='position:relative;width:90px;height:120px;margin:4px';
+        const canvas=document.createElement('canvas');canvas.width=90;canvas.height=120;
+        const context=canvas.getContext('2d');context.fillStyle=`rgb(${i+1},80,160)`;context.fillRect(0,0,90,120);
+        context.fillStyle='#ffee00';context.fillRect(0,0,10,120);
+        const photo=document.createElement('img');photo.src=canvas.toDataURL('image/png');
+        photo.style.cssText='width:90px;height:120px';
+        if(approved)photo.dataset.vigilMediaVerdict='safe';
+        item.appendChild(photo);
+        const overlay=document.createElement('canvas');overlay.width=90;overlay.height=120;
+        overlay.getContext('2d').fillStyle='#ff00ff';overlay.getContext('2d').fillRect(40,55,10,10);
+        const caption=document.createElement('img');caption.src=overlay.toDataURL('image/png');
+        caption.style.cssText='position:absolute;inset:0;width:90px;height:120px';
+        if(approved)caption.dataset.vigilMediaVerdict='safe';
+        item.appendChild(caption);group.appendChild(item);
+      }
+      document.querySelector('.messages').appendChild(group);
+      window.fixtureExports=[];
+    };
+    void 0;
+    """#
+
+    @MainActor
+    private func snapchatGroupExportFixture() async throws -> WKWebView {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration(); configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatMobileInstalled === true", in: webView)
+        _ = try await webView.evaluateJavaScript(Self.snapchatPhotoGroupFixtureScript)
+        _ = try await webView.evaluateJavaScript("document.documentElement.dataset.vigilPageVerdict='safe';window.__vigilBridge=()=>{};void 0")
+        webView.becomeFirstResponder()
+        return webView
+    }
+
+    @MainActor
+    func testSnapchatPhotoGroupExports64SeparatePhotosAndTheirOwnLayers() async throws {
+        let webView = try await snapchatGroupExportFixture()
+        _ = try await webView.evaluateJavaScript("""
+            fixtureMountPhotoGroup(64);
+            const videoItem=document.createElement('div');videoItem.innerHTML='<video src="data:video/mp4;base64,AA==" style="width:90px;height:120px"></video>';
+            document.getElementById('fixture-photo-group').appendChild(videoItem);
+            window.__vigilBridge=payload=>{
+              if(payload.type!=='snapchatExport')return;
+              if(!window.__vigilValidateSnapchatExport(payload.requestID))throw new Error('Invalid group photo');
+              fixtureExports.push(payload);
+              queueMicrotask(()=>window.__vigilCompleteSnapchatExport(payload.requestID,true,''));
+            };
+            void 0;
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export') && [...document.querySelectorAll('.ET_CR img')].every(i=>i.complete)", in: webView)
+        let label = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export button').textContent") as? String
+        XCTAssertEqual(label, "Save 64 photos to Camera Roll", "Videos are excluded from the photo count")
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export button').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export [role=status]').textContent==='64 of 64 photos saved to Camera Roll'", in: webView)
+        let rawPayloads = try await webView.evaluateJavaScript("fixtureExports")
+        let payloads = try XCTUnwrap(rawPayloads as? [[String: Any]])
+        XCTAssertEqual(payloads.count, 64)
+        for (index, payload) in payloads.enumerated() {
+            let data = try XCTUnwrap((payload["base64"] as? String).flatMap { Data(base64Encoded: $0) })
+            let image = try XCTUnwrap(UIImage(data: data))
+            XCTAssertEqual(image.size, CGSize(width: 90, height: 120))
+            var pixels = [UInt8](repeating: 0, count: 90 * 120 * 4)
+            let context = try XCTUnwrap(CGContext(data: &pixels, width: 90, height: 120, bitsPerComponent: 8,
+                bytesPerRow: 360, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(try XCTUnwrap(image.cgImage), in: CGRect(x: 0, y: 0, width: 90, height: 120))
+            XCTAssertEqual(Array(pixels[0..<4]), [255, 238, 0, 255])
+            XCTAssertEqual(Array(pixels[356..<360]), [UInt8(index + 1), 80, 160, 255], "Photo attachments must stay separate")
+            XCTAssertEqual(Array(pixels[21780..<21784]), [255, 0, 255, 255], "Each photo retains its own caption/sticker")
+        }
+        _ = try await webView.evaluateJavaScript("closeChat()")
+        try await waitForJavaScriptCondition("!document.querySelector('.vigil-snap-group-export')", in: webView)
+    }
+
+    @MainActor
+    func testSnapchatPhotoGroupRetriesOnlyUnwrittenPhotosAndStopsOnPrivacyChanges() async throws {
+        let webView = try await snapchatGroupExportFixture()
+        _ = try await webView.evaluateJavaScript("""
+            fixtureMountPhotoGroup(6);
+            window.__vigilBridge=payload=>{
+              if(payload.type!=='snapchatExport')return;
+              fixtureExports.push(payload);
+              queueMicrotask(()=>window.__vigilCompleteSnapchatExport(payload.requestID,fixtureExports.length!==3,'Allow adding photos in Settings'));
+            };
+            void 0;
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export') && [...document.querySelectorAll('.ET_CR img')].every(i=>i.complete)", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export button').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export [role=status]').textContent.includes('2 of 6 photos saved')", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export button').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export [role=status]').textContent==='6 of 6 photos saved to Camera Roll'", in: webView)
+        let attempts = try await webView.evaluateJavaScript("fixtureExports.length") as? Int
+        XCTAssertEqual(attempts, 7, "The first two successful photos must not be written again")
+        for protection in ["shield", "screenshot", "source", "membership", "caption", "page", "stop", "away", "route", "background"] {
+            _ = try await webView.evaluateJavaScript("""
+                fixtureMountPhotoGroup(4);
+                window.__vigilBridge=payload=>{if(payload.type==='snapchatExport')fixtureExports.push(payload)};
+                void 0;
+                """)
+            try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export') && [...document.querySelectorAll('.ET_CR img')].every(i=>i.complete)", in: webView)
+            _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export button').click()")
+            try await waitForJavaScriptCondition("fixtureExports.length===1", in: webView)
+            _ = try await webView.evaluateJavaScript("""
+                if('\(protection)'==='shield')document.querySelector('.aXEpU').insertAdjacentHTML('beforeend','<div class="ejVI4" style="width:50px;height:50px">Away</div>');
+                if('\(protection)'==='screenshot')document.querySelector('.aXEpU').insertAdjacentHTML('beforeend','<div class="eNF_J" style="width:50px;height:50px">Privacy</div>');
+                if('\(protection)'==='source')document.querySelector('.ET_CR img').src=fixtureMediaImage(100,100);
+                if('\(protection)'==='membership')document.querySelector('.ET_CR > div:last-of-type').remove();
+                if('\(protection)'==='caption')document.querySelector('.ET_CR img:last-child').dataset.vigilMediaVerdict='unknown';
+                if('\(protection)'==='page')document.documentElement.dataset.vigilPageVerdict='sensitive';
+                if('\(protection)'==='stop')document.querySelector('.vigil-snap-group-export button:nth-child(2)').click();
+                if('\(protection)'==='away')document.querySelector('.aXEpU').classList.add('ATeie');
+                if('\(protection)'==='route'){history.pushState({},'', '/web/other-chat');document.dispatchEvent(new Event('__vigilRouteChanged'));}
+                if('\(protection)'==='background'){
+                  Object.defineProperty(document,'visibilityState',{configurable:true,value:'hidden'});document.dispatchEvent(new Event('visibilitychange'));
+                  Object.defineProperty(document,'visibilityState',{configurable:true,value:'visible'});document.dispatchEvent(new Event('visibilitychange'));
+                }
+                window.fixtureGroupValid=window.__vigilValidateSnapchatExport(fixtureExports[0].requestID);
+                window.__vigilCompleteSnapchatExport(fixtureExports[0].requestID,'\(protection)'==='stop','Save stopped');
+                """)
+            let valid = try await webView.evaluateJavaScript("fixtureGroupValid") as? Bool
+            XCTAssertEqual(valid, false, protection)
+            try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export button:nth-child(2)').hidden", in: webView)
+            let count = try await webView.evaluateJavaScript("fixtureExports.length") as? Int
+            XCTAssertEqual(count, 1, protection)
+            if protection == "stop" {
+                let status = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export [role=status]').textContent") as? String
+                XCTAssertTrue(status?.contains("1 of 4 photos saved") == true, "An already-committed write is still counted when stopping")
+            }
+            _ = try await webView.evaluateJavaScript("document.documentElement.dataset.vigilPageVerdict='safe'")
+        }
+    }
+
+    @MainActor
+    func testSnapchatPhotoGroupUsesRealClassificationAndPhotosBridgeOffscreen() async throws {
+        guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
+            throw XCTSkip("Grant photos-add to the simulator fixture app before this test")
+        }
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
+            websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 780)
+        let window = UIWindow(frame: webView.bounds)
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("document.documentElement.dataset.vigilPageVerdict==='safe'", in: webView)
+        _ = try await webView.callAsyncJavaScript("globalThis.fetch=async url=>({status:200,url});return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        let allowed = await store.confirmServiceAccess(); XCTAssertTrue(allowed)
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        await store.prepareForegroundInteraction()
+        _ = try await webView.evaluateJavaScript(Self.snapchatPhotoGroupFixtureScript)
+        _ = try await webView.evaluateJavaScript("""
+            fixtureMountPhotoGroup(20,false);
+            document.getElementById('fixture-photo-group').style.flexDirection='column';
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export') && [...document.querySelectorAll('.ET_CR img')].every(i=>i.complete)", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export').scrollIntoView({block:'end'})")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export button').getBoundingClientRect().bottom<=innerHeight", in: webView)
+        let firstIsOffscreen = try await webView.evaluateJavaScript("document.querySelector('.ET_CR img').getBoundingClientRect().bottom<0") as? Bool
+        XCTAssertEqual(firstIsOffscreen, true)
+        let buttonReachable = try await webView.evaluateJavaScript("""
+            (()=>{const b=document.querySelector('.vigil-snap-group-export button'),r=b.getBoundingClientRect();
+              return b.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()
+            """) as? Bool
+        XCTAssertEqual(buttonReachable, true, "The group action stays with the actual pictures and remains tappable")
+        webView.becomeFirstResponder()
+        store.requestFreshServiceAccessReceipt()
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export button').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-group-export [role=status]').textContent==='20 of 20 photos saved to Camera Roll'", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-group-export').scrollIntoView({block:'end'})")
+        let attachment = XCTAttachment(image: try await webView.takeSnapshot(configuration: nil))
+        attachment.name = "Snapchat photo-specific group save completion"; attachment.lifetime = .keepAlways; add(attachment)
+        XCTAssertFalse(store.serviceAccessIsSettling, "A stale receipt must be refreshed through live policy before saving")
+        await store.handleSceneActivity(false, isServiceVisible: false)
+        withExtendedLifetime(store) {}
+    }
+
     @MainActor
     func testSnapchatGeneratedPortraitStreamKeepsTheWholeFrame() async throws {
         let controller = WKUserContentController()
