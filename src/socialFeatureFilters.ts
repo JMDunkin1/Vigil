@@ -105,9 +105,10 @@ export const FOCUSED_SOCIAL_PLATFORMS: FocusedSocialPlatformDefinition[] = [
         label: "Search discovery media",
         probeUrls: ["https://www.instagram.com/?__vigil_feature=explore"],
         // Instagram serves both account search and its unbounded discovery
-        // grid from /explore. Keep the route reachable so the companion can
-        // preserve account lookup while its DOM policy removes posts, Reels,
-        // tags, audio, and places. The probe still tells the companion when
+        // grid from /explore. Keep the route reachable for account lookup and
+        // deliberate, popularity-checked reference searches. The companion
+        // removes unsolicited discovery, tags, audio, places, and continuous
+        // media browsing. The probe still tells the companion when
         // Focused filtering can be active without denying the shared search route itself.
         deniedUrls: []
       },

@@ -10167,6 +10167,119 @@ final class VigilSocialTests: XCTestCase {
         webView.navigationDelegate = nil
     }
 
+    func testInstagramReferenceSearchNativeRouteBoundaries() {
+        for value in ["https://www.instagram.com/explore/", "https://www.instagram.com/explore/search/keyword/?q=basketball"] {
+            XCTAssertTrue(InstagramReferenceSearchPolicy.isSearch(URL(string: value)))
+        }
+        for value in ["https://www.instagram.com/explore/tags/topic/", "https://www.instagram.com/explore/people/suggested/", "https://instagram.com.evil.test/explore/", "http://instagram.com/explore/"] {
+            XCTAssertFalse(InstagramReferenceSearchPolicy.isSearch(URL(string: value)))
+        }
+        for value in ["https://www.instagram.com/p/Reference123/", "https://www.instagram.com/reel/Reference123/", "https://www.instagram.com/creator/reels/Reference123/"] {
+            XCTAssertTrue(InstagramReferenceSearchPolicy.isMediaResult(URL(string: value)!))
+        }
+        XCTAssertFalse(InstagramReferenceSearchPolicy.isMediaResult(URL(string: "https://www.instagram.com/reels/")!))
+        XCTAssertFalse(InstagramReferenceSearchPolicy.isMediaResult(URL(string: "https://evil.test/p/Reference123/")!))
+    }
+
+    @MainActor
+    func testInstagramReferenceSearchPopularityAndQueryBoundaries() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "reference-search fixture loaded")
+        let initialNavigation = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = initialNavigation
+        webView.loadHTMLString(#"""
+            <html><body><main><input aria-label="Search"><a id="result" href="/p/Reference123/">Reference</a>
+            <a id="tag" href="/explore/tags/topic/">Tag</a><button id="posts" role="tab">Posts</button></main></body></html>
+            """#, baseURL: URL(string: "https://www.instagram.com/explore/search/keyword/?q=basketball"))
+        await fulfillment(of: [loaded], timeout: 5)
+        let navigation = StoryAdvanceNavigationProbe()
+        webView.navigationDelegate = navigation
+        try await webView.evaluateJavaScript(#"""
+            window.__vigilDocumentID = 'reference-fixture';
+            window.referencePayload = {};
+            window.referenceProfile = {};
+            window.referenceVerdict = 'safe';
+            window.referenceDelay = 0;
+            window.referenceFetches = 0;
+            window.fetch = async value => {
+              window.referenceFetches++;
+              await new Promise(resolve => setTimeout(resolve, window.referenceDelay));
+              const url = new URL(value, location.href);
+              const profile = url.pathname.includes('/web_profile_info/');
+              return { ok:true, url:url.href, text:async()=> profile ? JSON.stringify({data:{user:window.referenceProfile}})
+                : '<script type="application/json">'+JSON.stringify(window.referencePayload)+'</script>' };
+            };
+            Object.defineProperty(window, 'webkit', {configurable:true,value:{messageHandlers:{vigil:{postMessage:body=>{
+              if (body.type !== 'instagramSearchText') return;
+              setTimeout(()=>window.__vigilResolveInstagramSearchText(body.documentID,body.requestID,window.referenceVerdict),0);
+            }}}}});
+            window.__vigilBridge=()=>{};
+            void 0;
+            """#)
+        try await webView.evaluateJavaScript(DOMAdapters.installedControlsScript(for: .instagram))
+        try await waitForJavaScriptCondition("window.__vigilInstagramReferenceSearch?.hasQuery() === true", in: webView)
+        let visible = try await webView.evaluateJavaScript(#"""
+            ({result:getComputedStyle(document.getElementById('result')).display!=='none',
+            posts:getComputedStyle(document.getElementById('posts')).display!=='none',
+            tag:getComputedStyle(document.getElementById('tag')).display!=='none'})
+            """#) as? [String: Bool]
+        XCTAssertEqual(visible, ["result": true, "posts": true, "tag": false])
+        for scenario in ["likes", "views", "followers", "below", "missing", "wrong-account", "wrong-post", "strings", "sensitive", "stale-query"] {
+            _ = try await webView.callAsyncJavaScript(#"""
+                const input=document.querySelector('input'); input.value=scenario;
+                input.dispatchEvent(new Event('input',{bubbles:true}));
+                window.referenceVerdict='safe';window.referenceDelay=0;
+                window.referencePayload={shortcode:'Reference123',like_count:0,play_count:0,owner:{username:'creator'},caption:{text:'Basketball reference'}};
+                window.referenceProfile={username:'creator',follower_count:10};
+                if(scenario==='likes'||scenario==='sensitive'||scenario==='stale-query')window.referencePayload.like_count=1000;
+                if(scenario==='views')window.referencePayload.play_count=10000;
+                if(scenario==='followers')window.referenceProfile.follower_count=10000;
+                if(scenario==='below'){window.referencePayload.like_count=999;window.referencePayload.play_count=9999;window.referenceProfile.follower_count=9999;}
+                if(scenario==='missing')window.referencePayload={};
+                if(scenario==='wrong-account')window.referenceProfile={username:'other',follower_count:999999};
+                if(scenario==='wrong-post')window.referencePayload.shortcode='Other456';
+                if(scenario==='strings'){window.referencePayload.like_count='999999';window.referenceProfile.follower_count='999999';}
+                // Each query uses a distinct shortcode so old proof cannot mask a bad response.
+                window.referencePayload.shortcode = scenario==='wrong-post' ? 'Other456' : 'Reference'+scenario.replace(/-/g,'');
+                if(window.referencePayload.owner)window.referencePayload.owner.username='creator'+scenario.replace(/-/g,'');
+                if(scenario!=='wrong-account')window.referenceProfile.username='creator'+scenario.replace(/-/g,'');
+                document.getElementById('result').href='/p/Reference'+scenario.replace(/-/g,'')+'/';
+                return true;
+                """#, arguments: ["scenario": scenario], in: nil, contentWorld: .page)
+            try await waitForJavaScriptCondition("window.__vigilInstagramReferenceSearch.hasQuery()", in: webView)
+            let before = navigation.paths.count
+            _ = try await webView.callAsyncJavaScript(#"""
+                if(scenario==='sensitive') window.referenceVerdict='sensitive';
+                if(scenario==='stale-query') window.referenceDelay=100;
+                document.getElementById('result').click();
+                if(scenario==='stale-query'){
+                  const input=document.querySelector('input'); input.value='changed';input.dispatchEvent(new Event('input',{bubbles:true}));
+                }
+                return true;
+                """#, arguments: ["scenario": scenario], in: nil, contentWorld: .page)
+            if ["likes", "views", "followers"].contains(scenario) {
+                try await waitForJavaScriptCondition("document.getElementById('vigil-instagram-reference-status')?.hidden === true", in: webView)
+                try await Task.sleep(nanoseconds: 100_000_000)
+                XCTAssertEqual(navigation.paths.count, before + 1, scenario)
+                XCTAssertEqual(navigation.paths.last, "/p/Reference\(scenario)", scenario)
+            } else {
+                try await Task.sleep(nanoseconds: 250_000_000)
+                XCTAssertEqual(navigation.paths.count, before, scenario)
+            }
+        }
+        try await webView.evaluateJavaScript(#"""
+            document.querySelector('input').value='';document.querySelector('input').dispatchEvent(new Event('input',{bubbles:true}));
+            void 0;
+            """#)
+        let clearedQuery = try await webView.evaluateJavaScript("window.__vigilInstagramReferenceSearch.hasQuery()") as? Bool
+        let clearedResult = try await webView.evaluateJavaScript("getComputedStyle(document.getElementById('result')).display") as? String
+        XCTAssertEqual(clearedQuery, false)
+        XCTAssertEqual(clearedResult, "none")
+        webView.navigationDelegate = nil
+    }
+
     @MainActor
     func testInstagramSearchStaysAvailableButOnlyShowsAccounts() async throws {
         let controller = WKUserContentController()

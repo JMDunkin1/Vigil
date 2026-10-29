@@ -134,6 +134,27 @@ enum LinkedInAppleAuthentication {
     }
 }
 
+enum InstagramReferenceSearchPolicy {
+    static func isSearch(_ url: URL?) -> Bool {
+        guard let url, isInstagram(url) else { return false }
+        let path = url.path.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path == "explore" || path == "explore/search" || path.hasPrefix("explore/search/")
+    }
+
+    static func isMediaResult(_ url: URL) -> Bool {
+        isInstagram(url) && url.path.range(
+            of: #"^/(?:[a-z0-9._]+/)?(?:p|reels?)/[A-Za-z0-9_-]+/?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    private static func isInstagram(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "https" && (url.port == nil || url.port == 443)
+            && url.user == nil && url.password == nil
+            && ["instagram.com", "www.instagram.com"].contains(url.host?.lowercased() ?? "")
+    }
+}
+
 enum InstagramSingleReelPolicy {
     static func blocksNavigation(from source: URL?, to destination: URL, sharedStory: URL? = nil) -> Bool {
         guard let source, let current = mediaRoute(source),

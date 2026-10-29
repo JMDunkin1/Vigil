@@ -1354,6 +1354,22 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
+        case "instagramSearchText":
+            guard service == .instagram, frame.isMainFrame,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  let documentID = body["documentID"] as? String,
+                  let requestID = body["requestID"] as? String, UUID(uuidString: requestID) != nil,
+                  let text = body["text"] as? String, !text.isEmpty, text.utf8.count <= 96_000,
+                  let webView = message.webView else { return }
+            Task { [weak self, weak webView] in
+                guard let self, let webView else { return }
+                let verdict = await self.resolvedTextClassifier().classify(pageText: text, wasTruncated: false)
+                guard Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: self.mainDocumentIDs[service]) else { return }
+                _ = try? await webView.callAsyncJavaScript(
+                    "window.__vigilResolveInstagramSearchText?.(documentID, requestID, verdict);",
+                    arguments: ["documentID": documentID, "requestID": requestID, "verdict": verdict.rawValue],
+                    in: frame, contentWorld: .page)
+            }
         case "videoOrientation":
             guard service == .youtube, frame.isMainFrame else { return }
             let allowed = body["allowed"] as? Bool == true
@@ -2340,6 +2356,8 @@ extension SocialWebViewStore: WKNavigationDelegate {
             serviceNavigationDiagnostic = "\(url.scheme ?? "")://\(url.host ?? "")\(url.path)"
         }
         preferences.preferredContentMode = service == .snapchat ? .desktop : .mobile
+        let isIncomingInstagramShare = service == .instagram
+            && navigationAction.navigationType == .other && instagramPendingIncomingURL == url
 
         if service == .linkedin, navigationAction.targetFrame == nil,
            navigationAction.sourceFrame.isMainFrame,
@@ -2365,8 +2383,6 @@ extension SocialWebViewStore: WKNavigationDelegate {
                 decisionHandler(.cancel, preferences)
                 return
             }
-            let isIncomingInstagramShare = service == .instagram
-                && navigationAction.navigationType == .other && instagramPendingIncomingURL == url
             if isIncomingInstagramShare { instagramPendingIncomingURL = nil }
             if service == .instagram, !isIncomingInstagramShare,
                InstagramSingleReelPolicy.blocksNavigation(from: webView.url, to: url, sharedStory: instagramIncomingSharedURL) {
@@ -2392,6 +2408,26 @@ extension SocialWebViewStore: WKNavigationDelegate {
             if service == .instagram {
                 setSurface(Self.provisionalInstagramSurface(for: url), for: service)
             }
+        }
+
+        if service == .instagram, !isIncomingInstagramShare, navigationAction.targetFrame?.isMainFrame != false,
+           InstagramReferenceSearchPolicy.isSearch(webView.url),
+           InstagramReferenceSearchPolicy.isMediaResult(url) {
+            let sourceURL = webView.url
+            let documentID = mainDocumentIDs[service]
+            Task { [weak self, weak webView] in
+                guard let self, let webView else { decisionHandler(.cancel, preferences); return }
+                let allowed = (try? await webView.callAsyncJavaScript(
+                    "return window.__vigilInstagramReferenceSearch?.allowsResult(destination) === true;",
+                    arguments: ["destination": url.absoluteString], in: nil, contentWorld: .page)) as? Bool == true
+                guard allowed, webView.url == sourceURL, let documentID,
+                      self.mainDocumentIDs[service] == documentID else {
+                    decisionHandler(.cancel, preferences)
+                    return
+                }
+                decisionHandler(.allow, preferences)
+            }
+            return
         }
 
         // SocialService has already confined this request to the companion's

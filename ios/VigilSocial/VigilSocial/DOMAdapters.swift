@@ -69,7 +69,7 @@ enum DOMAdapters {
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
             + documentIdentityBootstrap
-            + (service == .instagram ? instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
+            + (service == .instagram ? instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -1666,7 +1666,7 @@ enum DOMAdapters {
     static func controlsScript(for service: SocialService, informationalAccounts: [String] = []) -> String {
         let accounts = informationalAccounts.compactMap(InstagramInformationalAccounts.normalizedUsername)
         let encoded = (try? JSONEncoder().encode(accounts)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
-        return (service == .instagram ? instagramSingleReelGuard : "")
+        return (service == .instagram ? instagramReferenceSearchGuard + instagramSingleReelGuard : "")
             + (service == .snapchat ? snapchatCameraBootstrap : "") + lockdownProbe(service) + serviceScript(service)
             .replacingOccurrences(of: "/* VIGIL_INFORMATIONAL_ACCOUNTS */ []", with: encoded)
     }
@@ -2097,6 +2097,278 @@ enum DOMAdapters {
             .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         return "window.__vigilInstagramIncomingSharedURL = \(encoded);\n"
     }
+
+    // Search is a deliberate reference lookup. It never authorizes Explore's
+    // default grid or an immersive feed, and a popular result is still subject
+    // to text policy and the independent native/single-item gesture guards.
+    static let instagramReferenceSearchGuard = #"""
+    (() => {
+      if (window.__vigilInstagramReferenceSearch) return;
+      if (!['instagram.com', 'www.instagram.com'].includes(location.hostname.toLowerCase())) return;
+      const popularity = Object.freeze({ followers: 10000, likes: 1000, views: 10000 });
+      const canonicalURL = value => {
+        try {
+          const url = new URL(value, location.href);
+          return url.protocol === 'https:' && (!url.port || url.port === '443')
+            && !url.username && !url.password
+            && ['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase()) ? url : null;
+        } catch (_) { return null; }
+      };
+      const isSearchURL = (value = location.href) => {
+        const path = canonicalURL(value)?.pathname.toLowerCase().replace(/\/+$/, '');
+        return path === '/explore' || path === '/explore/search'
+          || path?.startsWith('/explore/search/') === true;
+      };
+      const mediaRoute = value => {
+        const url = canonicalURL(value);
+        const match = url?.pathname.match(/^\/(?:[a-z0-9._]+\/)?(p|reels?)\/([A-Za-z0-9_-]+)\/?$/i);
+        return match ? { code: match[2], path: `/${match[1].toLowerCase() === 'p' ? 'p' : 'reel'}/${match[2]}/` } : null;
+      };
+      const searchField = node => node instanceof HTMLInputElement
+        && node.matches('input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"]')
+        && !node.closest('[data-vigil-instagram-recipient-sheet], [data-vigil-instagram-comments-sheet]');
+      let typedQuery = null, currentQuery = '', queryReady = false, generation = 0, opening = false;
+      const readQuery = () => {
+        if (!isSearchURL()) return '';
+        const url = canonicalURL(location.href);
+        const value = typedQuery ?? url.searchParams.get('q') ?? url.searchParams.get('query') ?? '';
+        const query = value.trim().replace(/\s+/g, ' ');
+        return query.length <= 240 ? query : '';
+      };
+      const approvals = new Map(), mediaRecords = new Map(), accountRecords = new Map(), pendingText = new Map();
+      const nativeFetch = window.fetch.bind(window);
+      const count = value => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+      const boundedSet = (map, key, value) => {
+        map.delete(key);
+        map.set(key, value);
+        if (map.size > 300) map.delete(map.keys().next().value);
+      };
+      const username = value => typeof value === 'string' && /^[a-z0-9._]{1,30}$/i.test(value) ? value.toLowerCase() : '';
+      const firstCount = (...values) => values.map(count).find(value => value !== null) ?? null;
+      const captionText = item => [item.caption?.text, typeof item.caption === 'string' ? item.caption : '',
+        item.accessibility_caption, ...(Array.isArray(item.edge_media_to_caption?.edges) ? item.edge_media_to_caption.edges : []).map(edge => edge?.node?.text)]
+        .filter(value => typeof value === 'string' && value).join('\n').slice(0, 16000);
+      // Only structured Instagram response data supplies counts. Never infer
+      // popularity from tile labels, comments, captions, or page storage.
+      const collect = payload => {
+        const queue = [payload];
+        for (let index = 0; index < queue.length && index < 40000; index++) {
+          const item = queue[index];
+          if (!item || typeof item !== 'object') continue;
+          const name = username(item.username);
+          const followers = firstCount(item.follower_count, item.edge_followed_by?.count);
+          if (name && followers !== null) boundedSet(accountRecords, name, {
+            followers, biography: typeof item.biography === 'string' ? item.biography.slice(0, 4000) : '', at: Date.now()
+          });
+          const code = item.code || item.shortcode;
+          if (typeof code === 'string' && /^[A-Za-z0-9_-]+$/.test(code)) {
+            const old = mediaRecords.get(code) || {};
+            const owner = item.owner || item.user || {};
+            boundedSet(mediaRecords, code, {
+              author: username(owner.username) || old.author || '',
+              likes: firstCount(item.like_count, item.edge_media_preview_like?.count, item.edge_liked_by?.count) ?? old.likes ?? null,
+              views: firstCount(item.play_count, item.video_view_count, item.view_count, item.video_play_count) ?? old.views ?? null,
+              text: captionText(item) || old.text || '', at: Date.now()
+            });
+            if (owner && typeof owner === 'object') queue.push(owner);
+          }
+          for (const value of Object.values(item)) {
+            if (queue.length >= 40000) break;
+            if (value && typeof value === 'object') queue.push(value);
+          }
+        }
+      };
+      const parseJSON = text => {
+        if (typeof text !== 'string' || text.length > 4000000) return;
+        try { collect(JSON.parse(text.replace(/^for\s*\(;;\);\s*/, ''))); } catch (_) {}
+      };
+      const readDocument = html => {
+        if (typeof html !== 'string' || html.length > 8000000) return;
+        // Parse inert JSON only; never run a fetched document's scripts.
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        for (const script of [...doc.querySelectorAll('script[type="application/json"], script[type="application/ld+json"]')].slice(0, 160)) {
+          parseJSON(script.textContent);
+        }
+      };
+      const observeResponse = async response => {
+        const url = canonicalURL(response?.url);
+        if (!url || !response.ok || Number(response.headers.get('content-length') || 0) > 4000000) return;
+        const type = response.headers.get('content-type') || '';
+        if (/json|javascript/.test(type)) parseJSON(await response.clone().text());
+      };
+      window.fetch = async function(...args) {
+        const response = await nativeFetch(...args);
+        if (isSearchURL()) void observeResponse(response).catch(() => {});
+        return response;
+      };
+      const xhrOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(...args) {
+        this.addEventListener('load', () => {
+          if (!isSearchURL() || !canonicalURL(this.responseURL) || this.status < 200 || this.status >= 300) return;
+          try {
+            if (this.responseType === 'json') collect(this.response);
+            else if (!this.responseType || this.responseType === 'text') parseJSON(this.responseText);
+          } catch (_) {}
+        }, { once: true });
+        return xhrOpen.apply(this, args);
+      };
+      const fetchData = async (path, documentResponse = false) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4500);
+        try {
+          const response = await nativeFetch(path, { credentials: 'same-origin', signal: controller.signal,
+            headers: documentResponse ? { Accept: 'text/html' } : { Accept: 'application/json', 'X-IG-App-ID': '936619743392459' } });
+          if (!response.ok || !canonicalURL(response.url)) return;
+          const text = await response.text();
+          if (documentResponse) readDocument(text); else parseJSON(text);
+        } catch (_) {} finally { clearTimeout(timeout); }
+      };
+      const textSafe = text => new Promise(resolve => {
+        const id = crypto.randomUUID();
+        const timer = setTimeout(() => { pendingText.delete(id); resolve(false); }, 5000);
+        pendingText.set(id, verdict => { clearTimeout(timer); resolve(verdict === 'safe'); });
+        try {
+          window.webkit.messageHandlers.vigil.postMessage({ type: 'instagramSearchText',
+            documentID: String(window.__vigilDocumentID || ''), requestID: id, text });
+        } catch (_) { clearTimeout(timer); pendingText.delete(id); resolve(false); }
+      });
+      window.__vigilResolveInstagramSearchText = (documentID, requestID, verdict) => {
+        if (documentID !== window.__vigilDocumentID) return;
+        const resolve = pendingText.get(requestID);
+        pendingText.delete(requestID);
+        resolve?.(verdict);
+      };
+      let notice = null;
+      const showNotice = text => {
+        if (!document.body) return;
+        if (!notice) {
+          notice = document.createElement('div');
+          notice.id = 'vigil-instagram-reference-status';
+          notice.setAttribute('role', 'status');
+          notice.setAttribute('aria-live', 'polite');
+          notice.style.cssText = 'position:fixed;left:20px;right:20px;bottom:80px;z-index:2147483646;padding:12px 16px;border-radius:12px;background:#202020;color:white;text-align:center;font:14px -apple-system,BlinkMacSystemFont,sans-serif;pointer-events:none';
+          document.body.append(notice);
+        }
+        notice.textContent = text;
+        notice.hidden = !text;
+      };
+      const updateSearch = async (retry = false) => {
+        const query = readQuery();
+        if (query === currentQuery && !retry) return;
+        const epoch = ++generation;
+        currentQuery = query;
+        queryReady = false;
+        opening = false;
+        approvals.clear();
+        if (isSearchURL()) document.documentElement.dataset.vigilInstagramReferenceSearch = 'pending';
+        else delete document.documentElement.dataset.vigilInstagramReferenceSearch;
+        document.dispatchEvent(new Event('__vigilReferenceSearchChanged'));
+        if (!query) { showNotice(''); return; }
+        if (await textSafe(query) && epoch === generation && readQuery() === query) {
+          queryReady = true;
+          document.documentElement.dataset.vigilInstagramReferenceSearch = 'ready';
+          showNotice('');
+        } else if (epoch === generation) {
+          showNotice('Search results could not be verified. Try searching again.');
+        }
+        document.dispatchEvent(new Event('__vigilReferenceSearchChanged'));
+      };
+      const hasQuery = () => isSearchURL() && queryReady && Boolean(currentQuery) && currentQuery === readQuery();
+      const allowsResult = value => {
+        const route = mediaRoute(value);
+        return Boolean(hasQuery() && route && approvals.get(route.path) === generation);
+      };
+      const blocksDestination = value => isSearchURL() && Boolean(mediaRoute(value)) && !allowsResult(value);
+      window.__vigilInstagramReferenceSearch = Object.freeze({
+        hasQuery, allowsResult, isSearchURL, isMediaURL: value => Boolean(mediaRoute(value)), blocksDestination
+      });
+      const style = document.createElement('style');
+      style.textContent = `
+        html[data-vigil-instagram-reference-search="pending"] :is(main, [role="main"]) a:is([href^="/p/"], [href^="/reel/"], [href^="/reels/"]),
+        html[data-vigil-instagram-reference-search] :is(main, [role="main"]) video { display:none !important; }
+      `;
+      document.documentElement.append(style);
+      window.addEventListener('input', event => {
+        if (!isSearchURL() || !searchField(event.target)) return;
+        typedQuery = event.target.value;
+        void updateSearch();
+      }, true);
+      window.addEventListener('click', async event => {
+        if (!isSearchURL()) return;
+        const link = event.target?.closest?.('a[href]');
+        const route = link && mediaRoute(link.href);
+        if (!route) return;
+        // Always consume the original activation. Native navigation below
+        // opens exactly the verified permalink, avoiding a retained search
+        // modal that can turn gray or become an immersive recommendations feed.
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (!hasQuery() || opening) return;
+        const epoch = generation, query = currentQuery, originalHref = link.href;
+        opening = true;
+        showNotice('Checking this result…');
+        const fresh = record => record && Date.now() >= record.at && Date.now() - record.at < 300000;
+        if (!fresh(mediaRecords.get(route.code))) await fetchData(route.path, true);
+        const media = mediaRecords.get(route.code);
+        let account = media?.author ? accountRecords.get(media.author) : null;
+        const popularPost = fresh(media) && (media.likes >= popularity.likes || media.views >= popularity.views);
+        if (!popularPost && media?.author && !fresh(account)) {
+          // This existing compatibility endpoint is also used by the mutual-
+          // follow reader. No new API endpoint or persisted GraphQL ID.
+          await fetchData(`/api/v1/users/web_profile_info/?username=${encodeURIComponent(media.author)}`);
+          account = accountRecords.get(media.author);
+          if (!fresh(account)) { await fetchData(`/${media.author}/`, true); account = accountRecords.get(media.author); }
+        }
+        const popularAccount = fresh(account) && account.followers >= popularity.followers;
+        let allowed = false;
+        if (fresh(media) && (popularPost || popularAccount)) {
+          allowed = await textSafe([query, media.author, media.text, account?.biography || ''].join('\n'));
+        }
+        // A completed lookup can never open a result from an old query, an
+        // edited/recycled tile, a departed page, or a changed navigation epoch.
+        if (epoch !== generation || !hasQuery()) return;
+        opening = false;
+        if (!link.isConnected || link.href !== originalHref) { showNotice('Search changed. Tap a result again.'); return; }
+        if (!allowed) {
+          showNotice(fresh(media) && (popularPost || popularAccount)
+            ? 'This result is unavailable under your content rules.'
+            : `This result needs ${popularity.followers.toLocaleString('en-US')} account followers, ${popularity.likes.toLocaleString('en-US')} likes, or ${popularity.views.toLocaleString('en-US')} views. Unavailable counts cannot qualify.`);
+          return;
+        }
+        approvals.set(route.path, epoch);
+        showNotice('');
+        location.assign(route.path);
+      }, true);
+      for (const name of ['pushState', 'replaceState']) {
+        const original = history[name];
+        history[name] = function(...args) {
+          if (blocksDestination(args[2])) return;
+          const wasSearch = isSearchURL(), oldQuery = canonicalURL(location.href)?.search;
+          const result = original.apply(this, args);
+          if (!wasSearch || !isSearchURL() || oldQuery !== canonicalURL(location.href)?.search) typedQuery = null;
+          void updateSearch();
+          return result;
+        };
+      }
+      window.navigation?.addEventListener('navigate', event => {
+        if (blocksDestination(event.destination?.url) && event.cancelable) event.preventDefault();
+      });
+      for (const type of ['popstate', 'pageshow']) window.addEventListener(type, () => {
+        typedQuery = null;
+        void updateSearch(true);
+      }, true);
+      window.addEventListener('online', () => { void updateSearch(true); });
+      const initialize = () => {
+        for (const script of [...document.querySelectorAll('script[type="application/json"]')].slice(0, 160)) parseJSON(script.textContent);
+        // The document-end compatibility bridge binds the native document ID.
+        setTimeout(() => { void updateSearch(true); }, 0);
+      };
+      document.documentElement.dataset.vigilInstagramReferenceSearch = isSearchURL() ? 'pending' : '';
+      if (!isSearchURL()) delete document.documentElement.dataset.vigilInstagramReferenceSearch;
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialize, { once: true });
+      else initialize();
+    })();
+    """#
 
     static let instagramSingleReelGuard = #"""
     (() => {
@@ -3265,7 +3537,8 @@ enum DOMAdapters {
           // Story documents start concealed. The document-end verifier opens
           // only the viewer's own Story or a confirmed mutual friend's Story.
           document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
-        } else if (path === '/explore') {
+        } else if ((path === '/explore' || path === '/explore/search' || path.startsWith('/explore/search/'))
+            && !window.__vigilInstagramReferenceSearch?.hasQuery()) {
           document.documentElement.dataset.vigilInstagramAccountSearch = 'true';
         }
       } catch (_) {}
@@ -7579,7 +7852,7 @@ enum DOMAdapters {
           const url = new URL(value, location.href);
           if (!['instagram.com', 'www.instagram.com'].includes(url.hostname.toLowerCase())) return false;
           const path = url.pathname.toLowerCase().replace(/\/+$/, '') || '/';
-          return path === '/explore';
+          return path === '/explore' || path === '/explore/search' || path.startsWith('/explore/search/');
         } catch (_) { return false; }
       };
       const isSingularReelRoute = (value = location.href) => {
@@ -8116,7 +8389,7 @@ enum DOMAdapters {
           }
           return;
         }
-        if (isAccountSearchRoute()) {
+        if (isAccountSearchRoute() && !window.__vigilInstagramReferenceSearch?.hasQuery()) {
           document.documentElement.dataset.vigilInstagramAccountSearch = 'true';
         } else {
           delete document.documentElement.dataset.vigilInstagramAccountSearch;
@@ -10263,7 +10536,10 @@ enum DOMAdapters {
         ];
         for (const link of links.slice(0, 240)) {
           if (link.closest('nav, [role="navigation"]')) continue;
-          if (searchDiscoveryPath(link.href)) {
+          if (window.__vigilInstagramReferenceSearch?.hasQuery()
+              && window.__vigilInstagramReferenceSearch.isMediaURL(link.href)) {
+            delete link.dataset.vigilInstagramSearchDiscovery;
+          } else if (searchDiscoveryPath(link.href)) {
             link.dataset.vigilInstagramSearchDiscovery = 'true';
           }
         }
@@ -10279,7 +10555,10 @@ enum DOMAdapters {
           if (control.closest('nav, [role="navigation"]')) continue;
           const label = String(control.textContent || control.getAttribute('aria-label') || '')
             .replace(/\s+/g, ' ').trim().toLowerCase();
-          if (categoryLabels.has(label)) {
+          if (window.__vigilInstagramReferenceSearch?.hasQuery()
+              && ['for you', 'top', 'posts', 'photos', 'videos', 'reels'].includes(label)) {
+            delete control.dataset.vigilInstagramSearchDiscovery;
+          } else if (categoryLabels.has(label)) {
             control.dataset.vigilInstagramSearchDiscovery = 'true';
           }
         }
@@ -10317,6 +10596,11 @@ enum DOMAdapters {
       }).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, characterData: true,
         attributeFilter: ['href', 'aria-label', 'alt', 'role', 'src', 'aria-hidden']
+      });
+      document.addEventListener('__vigilReferenceSearchChanged', () => {
+        markAccountOnlySearch(document);
+        scheduleScan();
+        enforceRoute();
       });
       document.addEventListener('__vigilPolicyFeaturesChanged', () => {
         document.querySelectorAll('[data-vigil-hidden-feature]').forEach((card) => {
