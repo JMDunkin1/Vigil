@@ -1,8 +1,81 @@
 # Snapchat and Instagram contact notifications
 
-Prepared October 25, 2026. The user will connect the iPhone later. This records
-the requested behavior and the checks needed before changing the phone; it does
-not represent an implemented or installed notification fix.
+Prepared October 25, 2026; rechecked against the newer source on October 29,
+2026. The user will connect the iPhone later. This records the requested behavior
+and the checks needed before changing the phone; it does not represent an
+implemented or installed notification fix.
+
+## October 29 current-version preparation
+
+Source baseline: `c1937304cfb0efcbc88bb0988867fa86ae68484d` (Instagram carousel
+loading and friend-feed recovery). This includes the intervening Instagram
+recipient-search, Snapchat portrait-capture/photo-group saving, launcher, and
+rendering/memory/network improvements. Continue from the current checkout when
+the phone arrives; do not restore the October 25 tree or an older app artifact.
+
+The notification implementation, its native and JavaScript regression tests,
+and Personal Team entitlements have no changes between the original preparation
+commit `99bfbdf` and this baseline. No notification patch needs to be ported from
+October 25: that commit contained preparation only. Instagram contact alerts,
+message-versus-media classification, and background delivery are still absent.
+The latest compatibility changes do not establish those capabilities.
+
+The current bridge in `SocialWebViewStore.swift` still requires unsuspended
+playback, a service-access confirmation less than ten seconds old, and no active
+restriction. Do not keep hidden sessions running or extend access receipts to
+obtain notification delivery. Recent efficiency and lifecycle changes must be
+preserved along with the camera, recipient-search, and feed fixes.
+
+At this check, the existing, uncommitted `ios/phone-release.json` labels the
+suite `0.3.227 (230)` and the combined Instagram-bundle app `0.3.207 (210)`.
+These are separate version fields, not evidence of the phone's installed
+version. The pending release file belongs to other work and was left intact.
+The current Personal-edition implementation fingerprint was
+`62b9eab6394190244ec20075e951649e2b81bea39c6b6dbb80c54a14da33cc76`, while the
+pending release records
+`0200fd8a03cd7ec4e934477fe8d78074d5ecb906b9655d019cb4e46ddaed1df3`.
+This mismatch needs normal release reconciliation before a verified deployment;
+do not edit fingerprints by hand or assume an existing build is current.
+
+Recheck the live inputs immediately before phone work, as ongoing changes and
+the active blocklist can change the fingerprint:
+
+```sh
+node scripts/ios-phone-suite.mjs fingerprint --edition personal
+npm run ios:phone:status
+```
+
+The first command is an offline source check. Run phone status after connection
+and inspect the persisted edition and live policy before any update. If app or
+policy changes are needed, use `npm run agent:update:social`, then
+`npm run ios:phone:check`. Retain a verified newer source tree; do not pin an
+update to either version number or fingerprint above. No release bump, phone
+installation, signing change, or policy change is part of this preparation.
+
+Validation of this baseline:
+
+- `node --experimental-strip-types tests/ios-social-notifications.test.mts`
+  passed: opt-in behavior, live permission revocation, persistent permission
+  script replacement, native access/origin checks, and private-payload isolation.
+- The `VigilInstagram` combined app and extensions compiled for the arm64 iOS
+  Simulator with Xcode 27.1 and the normal combined-app bundle/launcher settings
+  (`CODE_SIGNING_ALLOWED=NO`, `VIGIL_SERVICE=all`). The resulting app reports
+  `tech.caseline.vigil.instagram`, version `0.3.207 (210)`, and service `all`.
+  Its Activity, YouTube controls, and Shorts blocker extensions retain the
+  `.instagram.activity`, `.instagram.youtube-controls`, and
+  `.instagram.shorts-blocker` identifiers. This is an unsigned simulator build,
+  not a signed or installed phone release.
+- Native notification, Snapchat startup, access-gate, and Personal Team
+  entitlement tests were attempted on isolated iOS 27.0 simulators. Xcode 27.1
+  could not launch the test host; a boot-completed retry using Xcode 27.0 beta 3
+  encountered repeated `DTServiceHubClient` simulator service-connection errors.
+  Neither run reached test execution, so native tests are not marked passed.
+  The stalled test invocations and only the temporary simulators created for
+  them were cleaned up. No global simulator/toolchain settings were changed.
+
+These checks validate the existing implementation. They cannot establish actual
+incoming-message, incoming-call, media-exclusion, or locked-phone delivery; those
+remain the device acceptance checks below.
 
 ## Requested behavior
 
