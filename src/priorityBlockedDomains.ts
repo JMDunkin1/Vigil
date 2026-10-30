@@ -254,6 +254,8 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
 ] as const;
 
 export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
+  // User-requested whole-site block, including every subdomain.
+  "mangadex.org",
   // User report and QToon reader/alternative audit: research/2026-10-29-comic-coverage.md.
   "qtoon.com",
   "qtoon.net",
