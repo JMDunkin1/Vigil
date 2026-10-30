@@ -14,7 +14,10 @@ import { now, usageFixture } from "./test-helpers.mjs";
 
 const chartDomains = ["toonily.me", "omegascans.org", "manhwabuddy.com", "mangadna.com", "manghaha.com", "toonily.com", "mangaforfree.com", "manhwaclub.net"];
 const reportedDomains = ["qtoon.com", "qtoon.net", "qtoon.org", "qtoon.ai", "comicle.com",
-  "comicle-manga-manhwa-comics.soft112.com", "line-webtoon.soft112.com", "manta-unlimited-trending-webtoons.soft112.com"];
+  "comicle-manga-manhwa-comics.soft112.com", "line-webtoon.soft112.com", "manta-unlimited-trending-webtoons.soft112.com",
+  "mangakakalots.co.uk", "mangafire.to", "atsu.moe", "everythingmoe.com", "cubari.moe",
+  "weebcentral.com", "onisaga.com", "mangahub.io", "mangafreak.me", "manganato.gg", "kakamanga.com",
+  "madaradex.org", "mangadistrict.com", "schale.network", "cin.guru", "myreadingmanga.info"];
 const state = defaultState();
 state.settings.adultBlocklistEnabled = false;
 state.deviceControls.ios.enabled = true;
@@ -26,6 +29,10 @@ runInContext(await readFile(new URL("../extension/google-safe-search.js", import
 const guard = (url: string) => Boolean(runInContext(`explicitSearchBlockRedirect(${JSON.stringify(url)})`, browser));
 const search = (query: string) => `https://catalog.example/search?q=${encodeURIComponent(query)}`;
 const blockedQueries = [
+  "mangadex", "mangakakalots alternatives", "Manga Kakalot", "Manga Fire mirrors", "mangafire",
+  "Atsumaru", "ＡＴＳＵＭＡＲＵ", "Everything Moe alternatives", "Cubari Proxy", "Weeb Central",
+  "mangasee123", "xtoonhub99", "mangago", "onisaga", "mangafreak", "mangahub", "mangadistrict",
+  "madaradex", "myreadingmanga", "kakamanga", "manganato", "kitsumanga", "webtoonclub",
   ...chartDomains.map(domain => `${domain.split(".")[0]} alternatives`),
   "qtoon", "Q Toon alternatives", "q—toon mirrors", "ＱＴＯＯＮ", "q\u200btoon", "comicle alternatives",
   "mangabuddy alternatives", "mangameow", "mangaball", "kuramanga", "comizy", "nyrascans", "mangavyvy", "hiperdex",
@@ -35,7 +42,8 @@ const blockedQueries = [
   "smut manga", "comics smut", "mature doujinshi", "erotica webtoons", "explicit manga", "manga r-19", "19+ webtoon"
 ];
 const allowedQueries = ["corn smut fungus", "manga drawing tutorials", "comic book history", "uncensored interview", "mature gardening", "manga chapter 19", "nottoonily", "omegascanscope", "mangadnasequence",
-  "notqtoon", "qtoonscope", "comiclearning", "manta ray", "toptoonscope", "comic drawing software"];
+  "notqtoon", "qtoonscope", "comiclearning", "manta ray", "toptoonscope", "comic drawing software",
+  "notmangafire", "mangafireplace", "everythingmoescope", "atsu", "akuma", "naisho", "schale", "read manga history"];
 const blockedUrls = [
   ...blockedQueries.flatMap(query => [search(query), search(encodeURIComponent(query))]),
   ...[...chartDomains, ...reportedDomains].flatMap(domain => [
@@ -46,6 +54,8 @@ const blockedUrls = [
   "https://reader.toonily.example/", "https://example.org/manga-dna/alternatives",
   "https://comicle-manga-manhwa-comics.soft112.com/comicle-manga-manhwa-comics-alternatives.html",
   "https://qtoon-manga-manhua-comics.soft112.com/", "https://example.org/q-toon/alternatives",
+  "https://proxy.cubari.moe./", "https://mangafire.example/", "https://mangakakalot.example/",
+  "https://mangasee999.example/", "https://xtoonhub99.example/", "https://example.org/manga-fire/alternatives",
   "https://example.org/reviews/qtoon.ai/", "https://example.org/comicle-manga-alternatives/"
 ];
 const allowedUrls = [
@@ -55,6 +65,8 @@ const allowedUrls = [
   "https://example.org/assets/logo.png#toonily",
   "https://example.org/?nonce=qtoon&return=https%3A%2F%2Fqtoon.org",
   "https://example.org/account?token=comicle", "https://example.org/assets/logo.png#qtoon",
+  "https://example.org/account?token=mangafire&return=https%3A%2F%2Fatsu.moe",
+  "https://notmangafire.to/", "https://example.org/?nonce=everythingmoe",
   "https://example.org/reference/comiclearning", "https://text-editor.soft112.com/"
 ];
 for (const domain of [...chartDomains, ...reportedDomains]) {

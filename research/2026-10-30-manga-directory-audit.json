@@ -1,0 +1,3356 @@
+{
+  "reviewedOn": "2026-10-30",
+  "scope": "Requested readers plus explicit manga/manhwa catalogs and directory-labeled NSFW comic readers; metadata only, no chapter images.",
+  "limits": [
+    "198 reader URL attempts, not the whole web.",
+    "Directory NSFW classifications are distinguished from directly verified first-party labels.",
+    "HTTP/TLS failures and challenges are not treated as successful first-party verification.",
+    "Mature, seinen, romance, BL, yaoi and yuri labels alone were not used to infer sexual content.",
+    "Mirrors can appear after this audit; this is not exhaustive."
+  ],
+  "directorySources": [
+    "https://everythingmoe.com/?nsfw=true",
+    "https://everythingmoe.com/data/lowsec/hentairead.json",
+    "https://everythingmoe.com/data/lowsec/manhwa.json",
+    "https://everythingmoe.com/data/lowsec/manga.json"
+  ],
+  "requestedDomains": [
+    "atsu.moe",
+    "everythingmoe.com",
+    "mangafire.to",
+    "mangakakalots.co.uk",
+    "proxy.cubari.moe"
+  ],
+  "attemptedReaderUrls": 198,
+  "newPriorityDomains": [
+    "18comic.vip",
+    "3hentai.net",
+    "9hentai.so",
+    "akuma.moe",
+    "app.ninekon.com",
+    "asmhentai.com",
+    "atsu.moe",
+    "baramangaonline.com",
+    "caitlin.top",
+    "cin.guru",
+    "cubari.moe",
+    "doujin.io",
+    "doujin.li",
+    "doujin.sexy",
+    "doujiva.com",
+    "doujum.com",
+    "eahentai.com",
+    "erovault.xyz",
+    "everythingmoe.com",
+    "fhentai.net",
+    "gensura.net",
+    "hdoujin.org",
+    "hentai.name",
+    "hentai2.net",
+    "hentaidb.xyz",
+    "hentaifc.com",
+    "hentaiforce.net",
+    "hentaihand.com",
+    "hentaihere.com",
+    "hentaihug.com",
+    "hentaikisu.com",
+    "hentailand.fun",
+    "hentailoop.com",
+    "hentainexus.com",
+    "hentaipaw.com",
+    "hentairead.com",
+    "hentaivox.com",
+    "hentaizap.com",
+    "hentalk.pw",
+    "hentara.com",
+    "hotcomics.me",
+    "kakamanga.com",
+    "kingofshojo.com",
+    "kitsumanga.com",
+    "likemanga.ink",
+    "m-hentai.net",
+    "madaradex.org",
+    "manga-doom.com",
+    "manga-hen.com",
+    "manga.guru",
+    "manga18.club",
+    "manga4life.com",
+    "mangabats.com",
+    "mangadistrict.com",
+    "mangafire.to",
+    "mangafreak.me",
+    "mangago.me",
+    "mangago.zone",
+    "mangahaven.net",
+    "mangahub.io",
+    "mangakakalots.co.uk",
+    "mangakatana.com",
+    "mangalotus.com",
+    "mangamaniacs.org",
+    "manganato.gg",
+    "mangaread.org",
+    "mangasee123.com",
+    "mangasushi.org",
+    "mangatx.cc",
+    "mangaxl.com",
+    "mangazin.org",
+    "manhuabuddy.com",
+    "manhuaplus.top",
+    "manhwaden.com",
+    "manhwaepisodes.com",
+    "manhwasusu.com",
+    "myreadingmanga.info",
+    "naisho.moe",
+    "niyaniya.moe",
+    "onisaga.com",
+    "pururin.me",
+    "readmanga.cc",
+    "schale.network",
+    "silentquill.net",
+    "simply-hentai.com",
+    "toon18.to",
+    "toongod.org",
+    "toonverse.net",
+    "webtoon.xyz",
+    "webtoonclub.com",
+    "webtooni.net",
+    "weebcentral.com",
+    "xcomic.me",
+    "xtoonhub1.com",
+    "yaoi.me",
+    "yaoimangaonline.com"
+  ],
+  "selectedEvidence": [
+    {
+      "domain": "atsu.moe",
+      "reason": "user-requested",
+      "evidenceUrl": "https://atsu.moe/manga/VKPS",
+      "labels": [
+        "Adult",
+        "Smut",
+        "adult-content warning"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangafire.to",
+      "reason": "user-requested",
+      "evidenceUrl": "https://mangafire.to/title/ol8v4-her-red-hot-plaything",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Pornographic"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "weebcentral.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://weebcentral.com/series/01J76XYF6FZC4VB3NTCPWDBRE3/Ero-Ninja-Scrolls",
+      "labels": [
+        "Adult Content: Yes"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangago.me",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://pic3.mangapicgallery.com/lst/latest/all/1/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "reader-branded catalog"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "yaoi.me",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://yaoi.me/",
+      "labels": [
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "onisaga.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://onisaga.com/manga/nozoki-ana",
+      "labels": [
+        "Adult",
+        "18+",
+        "NSFW"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "xcomic.me",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://xcomic.me/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://xcomic.me/latest/adult",
+        "https://xcomic.me/latest/hentai",
+        "https://xcomic.me/latest/smut"
+      ]
+    },
+    {
+      "domain": "mangakatana.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangakatana.com/",
+      "labels": [
+        "Adult",
+        "Erotica"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://mangakatana.com/genre/adult",
+        "https://mangakatana.com/genre/erotica"
+      ]
+    },
+    {
+      "domain": "likemanga.ink",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://likemanga.ink/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://likemanga.ink/genres/adult/",
+        "https://likemanga.ink/genres/smut/"
+      ]
+    },
+    {
+      "domain": "mangahub.io",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangahub.io/search?genre=smut&order=POPULAR&q=",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Pornographic"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "manganato.gg",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://www.manganato.gg/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://www.manganato.gg/genre/adult",
+        "https://www.manganato.gg/genre/erotica",
+        "https://www.manganato.gg/genre/hentai",
+        "https://www.manganato.gg/genre/pornographic",
+        "https://www.manganato.gg/genre/smut"
+      ]
+    },
+    {
+      "domain": "mangafreak.me",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://ww3.mangafreak.me/Manga/Gokusotsu_Kraken",
+      "labels": [
+        "Adult",
+        "Smut"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "app.ninekon.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://app.ninekon.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "doujum.com",
+      "reason": "verified explicit-catalog redirect destination",
+      "evidenceUrl": "https://www.doujum.com/en/",
+      "redirectFrom": "app.ninekon.com",
+      "labels": [
+        "Hentai"
+      ]
+    },
+    {
+      "domain": "manhuaplus.top",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://manhuaplus.top/",
+      "labels": [
+        "Adult",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://manhuaplus.top/genres/adult"
+      ]
+    },
+    {
+      "domain": "silentquill.net",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://silentquill.net/",
+      "labels": [
+        "Adult"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://silentquill.net/search/?genre=adult"
+      ]
+    },
+    {
+      "domain": "mangasushi.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangasushi.org/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://mangasushi.org/manga-genre/adult/",
+        "https://mangasushi.org/manga-genre/smut/"
+      ]
+    },
+    {
+      "domain": "manhuabuddy.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://manhuabuddy.com/",
+      "labels": [
+        "Adult",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://manhuabuddy.com/genre/adult"
+      ]
+    },
+    {
+      "domain": "readmanga.cc",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://readmanga.cc/",
+      "labels": [
+        "Adult",
+        "Erotica",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://readmanga.cc/browse/genre/adult",
+        "https://readmanga.cc/browse/genre/erotica"
+      ]
+    },
+    {
+      "domain": "manga-doom.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://manga-doom.com/",
+      "labels": [
+        "Smut"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangaread.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangaread.org/",
+      "labels": [
+        "Smut"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://www.mangaread.org/genres/smut/"
+      ]
+    },
+    {
+      "domain": "webtoonclub.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://webtoonclub.com/",
+      "labels": [
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://webtoonclub.com/genre/smut"
+      ]
+    },
+    {
+      "domain": "lewdmanhwa.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://lewdmanhwa.com/home",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hiperdex.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hiperdex.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "madaradex.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://madaradex.org/",
+      "labels": [
+        "18+",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://madaradex.org/title/my-students-who-became-parents/",
+        "https://madaradex.org/title/single-daddy/",
+        "https://madaradex.org/title/the-warrior-in-rut/",
+        "https://madaradex.org/title/the-most-shameless-guy-girl-friendship-ever/",
+        "https://madaradex.org/title/the-hotties-good-at-football/",
+        "https://madaradex.org/title/pay-with-your-body/",
+        "https://madaradex.org/title/sex-story/",
+        "https://madaradex.org/title/how-to-make-love-in-a-fantasy-world/",
+        "https://madaradex.org/title/not-interested/",
+        "https://madaradex.org/title/office-romance-registry/",
+        "https://madaradex.org/title/glorious-homecoming/",
+        "https://madaradex.org/title/milf-exchange-plan/"
+      ]
+    },
+    {
+      "domain": "toontop.io",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://toontop.io/home",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentai20.io",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentai20.io/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "comicland.org",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://comicland.org/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hotcomics.me",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hotcomics.me/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "pornhwaz.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://www.pornhwaz.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "toonverse.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://toonverse.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangazin.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangazin.org/",
+      "labels": [
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://mangazin.org/manga-genre/smut/"
+      ]
+    },
+    {
+      "domain": "qtoon.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://qtoon.org/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "manga18fx.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://manga18fx.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangadistrict.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangadistrict.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "18+",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://mangadistrict.com/publication-genre/smut/",
+        "https://mangadistrict.com/series/five-girls-one-dorm/",
+        "https://mangadistrict.com/series/yogurt-lady-official/",
+        "https://mangadistrict.com/series/veiled-desires-official/",
+        "https://mangadistrict.com/series/tutors-efforts-a-million-dollar-mission-official/",
+        "https://mangadistrict.com/series/traded-lives-official/",
+        "https://mangadistrict.com/series/this-face-genius-is-good-at-soccer-official/",
+        "https://mangadistrict.com/series/the-warrior-in-rut-official/",
+        "https://mangadistrict.com/series/the-mother-not-the-daughter-official/",
+        "https://mangadistrict.com/series/the-most-shameless-guy-girl-friendship-ever-official/"
+      ]
+    },
+    {
+      "domain": "webtoon.xyz",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://www.webtoon.xyz/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "kingofshojo.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://kingofshojo.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://kingofshojo.com/genres/adult/",
+        "https://kingofshojo.com/genres/smut/"
+      ]
+    },
+    {
+      "domain": "omegascans.org",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://omegascans.org/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "toongod.org",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://www.toongod.org/home/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "webtooni.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://webtooni.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "xtoonhub1.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://xtoonhub1.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "18+",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://xtoonhub1.com/search/adult",
+        "https://xtoonhub1.com/search/hentai",
+        "https://xtoonhub1.com/search/smut",
+        "https://xtoonhub1.com/hentai",
+        "https://hentaitv.top/"
+      ]
+    },
+    {
+      "domain": "manga18.club",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://manga18.club/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "manhwa18.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://manhwa18.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangatx.cc",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://mangatx.cc/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 8] nodename nor servname provided, or not known>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "manhwaden.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://manhwaden.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [SSL: TLSV1_ALERT_PROTOCOL_VERSION] tlsv1 alert protocol version (_ssl.c:1129)>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "manhwasusu.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://manhwasusu.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "theblank.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://theblank.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "toon18.to",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://toon18.to/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 8] nodename nor servname provided, or not known>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "manhwaepisodes.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://manhwaepisodes.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://hentara.com/genres/adult-manhwa"
+      ]
+    },
+    {
+      "domain": "hentara.com",
+      "reason": "verified explicit-catalog redirect destination",
+      "evidenceUrl": "https://hentara.com/",
+      "redirectFrom": "manhwaepisodes.com",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "Mature"
+      ]
+    },
+    {
+      "domain": "e-hentai.org",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://e-hentai.org/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "asmhentai.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://asmhentai.com/",
+      "labels": [
+        "Adult",
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://www.simply-hentai.com/"
+      ]
+    },
+    {
+      "domain": "hentainexus.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentainexus.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "schale.network",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://schale.network/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "niyaniya.moe",
+      "reason": "verified explicit-catalog redirect destination",
+      "evidenceUrl": "https://niyaniya.moe/",
+      "redirectFrom": "schale.network",
+      "labels": [
+        "Hentai"
+      ]
+    },
+    {
+      "domain": "nhentai.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://nhentai.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "eahentai.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://eahentai.com/",
+      "labels": [
+        "Hentai",
+        "NSFW"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hitomi.la",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hitomi.la/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentalk.pw",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentalk.pw/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaipaw.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentaipaw.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "pururin.me",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://pururin.me/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hdoujin.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hdoujin.org/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaihand.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaihand.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "18+"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaidb.xyz",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaidb.xyz/comics",
+      "labels": [
+        "Hentai",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "3hentai.net",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://3hentai.net/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "naisho.moe",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://naisho.moe/home",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "cin.guru",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://cin.guru/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaifox.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentaifox.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "akuma.moe",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://akuma.moe/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "simply-hentai.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://simply-hentai.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "doujiva.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://doujiva.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "18+",
+        "NSFW"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentai.name",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://www.hentai.name/new/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "18comic.vip",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://18comic.vip/albums/meiman/sub/18scan?o=mr",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentairead.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentairead.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "imhentai.xxx",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://imhentai.xxx/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentai2.net",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentai2.net/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "myreadingmanga.info",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://myreadingmanga.info/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaizap.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaizap.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "caitlin.top",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://caitlin.top/index.php?route=comic/list",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 65] No route to host>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaihug.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://www.hentaihug.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentai2read.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentai2read.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "yaoimangaonline.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://yaoimangaonline.com/",
+      "labels": [
+        "Smut",
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://yaoimangaonline.com/tag/hentai/",
+        "https://yaoimangaonline.com/tag/smut-yaoi/"
+      ]
+    },
+    {
+      "domain": "kurahentai.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://kurahentai.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 65] No route to host>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaiforce.net",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaiforce.net/",
+      "labels": [
+        "Hentai",
+        "18+"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "m-hentai.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://m-hentai.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'm-hentai.net'. (_ssl.c:1129)>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "fhentai.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://fhentai.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 8] nodename nor servname provided, or not known>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaikisu.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaikisu.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "9hentai.so",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://9hentai.so",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "doujin.sexy",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://doujin.sexy/",
+      "labels": [
+        "Hentai",
+        "18+"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentailoop.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentailoop.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaivox.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaivox.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaifc.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaifc.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangaxl.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://mangaxl.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 404: Not Found",
+      "categoryLinks": []
+    },
+    {
+      "domain": "doujin.li",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://doujin.li/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "HTTP Error 403: Forbidden",
+      "categoryLinks": []
+    },
+    {
+      "domain": "doujins.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://doujins.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "hentaihere.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://hentaihere.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://hentaihere.com/category/34-adult"
+      ]
+    },
+    {
+      "domain": "mangamaniacs.org",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangamaniacs.org/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "baramangaonline.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://baramangaonline.com/",
+      "labels": [
+        "Adult"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangalotus.com",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://mangalotus.com/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "erovault.xyz",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://www.erovault.xyz/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "18+",
+        "Mature"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "manga-hen.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://manga-hen.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "gensura.net",
+      "reason": "verified explicit-catalog redirect destination",
+      "evidenceUrl": "https://gensura.net/",
+      "redirectFrom": "manga-hen.com",
+      "labels": [
+        "Hentai"
+      ]
+    },
+    {
+      "domain": "hentailand.fun",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://hentailand.fun/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "fakku.net",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://www.fakku.net/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": null,
+      "fetchError": "<urlopen error [Errno 61] Connection refused>",
+      "categoryLinks": []
+    },
+    {
+      "domain": "doujin.io",
+      "reason": "directory explicit NSFW reader",
+      "evidenceUrl": "https://doujin.io/",
+      "labels": [],
+      "directoryNsfw": true,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "kakamanga.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://www.kakamanga.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://www.kakamanga.com/genre/adult",
+        "https://www.kakamanga.com/genre/erotica",
+        "https://www.kakamanga.com/genre/hentai",
+        "https://www.kakamanga.com/genre/pornographic",
+        "https://www.kakamanga.com/genre/smut"
+      ]
+    },
+    {
+      "domain": "kitsumanga.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://kitsumanga.com/catalog?genre=Adult",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": []
+    },
+    {
+      "domain": "mangabats.com",
+      "reason": "first-party explicit catalog",
+      "evidenceUrl": "https://mangabats.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "directoryNsfw": false,
+      "fetchStatus": 200,
+      "fetchError": null,
+      "categoryLinks": [
+        "https://www.mangabats.com/genre/adult",
+        "https://www.mangabats.com/genre/erotica",
+        "https://www.mangabats.com/genre/hentai",
+        "https://www.mangabats.com/genre/pornographic",
+        "https://www.mangabats.com/genre/smut"
+      ]
+    },
+    {
+      "domain": "mangakakalots.co.uk",
+      "reason": "user-requested",
+      "evidenceUrl": "https://mangakakalots.co.uk/"
+    },
+    {
+      "domain": "everythingmoe.com",
+      "reason": "user-requested",
+      "evidenceUrl": "https://everythingmoe.com/"
+    },
+    {
+      "domain": "cubari.moe",
+      "reason": "directory-documented alternate for blocked reader",
+      "evidenceUrl": "https://everythingmoe.com/data/expand/cubariproxy.json"
+    },
+    {
+      "domain": "manga.guru",
+      "reason": "directory-documented alternate for blocked reader",
+      "evidenceUrl": "https://everythingmoe.com/data/expand/cubariproxy.json"
+    },
+    {
+      "domain": "mangago.zone",
+      "reason": "directory-documented alternate for blocked reader",
+      "evidenceUrl": "https://everythingmoe.com/data/expand/mangago.json"
+    },
+    {
+      "domain": "mangahaven.net",
+      "reason": "directory-documented alternate for blocked reader",
+      "evidenceUrl": "https://everythingmoe.com/data/expand/mangafire.json"
+    },
+    {
+      "domain": "mangasee123.com",
+      "reason": "directory-documented alternate for blocked reader",
+      "evidenceUrl": "https://everythingmoe.com/data/expand/mangasee.json"
+    },
+    {
+      "domain": "manga4life.com",
+      "reason": "directory-documented alternate for blocked reader",
+      "evidenceUrl": "https://everythingmoe.com/data/expand/mangasee.json"
+    }
+  ],
+  "attempts": [
+    {
+      "url": "https://comix.to/",
+      "section": "manga",
+      "domain": "comix.to",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangadot.net/",
+      "section": "manga",
+      "domain": "mangadot.net",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://atsu.moe/",
+      "section": "manga",
+      "domain": "atsu.moe",
+      "status": 200,
+      "finalUrl": "https://atsu.moe/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangaball.com/",
+      "section": "manga",
+      "domain": "mangaball.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangafire.to/home",
+      "section": "manga",
+      "domain": "mangafire.to",
+      "status": 200,
+      "finalUrl": "https://mangafire.to/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://weebcentral.com/",
+      "section": "manga",
+      "domain": "weebcentral.com",
+      "status": 200,
+      "finalUrl": "https://weebcentral.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://www.mangago.me/",
+      "section": "manga",
+      "domain": "mangago.me",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://toonkotsu.com/",
+      "section": "manga",
+      "domain": "toonkotsu.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://yaoi.me/",
+      "section": "manga",
+      "domain": "yaoi.me",
+      "status": 200,
+      "finalUrl": "https://yaoi.me/",
+      "labels": [
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://onisaga.com/",
+      "section": "manga",
+      "domain": "onisaga.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://mkissa.to/manga",
+      "section": "manga",
+      "domain": "mkissa.to",
+      "status": 200,
+      "finalUrl": "https://mkissa.to/manga",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://bookwalker.com/",
+      "section": "manga",
+      "domain": "bookwalker.com",
+      "status": 200,
+      "finalUrl": "https://bookwalker.com/",
+      "labels": [
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://www.kobo.com/en/ebooks/manga",
+      "section": "manga",
+      "domain": "kobo.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://mangataro.org/home",
+      "section": "manga",
+      "domain": "mangataro.org",
+      "status": 200,
+      "finalUrl": "https://mangataro.org/home",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangak.io/home",
+      "section": "manga",
+      "domain": "mangak.io",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://xcomic.me/",
+      "section": "manga",
+      "domain": "xcomic.me",
+      "status": 200,
+      "finalUrl": "https://xcomic.me/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://chikari.moe/",
+      "section": "manga",
+      "domain": "chikari.moe",
+      "status": 200,
+      "finalUrl": "https://chikari.moe/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://swarm.ws/",
+      "section": "manga",
+      "domain": "swarm.ws",
+      "status": 200,
+      "finalUrl": "https://swarm.ws/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangakatana.com/",
+      "section": "manga",
+      "domain": "mangakatana.com",
+      "status": 200,
+      "finalUrl": "https://mangakatana.com/",
+      "labels": [
+        "Adult",
+        "Erotica"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangacloud.org/",
+      "section": "manga",
+      "domain": "mangacloud.org",
+      "status": 200,
+      "finalUrl": "https://mangacloud.org/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://proxy.cubari.moe/",
+      "section": "manga",
+      "domain": "proxy.cubari.moe",
+      "status": 200,
+      "finalUrl": "https://proxy.cubari.moe/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangavyvy.com/",
+      "section": "manga",
+      "domain": "mangavyvy.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://likemanga.ink/",
+      "section": "manga",
+      "domain": "likemanga.ink",
+      "status": 200,
+      "finalUrl": "https://likemanga.ink/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangaplus.shueisha.co.jp",
+      "section": "manga",
+      "domain": "mangaplus.shueisha.co.jp",
+      "status": 200,
+      "finalUrl": "https://mangaplus.shueisha.co.jp",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://toonz.to/",
+      "section": "manga",
+      "domain": "toonz.to",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://mangahub.io/",
+      "section": "manga",
+      "domain": "mangahub.io",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://dynasty-scans.com/",
+      "section": "manga",
+      "domain": "dynasty-scans.com",
+      "status": 200,
+      "finalUrl": "https://dynasty-scans.com/",
+      "labels": [
+        "NSFW"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://www.manganato.gg/",
+      "section": "manga",
+      "domain": "manganato.gg",
+      "status": 200,
+      "finalUrl": "https://www.manganato.gg/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangastash.org/",
+      "section": "manga",
+      "directoryTags": "new",
+      "domain": "mangastash.org",
+      "status": 200,
+      "finalUrl": "https://mangastash.org/",
+      "labels": [
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://coolmic.me/",
+      "section": "manga",
+      "directoryTags": "licensed",
+      "domain": "coolmic.me",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://www.omoi.com/",
+      "section": "manga",
+      "directoryTags": "licensed",
+      "domain": "omoi.com",
+      "status": 200,
+      "finalUrl": "https://www.omoi.com/",
+      "labels": [
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://comico.moe/",
+      "section": "manga",
+      "directoryTags": "mult new",
+      "domain": "comico.moe",
+      "status": 200,
+      "finalUrl": "https://comico.moe/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://webnex.cc/",
+      "section": "manga",
+      "directoryTags": "new",
+      "domain": "webnex.cc",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://www.zinmanga.net/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "zinmanga.net",
+      "status": 200,
+      "finalUrl": "https://www.zinmanga.net/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://fanfox.net",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "fanfox.net",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangafreak.me",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangafreak.me",
+      "status": 200,
+      "finalUrl": "https://ww3.mangafreak.me/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangade.io/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangade.io",
+      "status": 200,
+      "finalUrl": "https://mangade.io/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://komix.to/",
+      "section": "manga",
+      "directoryTags": "new",
+      "domain": "komix.to",
+      "status": 200,
+      "finalUrl": "https://komix.to/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://fenyk.org/",
+      "section": "manga",
+      "directoryTags": "new",
+      "domain": "fenyk.org",
+      "status": 200,
+      "finalUrl": "https://fenyk.org/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangatown.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangatown.com",
+      "status": 200,
+      "finalUrl": "http://www.mangatown.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://www.mangahome.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangahome.com",
+      "status": 200,
+      "finalUrl": "https://www.mangahome.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://reimanga.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "reimanga.com",
+      "status": 200,
+      "finalUrl": "https://reimanga.net/",
+      "labels": [
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://yomimanga.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "yomimanga.com",
+      "status": 200,
+      "finalUrl": "https://yomimanga.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://app.ninekon.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "app.ninekon.com",
+      "status": 200,
+      "finalUrl": "https://www.doujum.com/en/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://manhuaplus.top/",
+      "section": "manga",
+      "directoryTags": "manhua",
+      "domain": "manhuaplus.top",
+      "status": 200,
+      "finalUrl": "https://manhuaplus.top/",
+      "labels": [
+        "Adult",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangapill.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangapill.com",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://www.mangakawaii.fr/",
+      "section": "manga",
+      "directoryTags": "hub",
+      "domain": "mangakawaii.fr",
+      "status": 200,
+      "finalUrl": "https://www.mangakawaii.fr/",
+      "labels": [
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://oriyami.com/",
+      "section": "manga",
+      "directoryTags": "new",
+      "domain": "oriyami.com",
+      "status": 200,
+      "finalUrl": "https://oriyami.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://www.mgeko.cc/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mgeko.cc",
+      "status": 200,
+      "finalUrl": "https://www.mgeko.cc/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://linkmanga.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "linkmanga.com",
+      "status": 200,
+      "finalUrl": "https://linkmanga.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangadex.org/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangadex.org",
+      "error": "<urlopen error [SSL: TLSV1_ALERT_PROTOCOL_VERSION] tlsv1 alert protocol version (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://manhuascans.org/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "manhuascans.org",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://jpbookstore.com/collections/light-novel",
+      "section": "manga",
+      "directoryTags": "licensed physical",
+      "domain": "jpbookstore.com",
+      "status": 200,
+      "finalUrl": "https://jpbookstore.com/collections/light-novel",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://kmanga.kodansha.com/",
+      "section": "manga",
+      "directoryTags": "licensed",
+      "domain": "kmanga.kodansha.com",
+      "status": 200,
+      "finalUrl": "https://kmanga.kodansha.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://comics.inkr.com/",
+      "section": "manga",
+      "directoryTags": "licensed",
+      "domain": "comics.inkr.com",
+      "status": 200,
+      "finalUrl": "https://comics.inkr.com/",
+      "labels": [
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://lunarx.to/manga",
+      "section": "manga",
+      "directoryTags": "mult",
+      "domain": "lunarx.to",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://justmanga.cc/",
+      "section": "manga",
+      "directoryTags": "mult",
+      "domain": "justmanga.cc",
+      "error": "HTTP Error 503: Service Unavailable"
+    },
+    {
+      "url": "https://yaoiscan.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "yaoiscan.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://manga-bay.org/",
+      "section": "manga",
+      "directoryTags": "login",
+      "domain": "manga-bay.org",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://manhwanex.com/",
+      "section": "manga",
+      "directoryTags": "manhua",
+      "domain": "manhwanex.com",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://mangaplaza.com/",
+      "section": "manga",
+      "directoryTags": "licensed",
+      "domain": "mangaplaza.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangamirai.com/",
+      "section": "manga",
+      "directoryTags": "licensed",
+      "domain": "mangamirai.com",
+      "status": 200,
+      "finalUrl": "https://mangamirai.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangamikan.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangamikan.com",
+      "status": 200,
+      "finalUrl": "https://mangamikan.com/",
+      "labels": [
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangaberri.com/home.php",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangaberri.com",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://mangacherri.com/home.php",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangacherri.com",
+      "status": 200,
+      "finalUrl": "https://mangacherri.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://danke.moe/",
+      "section": "manga",
+      "directoryTags": "scan",
+      "domain": "danke.moe",
+      "error": "<urlopen error [SSL: TLSV1_ALERT_PROTOCOL_VERSION] tlsv1 alert protocol version (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://hachirumi.com/",
+      "section": "manga",
+      "directoryTags": "scan",
+      "domain": "hachirumi.com",
+      "status": 200,
+      "finalUrl": "https://hachirumi.com/",
+      "labels": [
+        "18+",
+        "NSFW"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://silentquill.net/",
+      "section": "manga",
+      "directoryTags": "scan",
+      "domain": "silentquill.net",
+      "status": 200,
+      "finalUrl": "https://silentquill.net/",
+      "labels": [
+        "Adult"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangasushi.org/",
+      "section": "manga",
+      "directoryTags": "scan",
+      "domain": "mangasushi.org",
+      "status": 200,
+      "finalUrl": "https://mangasushi.org/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://manhuabuddy.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "manhuabuddy.com",
+      "status": 200,
+      "finalUrl": "https://manhuabuddy.com/",
+      "labels": [
+        "Adult",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://readmanga.cc/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "readmanga.cc",
+      "status": 200,
+      "finalUrl": "https://readmanga.cc/",
+      "labels": [
+        "Adult",
+        "Erotica",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://lilymanga.net/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "lilymanga.net",
+      "status": 200,
+      "finalUrl": "https://lilymanga.net/",
+      "labels": [
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://manga-doom.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "manga-doom.com",
+      "status": 200,
+      "finalUrl": "https://manga-doom.com/",
+      "labels": [
+        "Smut"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangaread.org/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "mangaread.org",
+      "status": 200,
+      "finalUrl": "https://www.mangaread.org/",
+      "labels": [
+        "Smut"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://aquareader.org/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "aquareader.org",
+      "status": 200,
+      "finalUrl": "https://aquareader.org/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://todaymanga.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "todaymanga.com",
+      "error": "The read operation timed out"
+    },
+    {
+      "url": "https://manhuahot.com/",
+      "section": "manga",
+      "directoryTags": "",
+      "domain": "manhuahot.com",
+      "status": 200,
+      "finalUrl": "https://manhuahot.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://kagane.cx/",
+      "section": "manhwa",
+      "domain": "kagane.cx",
+      "status": 200,
+      "finalUrl": "https://kagane.moe/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://webtoonclub.com/",
+      "section": "manhwa",
+      "domain": "webtoonclub.com",
+      "status": 200,
+      "finalUrl": "https://webtoonclub.com/",
+      "labels": [
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://baetoon.com/",
+      "section": "manhwa",
+      "domain": "baetoon.com",
+      "status": 200,
+      "finalUrl": "https://baetoon.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://webtoons.com",
+      "section": "manhwa",
+      "domain": "webtoons.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://tapas.io/",
+      "section": "manhwa",
+      "domain": "tapas.io",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://www.tappytoon.com/",
+      "section": "manhwa",
+      "domain": "tappytoon.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://toomics.com/",
+      "section": "manhwa",
+      "domain": "toomics.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://lewdmanhwa.com/home",
+      "section": "manhwa",
+      "domain": "lewdmanhwa.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://hiperdex.com/",
+      "section": "manhwa",
+      "domain": "hiperdex.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://madaradex.org/",
+      "section": "manhwa",
+      "domain": "madaradex.org",
+      "status": 200,
+      "finalUrl": "https://madaradex.org/",
+      "labels": [
+        "18+",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://toontop.io/home",
+      "section": "manhwa",
+      "domain": "toontop.io",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://hentai20.io/",
+      "section": "manhwa",
+      "domain": "hentai20.io",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://comicland.org/",
+      "section": "manhwa",
+      "domain": "comicland.org",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://hotcomics.me/",
+      "section": "manhwa",
+      "domain": "hotcomics.me",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://www.pornhwaz.com/",
+      "section": "manhwa",
+      "domain": "pornhwaz.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://manhwatop.com/",
+      "section": "manhwa",
+      "domain": "manhwatop.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://toonily.com/",
+      "section": "manhwa",
+      "domain": "toonily.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://kuramanga.com/",
+      "section": "manhwa",
+      "domain": "kuramanga.com",
+      "error": "<urlopen error [Errno 65] No route to host>"
+    },
+    {
+      "url": "https://projectsuki.com/",
+      "section": "manhwa",
+      "domain": "projectsuki.com",
+      "status": 200,
+      "finalUrl": "https://projectsuki.com/",
+      "labels": [
+        "NSFW"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://toonverse.net/",
+      "section": "manhwa",
+      "domain": "toonverse.net",
+      "status": 200,
+      "finalUrl": "https://toonverse.net/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://manhuatop.org/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "manhuatop.org",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://cocomic.co/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "cocomic.co",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://mangagg.com/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "mangagg.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangazin.org/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "mangazin.org",
+      "status": 200,
+      "finalUrl": "https://mangazin.org/",
+      "labels": [
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://www.lezhinus.com/",
+      "section": "manhwa",
+      "directoryTags": "licensed",
+      "domain": "lezhinus.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://manta.net/",
+      "section": "manhwa",
+      "directoryTags": "licensed",
+      "domain": "manta.net",
+      "error": "<urlopen error [Errno 65] No route to host>"
+    },
+    {
+      "url": "https://qtoon.org/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "qtoon.org",
+      "status": 200,
+      "finalUrl": "https://qtoon.org/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://manga18fx.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "manga18fx.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangadistrict.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "mangadistrict.com",
+      "status": 200,
+      "finalUrl": "https://mangadistrict.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "18+",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://www.webtoon.xyz/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "webtoon.xyz",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://manhwatoon.me/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "manhwatoon.me",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://manhuarmtl.com/",
+      "section": "manhwa",
+      "directoryTags": "mtl",
+      "domain": "manhuarmtl.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://kingofshojo.com/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "kingofshojo.com",
+      "status": 200,
+      "finalUrl": "https://kingofshojo.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://omegascans.org/",
+      "section": "manhwa",
+      "directoryTags": "nsfw scan",
+      "domain": "omegascans.org",
+      "status": 200,
+      "finalUrl": "https://omegascans.org/",
+      "labels": [],
+      "challenge": true
+    },
+    {
+      "url": "https://www.toongod.org/home/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "toongod.org",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://webtooni.net/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "webtooni.net",
+      "status": 200,
+      "finalUrl": "https://webtooni.net/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://xtoonhub1.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "xtoonhub1.com",
+      "status": 200,
+      "finalUrl": "https://xtoonhub1.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "18+",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://manga18.club/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "manga18.club",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://manhwa18.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "manhwa18.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://mangatx.cc/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "mangatx.cc",
+      "error": "<urlopen error [Errno 8] nodename nor servname provided, or not known>"
+    },
+    {
+      "url": "https://manhwaden.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "manhwaden.com",
+      "error": "<urlopen error [SSL: TLSV1_ALERT_PROTOCOL_VERSION] tlsv1 alert protocol version (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://manhwasusu.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "manhwasusu.com",
+      "status": 200,
+      "finalUrl": "https://manhwasusu.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://theblank.net/",
+      "section": "manhwa",
+      "directoryTags": "nsfw scan",
+      "domain": "theblank.net",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://luacomic.org/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "luacomic.org",
+      "status": 200,
+      "finalUrl": "https://luacomic.org/",
+      "labels": [
+        "Adult"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://asurascans.com/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "asurascans.com",
+      "status": 200,
+      "finalUrl": "https://asurascans.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://flamecomics.xyz/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "flamecomics.xyz",
+      "status": 200,
+      "finalUrl": "https://flamecomics.xyz/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://hivescans.com/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "hivescans.com",
+      "status": 200,
+      "finalUrl": "https://hivetoons.org/",
+      "labels": [
+        "Adult"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://templescan.net/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "templescan.net",
+      "status": 200,
+      "finalUrl": "https://templetoons.com/challenge?redirect=%2F",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://rokaricomics.com/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "rokaricomics.com",
+      "status": 200,
+      "finalUrl": "https://rokaricomics.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://divascans.com/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "divascans.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://nyxscans.com/",
+      "section": "manhwa",
+      "directoryTags": "scan",
+      "domain": "nyxscans.com",
+      "status": 200,
+      "finalUrl": "https://nyxscans.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://fropi.net/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "fropi.net",
+      "status": 200,
+      "finalUrl": "https://fropi.net/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://manhuaus.club/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "manhuaus.club",
+      "status": 200,
+      "finalUrl": "https://manhuaus.club/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://mangack.com/home/",
+      "section": "manhwa",
+      "directoryTags": "",
+      "domain": "mangack.com",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://toon18.to/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "toon18.to",
+      "error": "<urlopen error [Errno 8] nodename nor servname provided, or not known>"
+    },
+    {
+      "url": "https://manhwaepisodes.com/",
+      "section": "manhwa",
+      "directoryTags": "nsfw",
+      "domain": "manhwaepisodes.com",
+      "status": 200,
+      "finalUrl": "https://hentara.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://e-hentai.org/",
+      "section": "hentairead",
+      "domain": "e-hentai.org",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://asmhentai.com/",
+      "section": "hentairead",
+      "domain": "asmhentai.com",
+      "status": 200,
+      "finalUrl": "https://asmhentai.com/",
+      "labels": [
+        "Adult",
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentainexus.com/",
+      "section": "hentairead",
+      "domain": "hentainexus.com",
+      "status": 200,
+      "finalUrl": "https://hentainexus.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://schale.network/",
+      "section": "hentairead",
+      "domain": "schale.network",
+      "status": 200,
+      "finalUrl": "https://niyaniya.moe/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://nhentai.net/",
+      "section": "hentairead",
+      "domain": "nhentai.net",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://eahentai.com/",
+      "section": "hentairead",
+      "domain": "eahentai.com",
+      "status": 200,
+      "finalUrl": "https://eahentai.com/",
+      "labels": [
+        "Hentai",
+        "NSFW"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hitomi.la/",
+      "section": "hentairead",
+      "domain": "hitomi.la",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://hentalk.pw/",
+      "section": "hentairead",
+      "domain": "hentalk.pw",
+      "status": 200,
+      "finalUrl": "https://hentalk.pw/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://hentaipaw.com/",
+      "section": "hentairead",
+      "domain": "hentaipaw.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://pururin.me/",
+      "section": "hentairead",
+      "domain": "pururin.me",
+      "status": 200,
+      "finalUrl": "https://pururin.me/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hdoujin.org/",
+      "section": "hentairead",
+      "domain": "hdoujin.org",
+      "status": 200,
+      "finalUrl": "https://hdoujin.org/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentaihand.com/",
+      "section": "hentairead",
+      "domain": "hentaihand.com",
+      "status": 200,
+      "finalUrl": "https://hentaihand.com/en/xxx",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentaidb.xyz/comics",
+      "section": "hentairead",
+      "domain": "hentaidb.xyz",
+      "status": 200,
+      "finalUrl": "https://hentaidb.xyz/comics",
+      "labels": [
+        "Hentai",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://3hentai.net/",
+      "section": "hentairead",
+      "domain": "3hentai.net",
+      "status": 200,
+      "finalUrl": "https://3hentai.net/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://naisho.moe/home",
+      "section": "hentairead",
+      "domain": "naisho.moe",
+      "status": 200,
+      "finalUrl": "https://naisho.moe/home",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://cin.guru/",
+      "section": "hentairead",
+      "domain": "cin.guru",
+      "status": 200,
+      "finalUrl": "https://cin.guru/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://hentaifox.com/",
+      "section": "hentairead",
+      "domain": "hentaifox.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://akuma.moe/",
+      "section": "hentairead",
+      "domain": "akuma.moe",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://simply-hentai.com/",
+      "section": "hentairead",
+      "domain": "simply-hentai.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://doujiva.com/",
+      "section": "hentairead",
+      "domain": "doujiva.com",
+      "status": 200,
+      "finalUrl": "https://doujiva.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "18+",
+        "NSFW"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://www.hentai.name/new/",
+      "section": "hentairead",
+      "domain": "hentai.name",
+      "status": 200,
+      "finalUrl": "https://www.hentai.name/new/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://18comic.vip/albums/meiman/sub/18scan?o=mr",
+      "section": "hentairead",
+      "domain": "18comic.vip",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://hentairead.com/",
+      "section": "hentairead",
+      "domain": "hentairead.com",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://imhentai.xxx/",
+      "section": "hentairead",
+      "domain": "imhentai.xxx",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://hentai2.net/",
+      "section": "hentairead",
+      "domain": "hentai2.net",
+      "status": 200,
+      "finalUrl": "https://www3.hentai2.net/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://myreadingmanga.info/",
+      "section": "hentairead",
+      "domain": "myreadingmanga.info",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://hentaizap.com/",
+      "section": "hentairead",
+      "domain": "hentaizap.com",
+      "status": 200,
+      "finalUrl": "https://hentaizap.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://caitlin.top/index.php?route=comic/list",
+      "section": "hentairead",
+      "domain": "caitlin.top",
+      "error": "<urlopen error [Errno 65] No route to host>"
+    },
+    {
+      "url": "https://www.hentaihug.com/",
+      "section": "hentairead",
+      "domain": "hentaihug.com",
+      "status": 200,
+      "finalUrl": "https://www.hentaihug.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentai2read.com/",
+      "section": "hentairead",
+      "domain": "hentai2read.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://yaoimangaonline.com/",
+      "section": "hentairead",
+      "domain": "yaoimangaonline.com",
+      "status": 200,
+      "finalUrl": "https://yaoimangaonline.com/",
+      "labels": [
+        "Smut",
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://kurahentai.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "kurahentai.com",
+      "error": "<urlopen error [Errno 65] No route to host>"
+    },
+    {
+      "url": "https://hentaiforce.net/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentaiforce.net",
+      "status": 200,
+      "finalUrl": "https://hentaiforce.net/",
+      "labels": [
+        "Hentai",
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://m-hentai.net/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "m-hentai.net",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: Hostname mismatch, certificate is not valid for 'm-hentai.net'. (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://fhentai.net/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "fhentai.net",
+      "error": "<urlopen error [Errno 8] nodename nor servname provided, or not known>"
+    },
+    {
+      "url": "https://hentaikisu.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentaikisu.com",
+      "status": 200,
+      "finalUrl": "https://hentaikisu.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://9hentai.so",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "9hentai.so",
+      "status": 200,
+      "finalUrl": "https://9hentai.so",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://doujin.sexy/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "doujin.sexy",
+      "status": 200,
+      "finalUrl": "https://doujin.sexy/",
+      "labels": [
+        "Hentai",
+        "18+"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentailoop.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentailoop.com",
+      "status": 200,
+      "finalUrl": "https://hentailoop.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentaivox.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentaivox.com",
+      "status": 200,
+      "finalUrl": "https://hentaivox.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentaifc.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentaifc.com",
+      "status": 200,
+      "finalUrl": "https://hentaifc.com/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangaxl.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "mangaxl.com",
+      "error": "HTTP Error 404: Not Found"
+    },
+    {
+      "url": "https://doujin.li/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "doujin.li",
+      "error": "HTTP Error 403: Forbidden"
+    },
+    {
+      "url": "https://doujins.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "doujins.com",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://hentaihere.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentaihere.com",
+      "status": 200,
+      "finalUrl": "https://hentaihere.com/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangamaniacs.org/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "mangamaniacs.org",
+      "status": 200,
+      "finalUrl": "https://mangamaniacs.org/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://baramangaonline.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "baramangaonline.com",
+      "status": 200,
+      "finalUrl": "https://baramangaonline.com/",
+      "labels": [
+        "Adult"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangalotus.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "mangalotus.com",
+      "status": 200,
+      "finalUrl": "https://mangalotus.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://www.erovault.xyz/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "erovault.xyz",
+      "status": 200,
+      "finalUrl": "https://erovault.xyz/",
+      "labels": [
+        "Adult",
+        "Hentai",
+        "18+",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://manga-hen.com/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "manga-hen.com",
+      "status": 200,
+      "finalUrl": "https://gensura.net/",
+      "labels": [
+        "Hentai"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://hentailand.fun/",
+      "section": "hentairead",
+      "directoryTags": "nsfw",
+      "domain": "hentailand.fun",
+      "status": 200,
+      "finalUrl": "https://hentailand.fun/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://www.fakku.net/",
+      "section": "hentairead",
+      "directoryTags": "nsfw licensed",
+      "domain": "fakku.net",
+      "error": "<urlopen error [Errno 61] Connection refused>"
+    },
+    {
+      "url": "https://doujin.io/",
+      "section": "hentairead",
+      "directoryTags": "nsfw licensed",
+      "domain": "doujin.io",
+      "status": 200,
+      "finalUrl": "https://doujin.io/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://www.kakamanga.com/",
+      "section": "additional-reader",
+      "domain": "kakamanga.com",
+      "status": 200,
+      "finalUrl": "https://www.kakamanga.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://kitsumanga.com/catalog?genre=Adult",
+      "section": "additional-reader",
+      "domain": "kitsumanga.com",
+      "status": 200,
+      "finalUrl": "https://kitsumanga.com/catalog?genre=Adult",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangakakalot.com/",
+      "section": "additional-reader",
+      "domain": "mangakakalot.com",
+      "error": "The read operation timed out"
+    },
+    {
+      "url": "https://mangakakalot.to/",
+      "section": "additional-reader",
+      "domain": "mangakakalot.to",
+      "status": 200,
+      "finalUrl": "http://ww19.mangakakalot.to/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://manganato.com/",
+      "section": "additional-reader",
+      "domain": "manganato.com",
+      "error": "The read operation timed out"
+    },
+    {
+      "url": "https://chapmanganato.to/",
+      "section": "additional-reader",
+      "domain": "chapmanganato.to",
+      "error": "The read operation timed out"
+    },
+    {
+      "url": "https://manganato.to/",
+      "section": "additional-reader",
+      "domain": "manganato.to",
+      "error": "<urlopen error timed out>"
+    },
+    {
+      "url": "https://mangaread.org/",
+      "section": "additional-reader",
+      "domain": "mangaread.org",
+      "status": 200,
+      "finalUrl": "https://www.mangaread.org/",
+      "labels": [
+        "Smut"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangabats.com/",
+      "section": "additional-reader",
+      "domain": "mangabats.com",
+      "status": 200,
+      "finalUrl": "https://www.mangabats.com/",
+      "labels": [
+        "Adult",
+        "Smut",
+        "Hentai",
+        "Erotica",
+        "Pornographic",
+        "Mature"
+      ],
+      "challenge": false
+    },
+    {
+      "url": "https://mangabat.com/",
+      "section": "additional-reader",
+      "domain": "mangabat.com",
+      "status": 200,
+      "finalUrl": "https://emojilar.com/",
+      "labels": [],
+      "challenge": false
+    },
+    {
+      "url": "https://readmanganato.com/",
+      "section": "additional-reader",
+      "domain": "readmanganato.com",
+      "error": "<urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1129)>"
+    },
+    {
+      "url": "https://mangakakalots.com/",
+      "section": "additional-reader",
+      "domain": "mangakakalots.com",
+      "error": "HTTP Error 403: Forbidden"
+    }
+  ]
+}

@@ -31,6 +31,15 @@ export const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
   "qtoon", "comicle", "mangabuddy", "mangameow", "mangaball", "kuramanga", "comizy",
   "nyrascans", "mangavyvy", "hiperdex", "tappytoon", "toomics", "lezhin", "lezhinus", "lezhinx",
   "daycomics", "toptoon", "coolmic", "mangaplaza", "ebookrenta", "webcomicsapp", "lalatoon",
+  // Requested readers and explicit-catalog directory audit, October 30, 2026.
+  // Match distinctive brands across search, discovery and rotating mirror TLDs.
+  // Short/common labels (atsu, akuma, naisho, schale) remain domain-only.
+  "mangadex", "mangakakalot", "mangakakalots", "manganato", "kakamanga", "mangafire",
+  "atsumaru", "everythingmoe", "cubariproxy", "weebcentral", "mangasee", "manga4life",
+  "onisaga", "mangafreak", "mangahub", "mangago", "mangakatana", "mangadistrict",
+  "madaradex", "webtoonclub", "manhwaden", "manhwasusu", "myreadingmanga", "mangamaniacs",
+  "mangaxl", "mangasushi", "manhuabuddy", "mangabats", "mangazin", "kitsumanga", "likemanga",
+  "yaoimangaonline", "hentaidb", "hentara", "xtoonhub", "toonverse", "hotcomics",
   "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls",
   "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"
 ] as const;
@@ -38,6 +47,12 @@ export const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
 // Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
 // product IDs. Ordinary subjects retain their own accents and spellings.
 export const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+  { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+fire(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangafire " },
+  { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+kakalots?(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangakakalot " },
+  { pattern: /(?:^|[^\p{L}\p{N}])everything[\s_.\p{Pd}]+moe(?=$|[^\p{L}\p{N}])/giu.source, replacement: " everythingmoe " },
+  { pattern: /(?:^|[^\p{L}\p{N}])cubari[\s_.\p{Pd}]+proxy(?=$|[^\p{L}\p{N}])/giu.source, replacement: " cubariproxy " },
+  { pattern: /(?:^|[^\p{L}\p{N}])weeb[\s_.\p{Pd}]+central(?=$|[^\p{L}\p{N}])/giu.source, replacement: " weebcentral " },
+  { pattern: /(?:^|[^\p{L}\p{N}])(mangasee|xtoonhub)\d{1,4}(?=$|[^\p{L}\p{N}])/giu.source, replacement: " $1 " },
   { pattern: /(?:^|[^\p{L}\p{N}])q[\s_.\p{Pd}]+toon(?=$|[^\p{L}\p{N}])/giu.source, replacement: " qtoon " },
   { pattern: /(?:^|[^\p{L}\p{N}])(?:omega[\s_.\p{Pd}]+scans)(?=$|[^\p{L}\p{N}])/giu.source, replacement: " omegascans " },
   { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+dna(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangadna " },
