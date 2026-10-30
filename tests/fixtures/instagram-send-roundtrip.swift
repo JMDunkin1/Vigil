@@ -7,11 +7,13 @@ struct Scenario: Decodable {
     let name: String
     let html: String
     let path: String
+    let requiresMediaWindow: Bool?
     let steps: [Step]
 }
 @MainActor final class Runner: NSObject, WKNavigationDelegate {
     var continuation: CheckedContinuation<Void, Never>?
     var webView: WKWebView?
+    var mediaWindow: NSWindow?
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { continuation?.resume(); continuation = nil }
     func run() async {
         do {
@@ -22,10 +24,20 @@ struct Scenario: Decodable {
             for scenario in scenarios {
                 let config = WKWebViewConfiguration()
                 config.websiteDataStore = .nonPersistent()
+                config.mediaTypesRequiringUserActionForPlayback = []
                 config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
                 let page = WKWebView(frame: NSRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 webView = page
                 page.navigationDelegate = self
+                if scenario.requiresMediaWindow == true {
+                    NSApplication.shared.setActivationPolicy(.accessory)
+                    let window = NSWindow(contentRect: page.bounds, styleMask: [.titled], backing: .buffered, defer: false)
+                    window.title = "Vigil · local chat media regression"
+                    window.isReleasedWhenClosed = false
+                    window.contentView = page
+                    window.orderFrontRegardless()
+                    mediaWindow = window
+                }
                 await withCheckedContinuation { continuation in
                     self.continuation = continuation
                     page.loadHTMLString(scenario.html, baseURL: URL(string: "https://www.instagram.com" + scenario.path)!)
@@ -40,7 +52,7 @@ struct Scenario: Decodable {
                             try await Task.sleep(nanoseconds: 50_000_000)
                         }
                         if !passed {
-                            let diagnostic = try await page.evaluateJavaScript("JSON.stringify({path:location.pathname,html:document.body.innerHTML,state:window.__vigilInstagramSharedItem?.containmentState()})")
+                            let diagnostic = try await page.evaluateJavaScript("JSON.stringify({path:location.pathname,failures:window.fixtureFailures?.slice(0,16),html:window.fixtureFailures?undefined:document.body.innerHTML,state:window.__vigilInstagramSharedItem?.containmentState()})")
                             print("FAIL \(scenario.name) step \(index): \(condition)\n\(String(describing: diagnostic))")
                             exit(1)
                         }
@@ -48,6 +60,8 @@ struct Scenario: Decodable {
                 }
                 print("PASS \(scenario.name)")
                 page.navigationDelegate = nil
+                mediaWindow?.close()
+                mediaWindow = nil
             }
             print("VIGIL_INSTAGRAM_SEND_ROUNDTRIP_WEBKIT_COMPLETE")
             exit(0)

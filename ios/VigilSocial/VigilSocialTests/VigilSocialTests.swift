@@ -9864,6 +9864,132 @@ final class VigilSocialTests: XCTestCase {
         webView.navigationDelegate = nil
     }
 
+    static let instagramChatMediaRoundtripHTML = #"""
+    <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>
+    body{margin:0;background:#111;color:white}#thread{height:844px;overflow:auto}
+    article{height:220px;position:relative}article video{width:300px;height:180px;display:block}
+    .reel-poster{position:absolute;inset:0;width:300px;height:180px;display:block}
+    #photo{display:block;width:240px;height:180px}#viewer{position:fixed;inset:0;background:#111;z-index:5}
+    #viewer img{display:block;width:390px;height:600px}#viewer article{height:650px}
+    </style><script>
+    window.fetch=async()=>({ok:true,json:async()=>({user:{username:'viewer',friendship_status:{following:false,followed_by:false}}})});
+    window.fixtureFailures=[];window.fixtureReady=false;window.fixtureMode='route-first';
+    const photoSource='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="390" height="600"%3E%3Crect width="390" height="600" fill="purple"/%3E%3C/svg%3E';
+    const fixtureReels=()=>[...document.querySelectorAll('#thread video')];
+    const fixtureAudit=phase=>{
+      if(!window.fixtureReady)return;
+      for(const video of document.querySelectorAll('#thread video,#thread img')){
+        const css=getComputedStyle(video),box=video.getBoundingClientRect();
+        if(video.paused||css.visibility!=='visible'||css.display==='none'||box.width<1||box.height<1)
+          fixtureFailures.push({phase,id:video.id,path:location.pathname,paused:video.paused,visibility:css.visibility,display:css.display});
+      }
+    };
+    window.fixtureStart=async()=>{
+      try { await Promise.all(fixtureReels().map(video=>video.play())); }
+      catch(error){fixtureFailures.push({phase:'start playback',error:String(error)});return;}
+      fixtureReels().forEach(video=>video.addEventListener('pause',()=>fixtureAudit('pause event')));
+      window.fixtureReady=true;fixtureAudit('started');
+      const auditFrame=()=>{fixtureAudit('animation frame');requestAnimationFrame(auditFrame);};
+      requestAnimationFrame(auditFrame);
+    };
+    window.fixtureDecodedFrames=()=>fixtureReels().every(video=>{
+      if(video.paused||video.readyState<2||video.videoWidth!==64||video.currentTime<=0)return false;
+      const canvas=document.createElement('canvas');canvas.width=1;canvas.height=1;
+      const context=canvas.getContext('2d');context.drawImage(video,0,0,1,1);
+      const pixel=context.getImageData(0,0,1,1).data;
+      return pixel[0]<60&&pixel[1]>50&&pixel[2]>180;
+    });
+    window.fixtureOpen=()=>{
+      window.fixtureReturnPath=location.pathname;
+      const mount=()=>{
+        const viewer=document.createElement('div');viewer.id='viewer';viewer.setAttribute('role','dialog');
+        viewer.innerHTML='<article id="selected-photo"><a href="/p/Photo123/"><img id="opened-photo"></a></article>'
+          +'<article id="suggested-photo"><a href="/p/Other456/"><img></a></article><button id="close-photo">Back</button>';
+        viewer.querySelectorAll('img').forEach(image=>image.src=photoSource);
+        document.body.append(viewer);fixtureAudit('photo mounted');
+        document.getElementById('close-photo').onclick=()=>{
+          if(fixtureMode==='same-url'){viewer.remove();fixtureAudit('photo removed');return;}
+          if(fixtureMode==='portal-first'){history.pushState({},'',fixtureReturnPath);viewer.remove();fixtureAudit('route closed first');return;}
+          viewer.remove();fixtureAudit('viewer removed before history');
+          if(fixtureMode==='chat-switch'){fixtureReturnPath='/direct/t/other/';history.pushState({},'',fixtureReturnPath);fixtureAudit('switched chats');return;}
+          setTimeout(()=>{history.pushState({},'',fixtureReturnPath);fixtureAudit('history closed');},80);
+        };
+      };
+      if(fixtureMode==='same-url'){mount();return;}
+      if(fixtureMode==='portal-first'){mount();history.pushState({},'','/p/Photo123/');fixtureAudit('route after mount');return;}
+      history.pushState({},'','/p/Photo123/');fixtureAudit('route before mount');
+      setTimeout(mount,80);
+    };
+    </script></head><body>
+    <main id="thread" role="dialog">
+      <article id="reel-message-one"><a href="/reel/ReelOne/"><video id="reel-one" muted loop playsinline src="VIGIL_TEST_VIDEO"></video><img class="reel-poster" id="poster-one"></a></article>
+      <a id="photo-link" href="/p/Photo123/" onclick="event.preventDefault();fixtureOpen()"><img id="photo"></a>
+      <article id="reel-message-two"><a href="/reel/ReelTwo/"><video id="reel-two" muted loop playsinline src="VIGIL_TEST_VIDEO"></video><img class="reel-poster" id="poster-two"></a></article>
+    </main><script>document.querySelectorAll('#thread img').forEach(image=>image.src=photoSource);</script>
+    </body></html>
+    """#
+
+    @MainActor
+    func testInstagramPhotoRoundtripsPreserveDecodedChatReels() async throws {
+        let video = try await makeReferenceSearchPlayableVideo(color: true)
+        let html = Self.instagramChatMediaRoundtripHTML.replacingOccurrences(of: "VIGIL_TEST_VIDEO", with: video)
+        for audio in [true, false] {
+            for dialog in [true, false] {
+                for mode in ["route-first", "portal-first", "same-url", "chat-switch"] {
+                    let controller = WKUserContentController()
+                    controller.addUserScript(WKUserScript(source: DOMAdapters.documentStartScript(
+                        for: .instagram, unclassifiedMediaPolicy: .revealUnclassified,
+                        audioEnabled: audio, contentSafetyEnabled: false), injectionTime: .atDocumentStart, forMainFrameOnly: true))
+                    controller.addUserScript(WKUserScript(source: DOMAdapters.script(for: .instagram,
+                        audioEnabled: audio, contentSafetyEnabled: false), injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+                    let configuration = WKWebViewConfiguration()
+                    configuration.userContentController = controller
+                    configuration.mediaTypesRequiringUserActionForPlayback = []
+                    configuration.allowsInlineMediaPlayback = true
+                    let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+                    let window = UIWindow(frame: page.frame)
+                    window.rootViewController = UIViewController()
+                    window.rootViewController?.view.addSubview(page)
+                    window.isHidden = false
+                    defer { window.isHidden = true; page.navigationDelegate = nil }
+                    let loaded = expectation(description: "Real chat media loaded: \(mode), audio=\(audio), dialog=\(dialog)")
+                    let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+                    page.navigationDelegate = delegate
+                    page.loadHTMLString(html, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+                    await fulfillment(of: [loaded], timeout: 5)
+                    _ = try await page.evaluateJavaScript("""
+                        \(dialog ? "" : "document.getElementById('thread').removeAttribute('role');")
+                        \(mode == "same-url" ? "document.getElementById('photo-link').removeAttribute('href');" : "")
+                        fixtureMode='\(mode)';void fixtureStart();true;
+                        """)
+                    try await waitForJavaScriptCondition("fixtureReady&&fixtureDecodedFrames()", in: page)
+                    for _ in 0..<3 {
+                        _ = try await page.evaluateJavaScript("document.getElementById('photo-link').click()")
+                        try await waitForJavaScriptCondition("!!document.getElementById('opened-photo')", in: page)
+                        try await waitForJavaScriptCondition("""
+                            getComputedStyle(document.getElementById('opened-photo')).visibility==='visible'
+                              &&getComputedStyle(document.getElementById('suggested-photo')).visibility==='hidden'
+                            """, in: page)
+                        let failures = try await page.evaluateJavaScript("JSON.stringify(fixtureFailures)") as? String
+                        XCTAssertEqual(failures, "[]", "Opening the photo must never hide or pause chat Reels")
+                        _ = try await page.evaluateJavaScript("document.getElementById('close-photo').click()")
+                        try await waitForJavaScriptCondition("""
+                            !document.getElementById('viewer')&&location.pathname===fixtureReturnPath
+                              &&!document.documentElement.hasAttribute('data-vigil-single-reel')
+                            """, in: page)
+                        try await waitForJavaScriptCondition("fixtureDecodedFrames()", in: page)
+                        _ = try await page.evaluateJavaScript("window.fixtureTimes=fixtureReels().map(video=>video.currentTime);true;")
+                        try await Task.sleep(nanoseconds: 100_000_000)
+                        try await waitForJavaScriptCondition("fixtureReels().every((video,index)=>video.currentTime!==fixtureTimes[index])", in: page)
+                        let closedFailures = try await page.evaluateJavaScript("JSON.stringify(fixtureFailures)") as? String
+                        XCTAssertEqual(closedFailures, "[]", "Closing a photo preserves real Reel frames and playback without reload")
+                    }
+                }
+            }
+        }
+    }
+
     @MainActor
     func testInstagramMessagePhotoDismissalAndChatNavigationReleaseMedia() async throws {
         let controller = WKUserContentController()
@@ -10515,7 +10641,7 @@ final class VigilSocialTests: XCTestCase {
         }
     }
 
-    private func makeReferenceSearchPlayableVideo() async throws -> String {
+    private func makeReferenceSearchPlayableVideo(color: Bool = false) async throws -> String {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID()).mp4")
         defer { try? FileManager.default.removeItem(at: url) }
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
@@ -10536,7 +10662,17 @@ final class VigilSocialTests: XCTestCase {
             let status = CVPixelBufferCreate(kCFAllocatorDefault, 64, 64, kCVPixelFormatType_32ARGB, nil, &buffer)
             guard status == kCVReturnSuccess, let buffer else { throw NSError(domain: "ReferenceVideo", code: 2) }
             CVPixelBufferLockBaseAddress(buffer, [])
-            memset(CVPixelBufferGetBaseAddress(buffer), Int32(96 + frame), CVPixelBufferGetDataSize(buffer))
+            if color {
+                let base = CVPixelBufferGetBaseAddress(buffer)!.assumingMemoryBound(to: UInt8.self)
+                let stride = CVPixelBufferGetBytesPerRow(buffer)
+                for y in 0..<64 { for x in 0..<64 {
+                    let offset = y * stride + x * 4
+                    base[offset] = 255; base[offset + 1] = 32
+                    base[offset + 2] = UInt8(80 + (frame % 30) * 5); base[offset + 3] = 220
+                } }
+            } else {
+                memset(CVPixelBufferGetBaseAddress(buffer), Int32(96 + frame), CVPixelBufferGetDataSize(buffer))
+            }
             CVPixelBufferUnlockBaseAddress(buffer, [])
             guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(frame), timescale: 30)) else {
                 throw writer.error ?? NSError(domain: "ReferenceVideo", code: 3)

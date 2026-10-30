@@ -2642,13 +2642,16 @@ enum DOMAdapters {
         });
       };
       const scopeConcealment = () => {
-        const next = modalContext || document.documentElement;
+        // A permalink can commit before its portal mounts, or remain in
+        // history after the portal closes. Neither interval owns the chat DOM.
+        const retainedDirect = directPath && (viewerBackground?.isConnected || viewerOrigin?.isConnected);
+        const next = modalContext || (retainedDirect ? null : document.documentElement);
         if (concealmentScope !== next) concealmentScope?.removeAttribute('data-vigil-single-reel-scope');
         concealmentScope = next;
         // A Direct photo overlay must never conceal the retained conversation.
         // Cards recycled out of that overlay lose their viewer classification.
         releaseClassifications(next);
-        next.setAttribute('data-vigil-single-reel-scope', pinnedKind);
+        next?.setAttribute('data-vigil-single-reel-scope', pinnedKind);
       };
       let gesture = null;
       let pointerGesture = null;
@@ -2807,6 +2810,12 @@ enum DOMAdapters {
         if (pinnedID && directPath && location.pathname.startsWith('/direct/')
             && location.pathname !== directPath) reset();
         const route = mediaRoute(location.href);
+        if (route && !pinnedID && sharedIntent) {
+          // History wrappers must not discard the activation's chat boundary.
+          directPath = sharedIntent.source;
+          viewerOrigin = sharedIntent.origin;
+          viewerBackground = sharedIntent.background;
+        }
         // Closing a comments/post portal can return the original media to its
         // article without changing the item URL. Keep observing the live page.
         if (route && modalContext && !activeViewer(modalContext)) modalContext = null;
@@ -2821,7 +2830,7 @@ enum DOMAdapters {
         // the clicked item once its own fullscreen viewer is present.
         if (!route && location.pathname.startsWith('/direct/') && sharedIntent
             && sharedIntent.source === location.pathname && Date.now() - sharedIntent.at < 10000) {
-          const modal = foregroundModal(sharedIntent.origin);
+          const modal = foregroundModal(sharedIntent.origin, sharedIntent.background);
           modalContext = modal && (sharedIntent.route
             ? !sharedIntent.origin || !modal.contains(sharedIntent.origin)
             : modal !== sharedIntent.previousModal) ? modal : null;
@@ -2833,7 +2842,7 @@ enum DOMAdapters {
             pinnedURL = location.href;
             directPath = sharedIntent.source;
             viewerOrigin = sharedIntent.origin;
-            viewerBackground = sharedIntent.previousModal?.contains(viewerOrigin) ? sharedIntent.previousModal : null;
+            viewerBackground = sharedIntent.background;
             sharedIntent = null;
           }
         }
@@ -2921,7 +2930,14 @@ enum DOMAdapters {
       const rememberShare = (value, origin = null) => {
         const route = mediaRoute(value);
         if (!route || !location.pathname.startsWith('/direct/')) return;
-        sharedIntent = { route, origin, source: location.pathname, at: Date.now(), previousModal: foregroundModal() };
+        if (!origin && sharedIntent?.source === location.pathname && Date.now() - sharedIntent.at < 10000
+            && (!sharedIntent.route || sharedIntent.route.id === route.id)) {
+          sharedIntent.route = route;
+        } else {
+          sharedIntent = { route, origin, source: location.pathname, at: Date.now(), previousModal: foregroundModal(),
+            background: origin?.closest('main, [role="main"], [role="dialog"], [aria-modal="true"]')
+              || document.querySelector('main, [role="main"]') };
+        }
         if (route.kind === 'story') {
           sharedStory = { id: route.id, at: Date.now() };
           try { sessionStorage.setItem(sharedStoryKey, JSON.stringify(sharedStory)); } catch (_) {}
@@ -3269,7 +3285,7 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         normalizeRecipientSheets();
-        if (!syncRoute()) return;
+        if (!syncRoute() || !concealmentScope) return;
         // Reel playback may change CDN/blob sources and remount its player.
         // Contain input without granting permission to a particular video URL.
         if (pinnedKind === 'reel') return;
@@ -3524,7 +3540,8 @@ enum DOMAdapters {
         if (!pinnedID && (!link || link.getAttribute('href') === '#') && location.pathname.startsWith('/direct/') && !inSheet(event.target)
             && event.target instanceof Element && !event.target.closest('nav, [role="navigation"]')) {
           sharedIntent = { route: null, origin: event.target, source: location.pathname,
-            at: Date.now(), previousModal: foregroundModal() };
+            at: Date.now(), previousModal: foregroundModal(),
+            background: event.target.closest('main, [role="main"], [role="dialog"], [aria-modal="true"]') };
         }
         const next = reelAdvanceControl(event.target);
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
@@ -3938,8 +3955,10 @@ enum DOMAdapters {
               audioState.set(media, state);
             }
             if (!window.__vigilAudioPreferred) {
-              media.defaultMuted = true;
-              media.muted = true;
+              // defaultMuted writes the observed `muted` attribute even when
+              // already true. Rewriting it here starves rendering in a loop.
+              if (!media.defaultMuted) media.defaultMuted = true;
+              if (!media.muted) media.muted = true;
               return;
             }
             if (state.userChoseMute) return;
