@@ -15123,3 +15123,110 @@ extension VigilSocialTests {
         }
     }
 }
+
+extension VigilSocialTests {
+    static let instagramCommentsInteractionHTML = #"""
+    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0}#viewer{position:fixed;inset:0;background:white;z-index:1}video{width:390px;height:700px}
+    #portal{position:fixed;inset:0;z-index:3;pointer-events:none}#portal[hidden],#portal.concealed{display:none}
+    #portal.fading{opacity:0;transition:opacity 400ms}#portal.fading.shown{opacity:1}
+    #comments{position:absolute;bottom:0;width:390px;height:500px;background:white;pointer-events:auto}
+    #handle{height:40px;touch-action:none}#list{height:300px;overflow:auto}#rows{height:1600px}
+    #close{position:absolute;right:10px;bottom:510px;width:80px;height:32px;pointer-events:auto}
+    </style><script>
+    window.fetch=async()=>({ok:true,json:async()=>({})});window.fixtureMode='external';window.commentMoves=0;window.handleStarts=0;
+    window.commentCloses=0;window.commentPresses=0;window.fixtureInitialPath=location.pathname;window.fixtureEarlyReady=false;
+    </script></head><body><main><button id="preview">Received Reel</button></main>
+    <div id="portal" hidden><section id="comments"><div id="handle" role="button" aria-label="Drag comments">Grip</div>
+    <h2>Comments</h2><div id="list"><div id="rows">Comments list<button id="comment-action">Like comment</button></div></div>
+    <textarea placeholder="Add a comment" id="composer"></textarea></section>
+    <button id="close" aria-label="Close comments">Close</button></div><script>
+    window.fixtureClose=()=>{commentCloses++;document.getElementById('portal').hidden=true;
+      document.getElementById('viewer').removeAttribute('aria-hidden');document.getElementById('comments').style.transform='';};
+    document.getElementById('close').onpointerup=fixtureClose;
+    document.getElementById('comment-action').onpointerup=()=>commentPresses++;
+    document.getElementById('list').onpointermove=()=>commentMoves++;
+    let drag=null;
+    document.getElementById('handle').onpointerdown=e=>{handleStarts++;drag=e.clientY;};
+    document.getElementById('handle').onpointermove=e=>{if(drag!==null)document.getElementById('comments').style.transform='translateY('+Math.max(0,e.clientY-drag)+'px)';};
+    document.getElementById('handle').onpointerup=e=>{if(drag!==null&&e.clientY-drag>100)fixtureClose();drag=null;};
+    document.getElementById('preview').onclick=()=>{
+      const viewer=document.createElement('div');viewer.id='viewer';viewer.setAttribute('role','dialog');
+      viewer.innerHTML='<video id="reel"></video><button id="open-comments" aria-label="Comments">Comments</button><button id="next" aria-label="Next reel">Next</button>';
+      document.body.append(viewer);
+      document.getElementById('open-comments').onclick=()=>{
+        const portal=document.getElementById('portal');fixtureEarlyReady=false;document.getElementById('viewer').setAttribute('aria-hidden','true');
+        if(fixtureMode==='external'){portal.hidden=false;return;}
+        if(fixtureMode==='hidden'){setTimeout(()=>portal.hidden=false,80);return;}
+        portal.hidden=false;
+        if(fixtureMode==='class'){portal.className='concealed';setTimeout(()=>portal.className='',80);}
+        if(fixtureMode==='style'){portal.style.display='none';setTimeout(()=>portal.style.display='',80);}
+        if(fixtureMode==='fade'){portal.className='fading';requestAnimationFrame(()=>requestAnimationFrame(()=>portal.className='fading shown'));}
+      };
+    };
+    window.fixtureFire=(id,type,y)=>{const e=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,clientX:100,clientY:y});
+      document.getElementById(id).dispatchEvent(e);return e.defaultPrevented;};
+    window.fixtureCommentsWork=()=>{
+      const beforeMoves=commentMoves,beforePresses=commentPresses;
+      const list=document.getElementById('list'),wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});list.dispatchEvent(wheel);
+      fixtureFire('list','pointerdown',540);const blocked=fixtureFire('list','pointermove',500);fixtureFire('list','pointerup',500);
+      fixtureFire('comment-action','pointerdown',560);fixtureFire('comment-action','pointerup',560);
+      document.getElementById('composer').focus();document.getElementById('composer').value='Reply';
+      return !wheel.defaultPrevented&&!blocked&&commentMoves===beforeMoves+1&&commentPresses===beforePresses+1&&document.activeElement.id==='composer';
+    };
+    window.fixtureNativeAllows=id=>{const box=document.getElementById(id).getBoundingClientRect(),x=(box.left+box.width/2)/innerWidth,y=(box.top+box.height/2)/innerHeight;
+      const lock=fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1);return !!lock?.locked&&lock.scrollingRegions.some(r=>x>=r[0]&&x<=r[0]+r[2]&&y>=r[1]&&y<=r[1]+r[3]);};
+    window.fixtureObserveNative=message=>{const opacity=Number(getComputedStyle(document.getElementById('portal')).opacity);
+      if(message.type==='reelScrollLock'&&opacity>0.02&&opacity<1&&fixtureNativeAllows('handle'))fixtureEarlyReady=true;};
+    window.fixtureBackgroundContained=()=>{fixtureFire('reel','pointerdown',200);const blocked=fixtureFire('reel','pointermove',100);fixtureFire('reel','pointerup',100);
+      const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+      history.pushState({},'', '/reel/Other456/');const locks=fixtureLocks.filter(p=>p.type==='reelScrollLock'),lock=locks.at(-1);
+      const x=100/innerWidth,y=180/innerHeight;
+      return blocked&&next.defaultPrevented&&location.pathname===fixtureInitialPath&&lock?.locked&&locks.every(p=>p.locked)
+        &&!lock.scrollingRegions.some(r=>x>=r[0]&&x<=r[0]+r[2]&&y>=r[1]&&y<=r[1]+r[3]);};
+    </script></body></html>
+    """#
+
+    @MainActor
+    func testInstagramCachedCommentsKeepInteractionsHandleAndExternalClose() async throws {
+        for mode in ["external", "hidden", "class", "style", "fade"] {
+            let controller = WKUserContentController()
+            controller.addUserScript(WKUserScript(source: "window.fixtureLocks=[];Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{vigil:{postMessage:p=>{fixtureLocks.push(p);window.fixtureObserveNative?.(p);}}}}});"
+                + DOMAdapters.documentStartScript(for: .instagram, unclassifiedMediaPolicy: .revealUnclassified, audioEnabled: true, contentSafetyEnabled: false),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(source: DOMAdapters.script(for: .instagram, audioEnabled: true, contentSafetyEnabled: false),
+                                                  injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            let config = WKWebViewConfiguration()
+            config.userContentController = controller
+            config.websiteDataStore = .nonPersistent()
+            let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
+            let window = UIWindow(frame: webView.frame)
+            window.rootViewController = UIViewController()
+            window.rootViewController?.view.addSubview(webView)
+            window.isHidden = false
+            defer { webView.removeFromSuperview(); window.isHidden = true }
+            let loaded = expectation(description: "Comments interaction \(mode)")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            webView.navigationDelegate = delegate
+            webView.loadHTMLString(Self.instagramCommentsInteractionHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+            await fulfillment(of: [loaded], timeout: 5)
+            _ = try await webView.evaluateJavaScript("fixtureMode='\(mode)';document.getElementById('preview').click()")
+            try await waitForJavaScriptCondition("document.documentElement.hasAttribute('data-vigil-single-reel')", in: webView)
+            for viaHandle in [false, true] {
+                _ = try await webView.evaluateJavaScript("document.getElementById('open-comments').click()")
+                try await waitForJavaScriptCondition("document.getElementById('comments').dataset.vigilInstagramCommentsSheet==='true'", in: webView)
+                try await waitForJavaScriptCondition("fixtureNativeAllows('handle')&&fixtureNativeAllows('list')&&fixtureNativeAllows('close')", in: webView)
+                let works = try await webView.evaluateJavaScript("fixtureCommentsWork()&&fixtureBackgroundContained()&&(fixtureMode!=='fade'||fixtureEarlyReady)") as? Bool
+                XCTAssertEqual(works, true, "Comments retain their own interactions and the underlying Reel stays contained: \(mode)")
+                _ = try await webView.evaluateJavaScript(viaHandle
+                    ? "fixtureFire('handle','pointerdown',360);fixtureFire('handle','pointermove',560);fixtureFire('handle','pointerup',560)"
+                    : "fixtureFire('close','pointerdown',320);fixtureFire('close','pointermove',330);fixtureFire('close','pointerup',330)")
+                try await waitForJavaScriptCondition("document.getElementById('portal').hidden", in: webView)
+                try await waitForJavaScriptCondition("fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1)?.scrollingRegions.length===0", in: webView)
+                let pinned = try await webView.evaluateJavaScript("fixtureBackgroundContained()&&document.documentElement.hasAttribute('data-vigil-single-reel')") as? Bool
+                XCTAssertEqual(pinned, true, "Dismissal must not release Reel containment: \(mode)")
+            }
+            webView.navigationDelegate = nil
+        }
+    }
+}

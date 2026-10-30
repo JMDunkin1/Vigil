@@ -2683,7 +2683,8 @@ enum DOMAdapters {
       const reportNativeScrollLock = (locked, force = false) => {
         const sheets = locked ? [...document.querySelectorAll(
           '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
-        ), ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)] : [];
+        ), ...commentsDismissControls(),
+          ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)] : [];
         const scrollingRegions = [...new Set(sheets)].map(node => nativeGestureRegion(node, true)).filter(Boolean).slice(0, 24);
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
@@ -2951,10 +2952,10 @@ enum DOMAdapters {
               && Date.now() >= sharedStory.at && Date.now() - sharedStory.at < 30 * 60 * 1000));
         },
         isPinnedStory() { return syncRoute() && pinnedKind === 'story'; },
-        synchronizeNativeGestureGuard() {
+        synchronizeNativeGestureGuard(force = true) {
           // The first document-start message can precede native document-ID
           // binding. Replay the complete current state once the host is ready.
-          reportNativeScrollLock(syncRoute(), true);
+          reportNativeScrollLock(syncRoute(), force);
         },
         containmentState() {
           return { pinned: Boolean(pinnedID), kind: pinnedKind,
@@ -3024,6 +3025,14 @@ enum DOMAdapters {
             || (node === control || node.tagName.toLowerCase() === 'title' ? node.textContent : '') || '';
           return /^(close|dismiss|back)( comments)?$/i.test(String(label).replace(/\s+/g, ' ').trim());
         });
+      };
+      const commentsDismissControls = () => {
+        if (![...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"]')].some(activeModal)) return [];
+        // Some drawers put Close/Back beside the panel. Its existing JS press
+        // exception must also reach the native boundary, including tap jitter.
+        // Foreground geometry below excludes hidden and covered controls.
+        return [...document.querySelectorAll('button, [role="button"], a[href]')].filter(control =>
+          !control.closest('[data-vigil-instagram-comments-sheet="true"]') && commentsDismissControl(control));
       };
       const inSheet = target => target instanceof Element && (Boolean(target.closest(
         '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
@@ -8423,7 +8432,7 @@ enum DOMAdapters {
         commentSurfaceRequestedAt = now;
         // React can reveal an already-mounted anonymous drawer using only a
         // class/hidden change. Recheck after the site's activation completes.
-        queueMicrotask(normalizeCommentSheets);
+        scheduleCommentLayout();
         const playingMedia = [...document.querySelectorAll('video')].filter((media) => (
           visibleInstagramElement(media) && !media.paused && !media.ended
         ));
@@ -8513,9 +8522,44 @@ enum DOMAdapters {
         });
         if (activeSheets.size) scheduleCommentPlaybackRestore();
       };
+      let commentLayoutFrame = 0;
+      let commentLayoutUntil = 0;
+      let commentLayoutQueued = false;
+      const updateCommentLayout = () => {
+        normalizeCommentSheets();
+        window.__vigilInstagramSharedItem?.synchronizeNativeGestureGuard?.(false);
+      };
+      const refreshCommentLayout = () => {
+        commentLayoutFrame = 0;
+        updateCommentLayout();
+        if (performance.now() < commentLayoutUntil) commentLayoutFrame = requestAnimationFrame(refreshCommentLayout);
+      };
+      const scheduleCommentLayout = () => {
+        // A cached drawer can become visible in a later render, and CSS
+        // transitions move its handle without mutating the DOM each frame.
+        // Keep its narrow native exception current through that short interval.
+        commentLayoutUntil = performance.now() + 1500;
+        if (!commentLayoutQueued) {
+          commentLayoutQueued = true;
+          queueMicrotask(() => { commentLayoutQueued = false; updateCommentLayout(); });
+        }
+        if (!commentLayoutFrame) commentLayoutFrame = requestAnimationFrame(refreshCommentLayout);
+      };
+      const commentLayoutTarget = target => target instanceof Element && (target.closest('[data-vigil-instagram-comments-sheet="true"]')
+        || target.matches(`${commentComposerSelector}, [contenteditable="true"]`)
+        || target.querySelector(`${commentComposerSelector}, [contenteditable="true"]`));
+      new MutationObserver(records => {
+        const requested = commentSurfaceRequestedAt > 0 && performance.now() - commentSurfaceRequestedAt < 5000;
+        if ((requested || document.querySelector('[data-vigil-instagram-comments-sheet="true"]'))
+            && records.some(record => commentLayoutTarget(record.target))) scheduleCommentLayout();
+      }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['hidden', 'inert', 'class', 'style'] });
       document.addEventListener('pointerdown', rememberCommentPlayback, true);
       document.addEventListener('touchstart', rememberCommentPlayback, { capture: true, passive: true });
       document.addEventListener('click', rememberCommentPlayback, true);
+      for (const type of ['transitionrun', 'animationstart']) document.addEventListener(type, event => {
+        if (commentLayoutTarget(event.target) && (document.querySelector('[data-vigil-instagram-comments-sheet="true"]')
+            || commentSurfaceRequestedAt > 0 && performance.now() - commentSurfaceRequestedAt < 5000)) scheduleCommentLayout();
+      }, true);
       for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
         document.addEventListener(type, event => {
           const target = event.target;

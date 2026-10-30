@@ -46,6 +46,10 @@ jobs:
         timeout-minutes: 3
         run: node scripts/test-instagram-chat-media-webkit.mjs
 
+      - name: Test Instagram comments interaction and dismissal
+        timeout-minutes: 3
+        run: node scripts/test-instagram-comments-webkit.mjs
+
       - name: Test Instagram shared post browser regressions
         timeout-minutes: 3
         shell: bash
