@@ -8,6 +8,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { freshSigningBuild, installPhoneRenewal, publishPhoneLauncherState, renewalDecision, RENEWAL_WINDOW_MS, withPhoneUpdateLock } from "./ios-phone-renewal.mjs";
+import { validatePushEnvironment, verifyPushSigning, writePushEntitlements } from "./ios-notification-signing.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -75,6 +76,7 @@ const PHONE_SOURCE_FILES = [
   "scripts/generate-ios-content-policy.mts",
   "scripts/ios-phone-suite.mjs",
   "scripts/ios-phone-renewal.mjs",
+  "scripts/ios-notification-signing.mjs",
   "scripts/watch-ios-usb-profile.mjs",
   "src/adultBlocklist.ts",
   "src/adultBlocklistPhoneArtifact.ts",
@@ -231,6 +233,7 @@ export function parseArguments(args) {
     edition: "",
     force: false,
     json: false,
+    pushNotifications: null,
     allowEditionDowngrade: false,
     noPolicy: false,
     replaceLegacy: false,
@@ -248,6 +251,7 @@ export function parseArguments(args) {
     else if (value === "--server") options.server = requiredValue(values, ++index, value).replace(/\/+$/, "");
     else if (value.startsWith("--server=")) options.server = value.slice("--server=".length).replace(/\/+$/, "");
     else if (value === "--no-policy") options.noPolicy = true;
+    else if (value === "--push-notifications") options.pushNotifications = validatePushEnvironment(requiredValue(values, ++index, value));
     else if (value === "--replace-legacy") options.replaceLegacy = true;
     else if (value === "--allow-edition-downgrade") options.allowEditionDowngrade = true;
     else if (value === "--force") options.force = true;
@@ -944,6 +948,7 @@ function signingVariantForCapabilities(capabilities, fallback = "unknown") {
   if (socialCapabilities.length !== DEFAULT_SOCIAL_APPS.length) return fallback;
   const capableApps = socialCapabilities.filter((value) => value.sensitiveContentAnalysis).length;
   if (capableApps === socialCapabilities.length) return "full-capabilities";
+  if (capableApps === 0 && socialCapabilities.every(value => ["development", "production"].includes(value.pushEnvironment))) return "push-capable-conservative";
   if (capableApps === 0) return "personal-team-conservative";
   return "mixed-capabilities";
 }
@@ -1096,6 +1101,7 @@ function printStatus(report) {
   console.log(`Bundled YouTube parity script: ${report.youtubeParityScript.sha256.slice(0, 12)} • ${report.youtubeParityScript.bytes.toLocaleString("en-US")} bytes`);
   const signing = signingCapabilitySummary(report.receipt?.signingVariant);
   console.log(`Last deployed signing: ${signing.variant} • ${signing.mediaCapability}`);
+  console.log(`Native notification signing: ${report.receipt?.notificationPushEnvironment || "off (free path)"}`);
   console.log(`Live policy source: ${report.serverState ? (report.serverState.state?.deviceControls?.ios?.enabled ? "enabled" : "disabled") : "server unavailable"}`);
   if (!report.problems.length) console.log("Status: current");
   else {
@@ -1125,6 +1131,8 @@ async function updatePhone(selectedOptions) {
   const { device, developerDir, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = await readReceipt(deviceReceiptId);
+  const pushNotifications = selectedOptions.pushNotifications ?? previousReceipt?.notificationPushEnvironment ?? "off";
+  validatePushEnvironment(pushNotifications);
   const [installedBeforeUpdate, profileBeforeUpdate] = await Promise.all([
     devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment),
     configurationProfileStatus(device.identifier, toolEnvironment)
@@ -1139,6 +1147,7 @@ async function updatePhone(selectedOptions) {
     previousReceipt,
     selectedSocialAppIds
   ));
+  if (pushNotifications !== (previousReceipt?.notificationPushEnvironment ?? "off")) socialAppIdSet.add("instagram");
   for (const social of targetedSocialApps) {
     const installed = installedApps.find((app) => app.bundleIdentifier === social.bundleId);
     if (!installed || socialAppIdSet.has(social.id)) continue;
@@ -1175,7 +1184,7 @@ async function updatePhone(selectedOptions) {
   await buildRuntime();
   const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
   printPolicyAudit(audit, edition);
-  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter, device.udid);
+  const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter, device.udid, pushNotifications);
   if (selectedOptions.noPolicy) {
     const extensionProblems = safariExtensionUpdateProblems(previousReceipt, build.apps);
     if (extensionProblems.length) {
@@ -1334,6 +1343,7 @@ async function updatePhone(selectedOptions) {
     policyArtifactHash,
     signingVariant: signingVariantForCapabilities(signingCapabilities, previousReceipt?.signingVariant || "unknown"),
     signingCapabilities,
+    notificationPushEnvironment: pushNotifications,
     blocklist: build.blocklist || previousReceipt?.blocklist || null,
     explicitContentPolicy: build.explicitContentPolicy,
     urlFilter: build.urlFilter || previousReceipt?.urlFilter || null,
@@ -1362,6 +1372,9 @@ function printBlocklistReadiness(readiness) {
 }
 
 export function signingCapabilitySummary(variant) {
+  if (variant === "push-capable-conservative") {
+    return { variant, mediaCapability: "native APNs entitled; Sensitive Content Analysis unavailable (reveal unclassified media)" };
+  }
   if (variant === "full-capabilities") {
     return { variant, mediaCapability: "Sensitive Content Analysis entitled (conceal unclassified media)" };
   }
@@ -1464,7 +1477,8 @@ async function buildPhoneApps(
   toolEnvironment = process.env,
   socialAppIds = DEFAULT_SOCIAL_APPS.map((app) => app.id),
   includeUrlFilter = edition === "enhanced",
-  deviceUdid = null
+  deviceUdid = null,
+  pushNotifications = "off"
 ) {
   const selectedSocialAppIds = new Set(socialAppIds);
   const releaseLabel = REQUIRED_SOCIAL_APPS
@@ -1478,6 +1492,7 @@ async function buildPhoneApps(
   const explicitContentPolicy = await expectedExplicitContentPolicy();
   const environment = { ...toolEnvironment, VIGIL_PHONE_BLOCKLIST: blocklist.path };
   let reducedEntitlements = edition === "personal";
+  validatePushEnvironment(pushNotifications);
   const apps = [];
   for (const social of REQUIRED_SOCIAL_APPS) {
     if (!selectedSocialAppIds.has(social.id)) continue;
@@ -1516,11 +1531,22 @@ async function buildPhoneApps(
         "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
       );
     }
+    if (pushNotifications !== "off") {
+      const pushEntitlements = join(root, `${social.id}-push.entitlements`);
+      await writePushEntitlements({ destination: pushEntitlements,
+        base: reducedEntitlements ? personalTeamEntitlements : join(ROOT, "ios/VigilSocial/VigilSocial/VigilSocial.entitlements"),
+        environment: pushNotifications });
+      // Host-only setting: never give Safari/content-blocker/widget extensions
+      // a host app's aps-environment or silently retry without requested push.
+      const personalOverride = socialArguments.indexOf(`CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`);
+      if (personalOverride >= 0) socialArguments.splice(personalOverride, 1);
+      socialArguments.push(`VIGIL_HOST_ENTITLEMENTS=${pushEntitlements}`, `VIGIL_PUSH_ENVIRONMENT=${pushNotifications}`);
+    }
     const buildSocialApp = async () => {
       try {
         await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
       } catch (error) {
-        if (reducedEntitlements) throw error;
+        if (reducedEntitlements || pushNotifications !== "off") throw error;
         reducedEntitlements = true;
         console.warn("Full Apple capabilities are unavailable for the fixed social companions; retrying with the conservative Personal Team entitlement set.");
         socialArguments.push(
@@ -1545,6 +1571,12 @@ async function buildPhoneApps(
       ? await verifyBundledYouTubeInteractionExtension(path, social.bundleId)
       : null;
     const signingCapabilities = await signedAppCapabilities(path);
+    const verifiedPush = verifyPushSigning({ requested: pushNotifications,
+      signed: signingCapabilities.pushEnvironment, provisioned: profiles[0].pushEnvironment,
+      bundleIdentifier: social.bundleId, applicationIdentifier: profiles[0].applicationIdentifier });
+    if ((await appInfoValue(path, "VigilPushEnvironment")) !== verifiedPush) {
+      throw new Error("Push runtime configuration does not match the exact signed app and provisioning profile.");
+    }
     const signingProfile = {
       ...profiles[0],
       appExpiresAt: profiles[0].expiresAt,
@@ -2036,8 +2068,14 @@ async function signedAppCapabilities(appPath) {
   });
   const entitlements = `${stdout || ""}\n${stderr || ""}`;
   return {
-    sensitiveContentAnalysis: /<key>com\.apple\.developer\.sensitivecontentanalysis\.client<\/key>\s*<true\s*\/>/u.test(entitlements)
+    sensitiveContentAnalysis: /<key>com\.apple\.developer\.sensitivecontentanalysis\.client<\/key>\s*<true\s*\/>/u.test(entitlements),
+    pushEnvironment: entitlements.match(/<key>aps-environment<\/key>\s*<string>(development|production)<\/string>/u)?.[1] || ""
   };
+}
+
+async function appInfoValue(appPath, key) {
+  const { stdout } = await execFileAsync("/usr/bin/plutil", ["-extract", key, "raw", "-o", "-", join(appPath, "Info.plist")], { timeout: 10000 });
+  return stdout.trim();
 }
 
 async function signedAppProvisioningProfile(appPath) {
@@ -2118,7 +2156,9 @@ async function signedProvisioningFile(embeddedProfile) {
       uuid,
       teamIdentifier,
       createdAt: createdAt.toISOString(),
-      expiresAt: expiresAt.toISOString()
+      expiresAt: expiresAt.toISOString(),
+      pushEnvironment: await readValue("Entitlements.aps-environment").catch(() => ""),
+      applicationIdentifier: await readValue("Entitlements.application-identifier").catch(() => "")
     };
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -2797,6 +2837,7 @@ Commands:
   fingerprint  Print the current phone implementation fingerprint
 
 Options:
+  --push-notifications off|development|production  Optional paid-team push signing; default preserves the receipt, initially off
   --app NAME   Any social service alias updates the same combined Vigil Social app
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)

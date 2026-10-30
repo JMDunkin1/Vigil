@@ -6,6 +6,7 @@ export interface PhoneSuiteOptions {
   edition: "" | "personal" | "enhanced";
   force: boolean;
   json: boolean;
+  pushNotifications: "off" | "development" | "production" | null;
   noPolicy: boolean;
   replaceLegacy: boolean;
   server: string;

@@ -44,6 +44,7 @@
     "ios:apply-usb": "node scripts/apply-ios-usb-profile.mjs",
     "ios:apply-usb:watch": "node scripts/watch-ios-usb-profile.mjs",
     "ios:phone:status": "node scripts/ios-phone-suite.mjs status",
+    "notifications:relay": "npm run build && node dist/runtime/scripts/notification-relay.mjs",
     "ios:phone:check": "node scripts/ios-phone-suite.mjs check",
     "ios:phone:audit": "node scripts/ios-phone-suite.mjs audit",
     "ios:phone:update": "node scripts/ios-phone-suite.mjs update",
@@ -151,10 +152,14 @@
     "@eslint/js": "^10.0.1",
     "@types/chrome": "^0.2.2",
     "@types/node": "^26.1.1",
+    "@types/web-push": "^3.6.4",
     "electron": "^42.6.1",
     "electron-builder": "^26.15.3",
     "eslint": "^10.7.0",
     "globals": "^17.4.0",
     "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "web-push": "^3.6.7"
   }
 }

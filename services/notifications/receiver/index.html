@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#111827"><meta name="apple-mobile-web-app-capable" content="yes">
+<title>Vigil Alerts</title><link rel="manifest" href="manifest.webmanifest"><link rel="stylesheet" href="receiver.css">
+<script src="receiver.js" defer></script></head><body><main>
+<p class="eyebrow">VIGIL</p><h1>Stay reachable.</h1>
+<p>Message and call alerts, without opening a feed.</p>
+<p id="install">On iPhone, use Safari’s Share → Add to Home Screen, then open Vigil Alerts from your Home Screen.</p>
+<form id="settings"><label id="pair-label">Pairing code<input id="pair" type="password" autocomplete="off" spellcheck="false"></label>
+<fieldset><legend>Notify me from</legend><div id="services"></div></fieldset>
+<button id="connect" disabled>Connect notifications</button><button id="disconnect" type="button" hidden>Disconnect this receiver</button></form>
+<p id="status" role="status">Preparing notification receiver…</p>
+<p class="small">Instagram and Snapchat allow classified personal messages and incoming calls. Snaps, reel shares, promotions and unknown activity stay silent. Alert delivery also requires a working social event source.</p>
+<a id="open" hidden>Open in Vigil</a>
+<p class="small">Manage background notification choices here. Vigil’s app settings control its in-app alerts. Opening an alert follows Vigil’s usual access restrictions.</p>
+</main></body></html>

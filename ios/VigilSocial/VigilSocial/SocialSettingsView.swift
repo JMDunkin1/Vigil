@@ -315,7 +315,7 @@ struct SocialHelpView: View {
             faq("How do audio and picture-in-picture work?", "Enable them in Settings for supported YouTube videos. Only a permitted video with remaining watch time can continue. A scheduled pause stops playback, including the floating window.")
             faq("How do routines and Sleep Mode work?", "They add pauses on top of your existing restrictions. Routines follow local time and may run overnight. An active routine or Sleep Mode cannot be ended early.")
             faq("Why is a service unavailable?", "Vigil checks the phone's live web policy before showing a service. Access also pauses during routines or Sleep Mode. A connection problem may prevent the policy check; Vigil retries automatically.")
-            faq("How do notifications work?", "Enable supported alerts in Settings and allow iOS notification permission. Instagram can alert for new text messages while its session is open in Vigil; shared media stays silent. Instagram calls and background message delivery are unavailable. Scheduled reminders are a separate choice.")
+            faq("How do notifications work?", "Choose services in Settings and allow iOS notification permission. Opened sessions can forward supported alerts; Instagram checks text messages, and Snapchat filters message and incoming-call categories. Background delivery needs a configured receiver or supported native push signing, plus a verified incoming event source. The free Home Screen receiver has its own service choices. Scheduled reminders are separate.")
         }
         .navigationTitle("Help")
     }

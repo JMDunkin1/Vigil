@@ -52,11 +52,11 @@ assert.equal(
 
 assert.deepEqual(parseArguments([]), {
   command: "status",
-  options: { allowEditionDowngrade: false, app: "", bump: "patch", device: "", edition: "", force: false, json: false, noPolicy: false, replaceLegacy: false, server: "http://127.0.0.1:8787" }
+  options: { allowEditionDowngrade: false, app: "", bump: "patch", device: "", edition: "", force: false, json: false, pushNotifications: null, noPolicy: false, replaceLegacy: false, server: "http://127.0.0.1:8787" }
 });
 assert.deepEqual(parseArguments(["update", "--device", "phone-1", "--no-policy", "--replace-legacy"]), {
   command: "update",
-  options: { allowEditionDowngrade: false, app: "", bump: "patch", device: "phone-1", edition: "", force: false, json: false, noPolicy: true, replaceLegacy: true, server: "http://127.0.0.1:8787" }
+  options: { allowEditionDowngrade: false, app: "", bump: "patch", device: "phone-1", edition: "", force: false, json: false, pushNotifications: null, noPolicy: true, replaceLegacy: true, server: "http://127.0.0.1:8787" }
 });
 assert.equal(parseArguments(["update", "--app", "instagram"]).options.app, "instagram");
 assert.equal(parseArguments(["update", "--app=youtube"]).options.app, "youtube");

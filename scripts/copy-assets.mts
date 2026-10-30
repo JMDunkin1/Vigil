@@ -29,6 +29,7 @@ await copyProjectFile("scripts/mac-signing-identity.mjs");
 await copyProjectFile("scripts/release-entitlements.mjs");
 await copyProjectFile("scripts/ios-phone-suite.mjs");
 await copyProjectFile("scripts/ios-phone-renewal.mjs");
+await copyProjectFile("scripts/ios-notification-signing.mjs");
 // Generate the same stylesheet for both browser installations before packaging.
 await writeFile(join(projectRoot, "extension/blocked.css"), PROTECTION_PAGE_CSS.trimStart());
 await writeFile(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/blocked.css"), PROTECTION_PAGE_CSS.trimStart());

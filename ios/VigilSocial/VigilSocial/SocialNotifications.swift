@@ -2,13 +2,14 @@ import Combine
 import SwiftUI
 import UserNotifications
 import WebKit
+import Security
 
 // Local delivery needs no APNs entitlement, provider server, or paid team.
 // Web events can only be observed while iOS is running the opened web session.
 @MainActor
 final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = SocialNotifications()
-    static let supportedServices: [SocialService] = [.instagram, .snapchat, .linkedin, .facebook, .x, .tiktok, .reddit]
+    static let supportedServices = SocialService.allCases
     static let instagramInboxURL = URL(string: "https://www.instagram.com/direct/inbox/")!
     @Published private(set) var authorization: UNAuthorizationStatus = .notDetermined
     @Published private(set) var enabledServices: Set<String>
@@ -27,6 +28,12 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
         self.center = center
         self.defaults = defaults
         enabledServices = Set(defaults.stringArray(forKey: "VigilSocial.webAlerts.services") ?? [])
+        // Explicit owner selection, applied once. Later changes remain the user's.
+        if !defaults.bool(forKey: "VigilSocial.contactAlertsSelection.20261030") {
+            enabledServices = ["instagram", "snapchat"]
+            defaults.set(["instagram", "snapchat"], forKey: "VigilSocial.webAlerts.services")
+            defaults.set(true, forKey: "VigilSocial.contactAlertsSelection.20261030")
+        }
         super.init()
         center.delegate = self
         Task { await refreshAuthorization() }
@@ -55,6 +62,17 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
         refreshWebPermissions()
         if let preferences { rescheduleReminders(preferences: preferences) }
         recordDiagnostics()
+        RemoteSocialNotifications.shared.synchronizeSelection()
+    }
+
+    func activateSelectedAlerts() async {
+        await refreshAuthorization()
+        if authorization == .notDetermined && !enabledServices.isEmpty {
+            do { _ = try await center.requestAuthorization(options: [.alert, .sound]) }
+            catch { self.error = "Notifications could not be enabled. Try again in iPhone Settings." }
+            await refreshAuthorization()
+        }
+        RemoteSocialNotifications.shared.registerIfConfigured()
     }
 
     func authorizeReminders() async {
@@ -69,6 +87,7 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
             error = allowed ? nil : "Allow Vigil notifications in iPhone Settings to enable reminders."
         } catch { self.error = "Notifications could not be enabled. Try again in iPhone Settings." }
         recordDiagnostics()
+        RemoteSocialNotifications.shared.synchronizeSelection()
     }
 
     func disableReminders() {
@@ -76,6 +95,7 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
         defaults.set(false, forKey: "VigilSocial.reminders.enabled")
         if let preferences { rescheduleReminders(preferences: preferences) }
         recordDiagnostics()
+        RemoteSocialNotifications.shared.synchronizeSelection()
     }
 
     func refreshAuthorization() async {
@@ -89,6 +109,7 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
         refreshWebPermissions()
         if let preferences { rescheduleReminders(preferences: preferences) }
         recordDiagnostics()
+        RemoteSocialNotifications.shared.synchronizeSelection()
     }
 
     func register(_ webView: WKWebView, for service: SocialService, permissionScript: WKUserScript,
@@ -121,7 +142,7 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
     }
 
     func deliverWebActivity(for service: SocialService, sessionID: String) {
-        guard service != .instagram, enabled(for: service), UIApplication.shared.applicationState == .active else { return }
+        guard service != .instagram, service != .snapchat, enabled(for: service), UIApplication.shared.applicationState == .active else { return }
         let key = service.rawValue + ":" + sessionID
         let now = Date()
         guard now.timeIntervalSince(lastDelivery[key] ?? .distantPast) >= 10 else { return }
@@ -133,6 +154,21 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
         content.body = "New activity in your opened Vigil session."
         content.sound = .default
         content.userInfo = ["vigilService": service.rawValue]
+        center.add(UNNotificationRequest(identifier: "vigil-web-" + key, content: content, trigger: nil))
+    }
+
+    func deliverSnapchatContact(kind: String, sessionID: String) {
+        guard ["message", "call"].contains(kind), enabled(for: .snapchat),
+              UIApplication.shared.applicationState == .active else { return }
+        let key = "snapchat:" + sessionID + ":" + kind
+        let now = Date()
+        guard now.timeIntervalSince(lastDelivery[key] ?? .distantPast) >= 10 else { return }
+        lastDelivery[key] = now
+        let content = UNMutableNotificationContent()
+        content.title = "Snapchat"
+        content.body = kind == "call" ? "Incoming call." : "New message."
+        content.sound = .default
+        content.userInfo = ["vigilService": "snapchat"]
         center.add(UNNotificationRequest(identifier: "vigil-web-" + key, content: content, trigger: nil))
     }
 
@@ -203,14 +239,22 @@ final class SocialNotifications: NSObject, ObservableObject, UNUserNotificationC
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
                                           withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound])
+        let rawValue = notification.request.content.userInfo["vigilService"] as? String
+        Task { @MainActor in
+            if let rawValue {
+                guard let service = SocialService(rawValue: rawValue), Self.shared.enabled(for: service) else {
+                    completionHandler([]); return
+                }
+            }
+            completionHandler([.banner, .sound])
+        }
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
                                           withCompletionHandler completionHandler: @escaping () -> Void) {
         let rawValue = response.notification.request.content.userInfo["vigilService"] as? String
         Task { @MainActor [weak self] in
-            if let rawValue, let service = SocialService(rawValue: rawValue), Self.supportedServices.contains(service) {
+            if let rawValue, let service = SocialService(rawValue: rawValue), self?.enabled(for: service) == true {
                 self?.openService?(service)
             }
             completionHandler()
@@ -482,7 +526,14 @@ final class SocialMessageNotificationBridge: NSObject, WKScriptMessageHandler {
         controller.add(bridge, name: "vigilWebActivity")
         let permissionScript = WKUserScript(source: script(allowed: SocialNotifications.shared.enabled(for: service)),
                                             injectionTime: .atDocumentStart, forMainFrameOnly: true)
+        // Install before the Snapchat desktop bootstrap, whose inert worker
+        // fallback otherwise makes service-worker notification delivery hang.
+        let existing = controller.userScripts
+        controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(source: "window.__vigilNotificationService = '\(service.rawValue)';",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         controller.addUserScript(permissionScript)
+        for script in existing { controller.addUserScript(script) }
         SocialNotifications.shared.register(webView, for: service, permissionScript: permissionScript, policyAllows: policyAllows)
     }
 
@@ -492,9 +543,13 @@ final class SocialMessageNotificationBridge: NSObject, WKScriptMessageHandler {
               service.isCanonicalAppHost(url.host ?? ""), service.allowsNavigation(to: url), !service.isRestrictedSurface(url),
               message.frameInfo.securityOrigin.protocol == "https",
               message.frameInfo.securityOrigin.host.lowercased() == url.host?.lowercased(),
-              let body = message.body as? [String: Any], body["type"] as? String == "activity",
+              let body = message.body as? [String: Any],
               body["href"] as? String == url.absoluteString else { return }
-        SocialNotifications.shared.deliverWebActivity(for: service, sessionID: sessionID)
+        if service == .snapchat, body["type"] as? String == "contact", let kind = body["kind"] as? String {
+            SocialNotifications.shared.deliverSnapchatContact(kind: kind, sessionID: sessionID)
+        } else if body["type"] as? String == "activity" {
+            SocialNotifications.shared.deliverWebActivity(for: service, sessionID: sessionID)
+        }
     }
 
     static func script(allowed: Bool) -> String {
@@ -503,13 +558,25 @@ final class SocialMessageNotificationBridge: NSObject, WKScriptMessageHandler {
           if (window.top !== window || window.__vigilWebNotificationBridgeInstalled) return;
           window.__vigilWebNotificationBridgeInstalled = true;
           window.__vigilWebAlertsAllowed = \(allowed ? "true" : "false");
+          const emit = (options) => {
+            if (window.__vigilWebAlertsAllowed !== true) return;
+            let event = { type: 'activity', href: location.href };
+            if (window.__vigilNotificationService === 'snapchat') {
+              // Snapchat's public desktop bundle notification enum (2026-10-30).
+              // No classification from titles, body text, unread counts or URLs.
+              const type = options?.data?.type;
+              const kind = [201, 205, 206, 230, 234, 235].includes(type) ? 'message'
+                : [1250, 1252, 1270, 1272].includes(type) ? 'call' : null;
+              if (!kind) return;
+              event = { type: 'contact', kind, href: location.href };
+            }
+            window.webkit?.messageHandlers?.vigilWebActivity?.postMessage(event);
+          };
           class VigilWebNotification extends EventTarget {
             constructor(title, options = {}) {
               super(); this.title = String(title ?? ''); this.tag = String(options.tag ?? '');
               this.body = ''; this.data = null; this.onclick = null; this.onclose = null;
-              if (window.__vigilWebAlertsAllowed === true) {
-                window.webkit?.messageHandlers?.vigilWebActivity?.postMessage({ type: 'activity', href: location.href });
-              }
+              emit(options);
             }
             static get permission() { return window.__vigilWebAlertsAllowed === true ? 'granted' : 'denied'; }
             static get maxActions() { return 0; }
@@ -521,6 +588,32 @@ final class SocialMessageNotificationBridge: NSObject, WKScriptMessageHandler {
             close() { this.dispatchEvent(new Event('close')); if (typeof this.onclose === 'function') this.onclose(); }
           }
           try { Object.defineProperty(window, 'Notification', { configurable: true, value: VigilWebNotification }); } catch {}
+          // Worker-originated local alerts use a different API from new Notification.
+          // Retain native workers where available; do not create caches or fetch handlers.
+          if (typeof ServiceWorkerRegistration !== 'undefined') {
+            try { ServiceWorkerRegistration.prototype.showNotification = async (_title, options) => { emit(options); }; } catch {}
+          }
+          if (window.__vigilNotificationService === 'snapchat' && !('serviceWorker' in navigator)) {
+            const registration = {
+              showNotification: async (_title, options) => { emit(options); },
+              getNotifications: async () => [],
+              pushManager: {
+                getSubscription: async () => null,
+                subscribe: async () => { throw new DOMException('Remote push is not configured.', 'NotSupportedError'); }
+              }
+            };
+            const workers = new EventTarget();
+            Object.defineProperties(workers, {
+              controller: { value: null }, ready: { value: Promise.resolve(registration) },
+              register: { value: async () => { throw new DOMException('Workers are unavailable.', 'NotSupportedError'); } },
+              getRegistration: { value: async () => registration },
+              getRegistrations: { value: async () => [] }
+            });
+            Object.defineProperty(navigator, 'serviceWorker', { value: workers });
+            // Snap gates its foreground duplex notification listener on this
+            // interface. subscribe always rejects: this is not a push transport.
+            if (typeof PushManager === 'undefined') window.PushManager = class PushManager {};
+          }
         })();
         """
     }
@@ -530,7 +623,7 @@ struct SocialNotificationSettingsView: View {
     @ObservedObject private var notifications = SocialNotifications.shared
     var body: some View {
         Section("Notifications") {
-            Text("Web-session alerts work while Vigil is open on screen. New social messages cannot arrive while it is in the background or closed. Scheduled reminders can still arrive.")
+            Text("Web-session alerts work while Vigil is open on screen. Background delivery needs a connected notification service and supported push signing. Scheduled reminders are separate.")
                 .font(.footnote).foregroundStyle(.secondary)
             Toggle("Scheduled reminders", isOn: Binding(
                 get: { notifications.remindersEnabled && notifications.isAuthorized },
@@ -541,11 +634,11 @@ struct SocialNotificationSettingsView: View {
             ))
             ForEach(SocialNotifications.supportedServices) { service in
                 Toggle(service == .instagram ? "Instagram messages" : service.displayName, isOn: Binding(
-                    get: { notifications.enabled(for: service) },
+                    get: { notifications.enabledServices.contains(service.rawValue) },
                     set: { enabled in Task { await notifications.setEnabled(enabled, for: service) } }
                 ))
             }
-            Text("Instagram alerts are for new text messages while Instagram is open in Vigil. Shared reels, photos, stories, reactions, and call history stay silent. Incoming-call and background alerts are unavailable.")
+            Text("Instagram checks new text messages in its opened session. Snapchat forwards classified message and incoming-call alerts. Snaps, shared reels, stories, reactions, and unknown activity stay silent. Background sources still need verification.")
                 .font(.footnote).foregroundStyle(.secondary)
             if notifications.enabled(for: .instagram) {
                 Text(notifications.instagramStatus == "ready" ? "Instagram message checks are ready."
@@ -558,8 +651,199 @@ struct SocialNotificationSettingsView: View {
                     if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
                 }
             }
+            RemoteSocialNotificationSettingsView()
             if let error = notifications.error { Text(error).font(.footnote).foregroundStyle(.red) }
         }
         .task { await notifications.refreshAuthorization() }
+    }
+}
+
+// Optional paid-team transport. Merely compiling this code grants no entitlement
+// and never changes Personal Team signing, supervision, or service access gates.
+@MainActor
+final class RemoteSocialNotifications: ObservableObject {
+    static let shared = RemoteSocialNotifications()
+    @Published private(set) var status = "Not connected"
+    private struct Connection: Codable {
+        let origin: URL
+        let deviceID: String
+        let secret: String
+        let token: String?
+    }
+    private var connection: Connection?
+    private var deviceToken: String?
+    private var pendingPairing: (URL, String)?
+    private var synchronizing = false
+    private var needsSync = false
+    private let keychainService = "tech.caseline.vigil.notification-relay"
+    private let redirects = NotificationRedirectBlocker()
+    private lazy var session: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.httpCookieStorage = nil
+        config.urlCache = nil
+        return URLSession(configuration: config, delegate: redirects, delegateQueue: nil)
+    }()
+
+    init() {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService, kSecAttrAccount as String: "connection",
+            kSecReturnData as String: true]
+        var result: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data {
+            connection = try? JSONDecoder().decode(Connection.self, from: data)
+            deviceToken = connection?.token
+            if connection != nil { status = "Registration pending" }
+        }
+    }
+
+    var supportsPushSigning: Bool {
+        ["development", "production"].contains(Bundle.main.object(forInfoDictionaryKey: "VigilPushEnvironment") as? String ?? "")
+    }
+    var hasConnection: Bool { connection != nil }
+
+    func connect(origin: String, pairingCode: String) {
+        guard supportsPushSigning else { status = "This build uses free signing; native push is unavailable."; return }
+        guard connection == nil, !synchronizing else { status = "A connection already exists or is being saved."; return }
+        guard let parts = URLComponents(string: origin), parts.scheme == "https", parts.host != nil,
+              parts.user == nil, parts.password == nil, parts.port == nil || parts.port == 443,
+              parts.query == nil, parts.fragment == nil, ["", "/"].contains(parts.path), let url = parts.url,
+              pairingCode.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+            status = "Enter the actual HTTPS service address and pairing code."; return
+        }
+        pendingPairing = (url, pairingCode)
+        registerIfConfigured()
+    }
+
+    func registerIfConfigured() {
+        if !supportsPushSigning && connection != nil {
+            Task { await disconnect() }
+            return
+        }
+        guard supportsPushSigning, connection != nil || pendingPairing != nil,
+              SocialNotifications.shared.isAuthorized else { return }
+        status = "Registering with Apple"
+        // The system is the authority: absent/invalid aps-environment returns an
+        // error through didFailToRegisterForRemoteNotifications, never a token.
+        UIApplication.shared.registerForRemoteNotifications()
+    }
+
+    func registered(_ token: Data) {
+        guard supportsPushSigning else { return }
+        deviceToken = token.map { String(format: "%02x", $0) }.joined()
+        synchronizeSelection()
+    }
+
+    func registrationFailed() { status = "Apple push registration failed. Check the signed provisioning profile." }
+
+    func disconnect() async {
+        guard !synchronizing, let existing = connection else { return }
+        synchronizing = true
+        defer { synchronizing = false }
+        do {
+            var request = URLRequest(url: existing.origin.appendingPathComponent("api/notifications/devices/" + existing.deviceID))
+            request.httpMethod = "DELETE"
+            request.timeoutInterval = 10
+            request.setValue("Bearer " + existing.secret, forHTTPHeaderField: "Authorization")
+            let (_, response) = try await session.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+            let result = SecItemDelete([kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: keychainService, kSecAttrAccount as String: "connection"] as CFDictionary)
+            guard result == errSecSuccess || result == errSecItemNotFound else { throw URLError(.cannotWriteToFile) }
+            connection = nil
+            deviceToken = nil
+            pendingPairing = nil
+            needsSync = false
+            UIApplication.shared.unregisterForRemoteNotifications()
+            status = "Disconnected"
+        } catch { status = "Disconnect has not been confirmed. The notification service must be reachable." }
+    }
+
+    func synchronizeSelection() {
+        guard supportsPushSigning, deviceToken != nil, connection != nil || pendingPairing != nil else { return }
+        needsSync = true
+        guard !synchronizing else { return }
+        synchronizing = true
+        Task {
+            defer { synchronizing = false }
+            while needsSync {
+                needsSync = false
+                do { try await saveCurrentSelection() }
+                catch { status = "Notification service unavailable; changes have not been confirmed." }
+            }
+        }
+    }
+
+    private func saveCurrentSelection() async throws {
+        guard let deviceToken else { return }
+        let existing = connection
+        guard let origin = existing?.origin ?? pendingPairing?.0,
+              let credential = existing?.secret ?? pendingPairing?.1 else { return }
+        let route = existing.map { "/api/notifications/devices/" + $0.deviceID } ?? "/api/notifications/devices"
+        let selected = SocialNotifications.supportedServices.filter { SocialNotifications.shared.enabled(for: $0) }.map(\.rawValue).sorted()
+        var request = URLRequest(url: origin.appendingPathComponent(String(route.dropFirst())))
+        request.httpMethod = existing == nil ? "POST" : "PUT"
+        request.timeoutInterval = 10
+        request.setValue("Bearer " + credential, forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["token": deviceToken, "services": selected])
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == (existing == nil ? 201 : 200),
+              http.url == request.url, http.value(forHTTPHeaderField: "Content-Type")?.contains("application/json") == true else {
+            throw URLError(.badServerResponse)
+        }
+        var data = Data()
+        for try await byte in bytes {
+            data.append(byte)
+            if data.count > 4096 { throw URLError(.dataLengthExceedsMaximum) }
+        }
+        if existing == nil {
+            guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let id = body["deviceID"] as? String, let secret = body["secret"] as? String,
+                  id.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil,
+                  secret.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw URLError(.cannotParseResponse) }
+            let saved = Connection(origin: origin, deviceID: id, secret: secret, token: deviceToken)
+            let value = try JSONEncoder().encode(saved)
+            let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: keychainService, kSecAttrAccount as String: "connection"]
+            let attributes: [String: Any] = [kSecValueData as String: value,
+                kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]
+            let result = SecItemAdd(query.merging(attributes) { _, new in new } as CFDictionary, nil)
+            guard result == errSecSuccess || (result == errSecDuplicateItem
+                && SecItemUpdate(query as CFDictionary, attributes as CFDictionary) == errSecSuccess) else { throw URLError(.cannotWriteToFile) }
+            connection = saved
+            pendingPairing = nil
+        } else {
+            guard (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["ok"] as? Bool == true else { throw URLError(.cannotParseResponse) }
+        }
+        status = "Device registered. Incoming social sources still need verification."
+    }
+}
+
+private final class NotificationRedirectBlocker: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+private struct RemoteSocialNotificationSettingsView: View {
+    @ObservedObject private var remote = RemoteSocialNotifications.shared
+    @State private var origin = ""
+    @State private var pairingCode = ""
+    var body: some View {
+        Text("Background notifications: " + remote.status).font(.footnote).foregroundStyle(.secondary)
+        if remote.supportsPushSigning {
+            TextField("Notification service HTTPS address", text: $origin)
+                .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+            SecureField("Pairing code", text: $pairingCode).textInputAutocapitalization(.never)
+            Button("Connect background notifications") {
+                remote.connect(origin: origin, pairingCode: pairingCode)
+                pairingCode = ""
+            }
+        }
+        if remote.hasConnection {
+            Button("Disconnect background notifications") { Task { await remote.disconnect() } }
+        }
     }
 }

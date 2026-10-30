@@ -10,11 +10,11 @@ const projectRoot = existsSync(join(runtimeRoot, "ios")) ? runtimeRoot : resolve
 const source = await readFile(join(projectRoot, "ios/VigilSocial/VigilSocial/SocialNotifications.swift"), "utf8");
 const match = source.match(/static func script\(allowed: Bool\) -> String \{\s*"""([\s\S]*?)"""/u);
 assert.ok(match);
-function install(allowed: boolean) {
+function install(allowed: boolean, service = "") {
   const events: unknown[] = [];
-  const window = { top: null as unknown, webkit: { messageHandlers: { vigilWebActivity: { postMessage: (event: unknown) => events.push(event) } } } };
+  const window = { top: null as unknown, __vigilNotificationService: service, webkit: { messageHandlers: { vigilWebActivity: { postMessage: (event: unknown) => events.push(event) } } } };
   window.top = window;
-  const context = vm.createContext({ window, EventTarget, Event, location: { href: "https://www.snapchat.com/web/" } });
+  const context = vm.createContext({ window, navigator: {}, DOMException, EventTarget, Event, location: { href: "https://www.snapchat.com/web/" } });
   const script = match![1]!.replace(/\\\(allowed \? "true" : "false"\)/gu, String(allowed));
   vm.runInContext(script, context);
   return { context, events };
@@ -40,4 +40,21 @@ assert.match(source, /controller\.userScripts\.map[\s\S]*?controller\.removeAllU
   "Permission updates must preserve other WebKit scripts while replacing the persistent permission script");
 const nativeTests = await readFile(join(projectRoot, "ios/VigilSocial/VigilSocialTests/SocialNotificationsTests.swift"), "utf8");
 assert.match(nativeTests, /testWebAlertPermissionSurvivesDocumentRecreationAndPreservesOtherScripts/u);
-console.log("Opt-in web notifications and private payload isolation passed.");
+const snap = install(true, "snapchat");
+for (const type of [201, 205, 206, 230, 234, 235, 1250, 1252, 1270, 1272]) {
+  await vm.runInContext(`navigator.serviceWorker.ready.then(r => r.showNotification('Private sender', {body:'Private message',data:{type:${type},url:'https://example.test',sender:'private'}}))`, snap.context);
+}
+assert.equal(snap.events.length, 10, "Snapchat worker notifications must reach the contact bridge");
+assert.deepEqual(JSON.parse(JSON.stringify(snap.events[0])), { type: "contact", kind: "message", href: "https://www.snapchat.com/web/" });
+assert.deepEqual(JSON.parse(JSON.stringify(snap.events[6])), { type: "contact", kind: "call", href: "https://www.snapchat.com/web/" });
+for (const type of [undefined, "201", 0, 207, 210, 220, 240, 1251, 1253, 2000, 1518, 99999]) {
+  await vm.runInContext(`navigator.serviceWorker.ready.then(r => r.showNotification('New message', {data:{type:${JSON.stringify(type)}}}))`, snap.context);
+}
+assert.equal(snap.events.length, 10, "Snaps, typing, reactions, ended calls, suggestions and unknown categories stay silent");
+vm.runInContext("window.__vigilWebAlertsAllowed = false", snap.context);
+await vm.runInContext("navigator.serviceWorker.ready.then(r => r.showNotification('Message', {data:{type:201}}))", snap.context);
+assert.equal(snap.events.length, 10);
+await assert.rejects(vm.runInContext("navigator.serviceWorker.ready.then(r => r.pushManager.subscribe())", snap.context), /not configured/u);
+assert.equal(await vm.runInContext("navigator.serviceWorker.getRegistrations().then(r => r.length)", snap.context), 0,
+  "The compatibility bridge must not install workers or intercept network requests");
+console.log("Opt-in notifications, Snapchat worker contact filtering, and private payload isolation passed.");

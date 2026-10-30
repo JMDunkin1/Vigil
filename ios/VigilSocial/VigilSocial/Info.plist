@@ -53,6 +53,8 @@
     <string>Save a photo to your Camera Roll when you choose Save to Camera Roll.</string>
     <key>VigilService</key>
     <string>$(VIGIL_SERVICE)</string>
+    <key>VigilPushEnvironment</key>
+    <string>$(VIGIL_PUSH_ENVIRONMENT)</string>
     <key>VigilUnclassifiedMediaPolicy</key>
     <string>$(VIGIL_UNCLASSIFIED_MEDIA_POLICY)</string>
     <key>UIApplicationSupportsIndirectInputEvents</key>

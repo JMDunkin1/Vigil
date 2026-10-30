@@ -130,7 +130,7 @@ test("native polling and delivery preserve policy, session isolation, and separa
   assert.match(source, /policyAllows\(\), UIApplication\.shared\.applicationState == \.active/u);
   assert.match(source, /contentWorld: \.defaultClient/u);
   assert.match(source, /webView\.url == documentURL, instagramAccessAllowed\(webView\)/u);
-  assert.match(source, /guard service != \.instagram, enabled/u, "Generic page events cannot deliver Instagram alerts");
+  assert.match(source, /guard service != \.instagram, service != \.snapchat, enabled/u, "Generic page events cannot deliver contact-only service alerts");
   assert.match(source, /isAuthorized, remindersEnabled, !preferences\.savedScheduleUnreadable/u);
   const app = readFileSync(join(root, "ios/VigilSocial/VigilSocial/VigilSocialApp.swift"), "utf8");
   assert.match(app, /else \{ SocialNotifications\.shared\.invalidateWebAlerts\(\) \}/u);

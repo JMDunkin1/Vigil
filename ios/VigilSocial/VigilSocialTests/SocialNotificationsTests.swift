@@ -3,6 +3,20 @@ import WebKit
 @testable import VigilSocial
 
 final class SocialNotificationsTests: XCTestCase {
+    @MainActor
+    func testOwnerContactSelectionAppliesOnceAndKeepsOtherServicesOff() async throws {
+        let name = "VigilNotificationSelectionTests-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        defaults.set(["youtube", "reddit"], forKey: "VigilSocial.webAlerts.services")
+        let first = SocialNotifications(defaults: defaults)
+        XCTAssertEqual(first.enabledServices, ["instagram", "snapchat"])
+        XCTAssertEqual(Set(SocialNotifications.supportedServices), Set(SocialService.allCases))
+        await first.setEnabled(false, for: .instagram)
+        let next = SocialNotifications(defaults: defaults)
+        XCTAssertEqual(next.enabledServices, ["snapchat"], "Later choices must not be overwritten on launch")
+    }
+
     func testInstagramEnableLinkIsExactAndCannotSupplyDestinations() throws {
         for value in ["vigilsocial://notifications/instagram", "vigil-instagram://notifications/instagram"] {
             XCTAssertTrue(InstagramMessageAlerts.isEnableURL(try XCTUnwrap(URL(string: value))))
@@ -20,7 +34,8 @@ final class SocialNotificationsTests: XCTestCase {
         configuration.websiteDataStore = .nonPersistent()
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.loadHTMLString("<html><body>Inbox fixture</body></html>", baseURL: SocialNotifications.instagramInboxURL)
-        try await waitForAlertCondition("document.readyState === 'complete'", in: webView)
+        // Do not mistake the initial blank document for the completed fixture.
+        try await waitForAlertCondition("document.readyState === 'complete' && document.body?.textContent === 'Inbox fixture'", in: webView)
         _ = try await webView.callAsyncJavaScript(#"""
             Object.defineProperty(document, 'visibilityState', { get: () => 'visible' });
             globalThis.fixtureTime = 1800000000000;
@@ -35,7 +50,12 @@ final class SocialNotificationsTests: XCTestCase {
             };
             return true;
             """#, arguments: [:], in: nil, contentWorld: .defaultClient)
-        let initial = try await webView.callAsyncJavaScript(InstagramMessageAlerts.inboxScript,
+        // loadHTMLString keeps an about:blank location on this WebKit runtime.
+        // This isolated fixture tests the baseline, without a live account or
+        // network navigation. Supply its location lexically, not in production.
+        let fixtureScript = "const location = {protocol:'https:',hostname:'www.instagram.com',origin:'https://www.instagram.com'};\n"
+            + InstagramMessageAlerts.inboxScript
+        let initial = try await webView.callAsyncJavaScript(fixtureScript,
             arguments: ["generation": "first"], in: nil, contentWorld: .defaultClient) as? [String: Any]
         XCTAssertEqual(initial?["status"] as? String, "ready")
         XCTAssertEqual(initial?["hasMessage"] as? Bool, false)
@@ -45,13 +65,13 @@ final class SocialNotificationsTests: XCTestCase {
                 timestamp:String(BigInt(Date.now())*1000n)}];
             return true;
             """#, arguments: [:], in: nil, contentWorld: .defaultClient)
-        let incoming = try await webView.callAsyncJavaScript(InstagramMessageAlerts.inboxScript,
+        let incoming = try await webView.callAsyncJavaScript(fixtureScript,
             arguments: ["generation": "first"], in: nil, contentWorld: .defaultClient) as? [String: Any]
         XCTAssertEqual(incoming?["hasMessage"] as? Bool, true)
         XCTAssertEqual(Set(incoming?.keys.map { $0 } ?? []), ["status", "hasMessage"])
         let isolated = try await webView.evaluateJavaScript("globalThis.__vigilInstagramMessageBaseline === undefined") as? Bool
         XCTAssertEqual(isolated, true)
-        let resumed = try await webView.callAsyncJavaScript(InstagramMessageAlerts.inboxScript,
+        let resumed = try await webView.callAsyncJavaScript(fixtureScript,
             arguments: ["generation": "resumed"], in: nil, contentWorld: .defaultClient) as? [String: Any]
         XCTAssertEqual(resumed?["hasMessage"] as? Bool, false)
     }

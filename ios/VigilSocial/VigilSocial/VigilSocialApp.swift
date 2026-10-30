@@ -54,7 +54,7 @@ struct VigilSocialApp: App {
                         if service == .instagram { store?.open(SocialNotifications.instagramInboxURL) }
                         else { store?.select(service) }
                     }
-                    await SocialNotifications.shared.refreshAuthorization()
+                    await SocialNotifications.shared.activateSelectedAlerts()
                     SocialNotifications.shared.rescheduleReminders(preferences: store.preferences)
                 }
                 .onOpenURL { url in
@@ -110,6 +110,14 @@ final class SocialAppDelegate: NSObject, UIApplicationDelegate {
                 localizedSubtitle: nil, icon: UIApplicationShortcutIcon(systemImageName: "square.grid.2x2"))]
         }
         return true
+    }
+
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        RemoteSocialNotifications.shared.registered(deviceToken)
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        RemoteSocialNotifications.shared.registrationFailed()
     }
 
     func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
