@@ -54,6 +54,10 @@ jobs:
         timeout-minutes: 3
         run: node scripts/test-instagram-chat-media-webkit.mjs
 
+      - name: Test Snapchat call layout, received Snaps, and WebRTC audio
+        timeout-minutes: 3
+        run: node scripts/test-snapchat-calls-webkit.mjs
+
       - name: Test Instagram shared post browser regressions
         timeout-minutes: 3
         shell: bash

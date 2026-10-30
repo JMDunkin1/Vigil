@@ -1605,6 +1605,21 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         return result
     }
 
+    nonisolated static func sanitizedSnapchatCallDiagnostics(_ raw: [String: Any]) -> [String: Any] {
+        var result: [String: Any] = [:]
+        if let value = raw["presentation"] as? String, ["none", "call", "viewer", "camera"].contains(value) {
+            result["presentation"] = value
+        }
+        if let value = raw["session"] as? String,
+           ["unsupported", "auto", "playback", "play-and-record", "ambient", "transient", "transient-solo"].contains(value) {
+            result["session"] = value
+        }
+        for key in ["shells", "audio", "playing", "muted", "live"] {
+            if let value = raw[key] as? Int, (0...16).contains(value) { result[key] = value }
+        }
+        return result
+    }
+
     private func recordSnapchatRenderState(_ body: [String: Any]) {
         // A bounded local receipt contains only fixed render flags. Never save
         // chat text, names, conversation URLs/IDs, credentials or raw payloads.
@@ -1627,6 +1642,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         if let camera = body["camera"] as? [String: Any] {
             snapshot["camera"] = Self.sanitizedSnapchatCameraDiagnostics(camera)
+        }
+        if let call = body["call"] as? [String: Any] {
+            snapshot["call"] = Self.sanitizedSnapchatCallDiagnostics(call)
         }
         snapchatRenderSnapshots.append(snapshot)
         snapchatRenderSnapshots = Array(snapchatRenderSnapshots.suffix(16))

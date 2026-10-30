@@ -64,7 +64,7 @@ enum DOMAdapters {
                 )
             : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
-            (service == .snapchat ? snapchatDesktopIdentityBootstrap + snapchatCameraBootstrap : "")
+            (service == .snapchat ? snapchatDesktopIdentityBootstrap + snapchatCameraBootstrap + snapchatCallBootstrap : "")
             + (service == .linkedin ? linkedin : "")
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
@@ -73,6 +73,73 @@ enum DOMAdapters {
             + safetyBootstrap
         )
     }
+
+    // WebKit owns WKWebView's media audio session. Configure that session in
+    // the document, after real microphone capture succeeds, rather than
+    // changing the host app's unrelated AVAudioSession or forcing an output.
+    private static let snapchatCallBootstrap = #"""
+    (() => {
+      const trusted = () => window === window.top && location.protocol === 'https:'
+        && (!location.port || location.port === '443')
+        && ['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+        && /^\/web(?:\/|$)/.test(location.pathname);
+      if (!trusted() || window.__vigilSnapchatCallsInstalled) return;
+      window.__vigilSnapchatCallsInstalled = true;
+      const devices = navigator.mediaDevices;
+      if (typeof devices?.getUserMedia !== 'function' || !navigator.audioSession) return;
+      const session = navigator.audioSession;
+      const tracks = new Set();
+      let timer = null, previousType = null, owned = false;
+      const publish = () => { try { window.__vigilPublishSnapchatRenderState?.(); } catch (_) {} };
+      const release = () => {
+        if (!owned) return;
+        owned = false;
+        // Only undo our own value. Preserve an intervening site/user change.
+        try {
+          if (session.type === 'play-and-record') {
+            // WebKit can retain capture gain/routing after the last mic stops.
+            // Reset playback before returning normal category selection to it.
+            if (previousType === 'auto') session.type = 'playback';
+            session.type = previousType;
+          }
+        } catch (_) {}
+        previousType = null;
+        publish();
+      };
+      const reconcile = () => {
+        timer = null;
+        for (const track of tracks) if (track.readyState === 'ended') tracks.delete(track);
+        if (!tracks.size || !trusted() || document.visibilityState === 'hidden') release();
+        else if (!owned) {
+          try {
+            previousType = session.type;
+            session.type = 'play-and-record';
+            owned = true;
+            publish();
+          } catch (_) { previousType = null; }
+        }
+        // stop() deliberately emits no ended event. Observe live track state
+        // without replacing stop(), clone(), constraints or stream identity.
+        if (tracks.size) timer = setTimeout(reconcile, 500);
+      };
+      const refresh = () => { clearTimeout(timer); reconcile(); };
+      const capture = devices.getUserMedia.bind(devices);
+      devices.getUserMedia = async function(request) {
+        const stream = await capture(request);
+        if (trusted() && request?.audio) {
+          for (const track of stream.getAudioTracks()) {
+            if (tracks.has(track) || track.readyState === 'ended') continue;
+            tracks.add(track);
+            track.addEventListener('ended', refresh, { once: true });
+          }
+          refresh();
+        }
+        return stream;
+      };
+      document.addEventListener('visibilitychange', refresh);
+      addEventListener('pagehide', () => { clearTimeout(timer); release(); });
+    })();
+    """#
 
     private static let snapchatDesktopIdentityBootstrap = #"""
     (() => {
@@ -1667,7 +1734,7 @@ enum DOMAdapters {
         let accounts = informationalAccounts.compactMap(InstagramInformationalAccounts.normalizedUsername)
         let encoded = (try? JSONEncoder().encode(accounts)).flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
         return (service == .instagram ? instagramReferenceSearchGuard + instagramSingleReelGuard : "")
-            + (service == .snapchat ? snapchatCameraBootstrap : "") + lockdownProbe(service) + serviceScript(service)
+            + (service == .snapchat ? snapchatCameraBootstrap + snapchatCallBootstrap : "") + lockdownProbe(service) + serviceScript(service)
             .replacingOccurrences(of: "/* VIGIL_INFORMATIONAL_ACCOUNTS */ []", with: encoded)
     }
 
@@ -6566,13 +6633,18 @@ enum DOMAdapters {
           [data-vigil-snap-layout] .hpge3 { max-width: 100%; max-height: 100%; }
           /* The lightbox uses a second desktop grid track, often half the
              phone's height. Give the original player the whole main panel. */
-          [data-vigil-snap-media="viewer"] ._XMCw {
+          [data-vigil-snap-media="viewer"] ._XMCw,
+          [data-vigil-snap-media="call"] ._XMCw {
             grid-template-areas: "main" !important;
             grid-template-columns: minmax(0, 1fr) !important;
             grid-template-rows: minmax(0, 1fr) !important;
             gap: 0 !important; height: 100% !important;
           }
-          [data-vigil-snap-media="viewer"] ._XMCw > .ChLAv { display: none !important; }
+          /* Any surviving desktop secondary item would create an implicit
+             track even after grid-template-rows is collapsed. This includes
+             an ongoing call when the user opens a received Snap during it. */
+          [data-vigil-snap-media="viewer"] ._XMCw > :is(.ChLAv, .Lxuen, .AGZZI, .Rnl06, .PvwWu, .hpge3),
+          [data-vigil-snap-media="viewer"] ._XMCw > .S4e9r:not(:has(.ecBYF)) { display: none !important; }
           [data-vigil-snap-media="viewer"] ._XMCw > .S4e9r:has(.ecBYF) {
             grid-area: main !important; position: relative !important;
             inset: auto !important; width: 100% !important; height: 100% !important;
@@ -6606,6 +6678,60 @@ enum DOMAdapters {
           [data-vigil-snap-media="viewer"] .Z8KwB { inset-inline-start: 8px; }
           [data-vigil-snap-media="viewer"] .fOsry { inset-inline-end: 8px; }
           [data-vigil-snap-media="viewer"] .hRnph { width: 44px; height: 44px; }
+          /* The desktop client mounts incoming calls in a 300x528 drawer,
+             active calls in either grid track, and a separate two-tile grid.
+             Collapse both desktop grids, preserving every original control. */
+          [data-vigil-snap-media="call"] > :is(.Vbjsg, .c1qK9),
+          [data-vigil-snap-media="viewer"] > :is(.Vbjsg, .c1qK9) {
+            grid-template-rows: minmax(0, 1fr) !important;
+          }
+          [data-vigil-snap-media="call"] ._XMCw > :is(.ChLAv, .Lxuen, .AGZZI, .S4e9r, .Rnl06, .PvwWu, .hpge3):not([data-vigil-snap-call]) {
+            display: none !important;
+          }
+          [data-vigil-snap-media="call"] ._XMCw > [data-vigil-snap-call] {
+            grid-area: main !important; position: relative !important;
+            inset: auto !important; align-self: stretch !important;
+            width: 100% !important; height: 100% !important;
+            min-width: 0 !important; min-height: 0 !important;
+            max-width: none !important; max-height: none !important;
+          }
+          [data-vigil-snap-media="call"] ._XMCw { grid-area: 1 / 1; }
+          /* Some variants put the only Hang up action above the grid, outside
+             the call. Keep that genuine header reachable over the full call;
+             don't hide it to remove the desktop header's extra grid row. */
+          [data-vigil-snap-media="call"] > :is(.Vbjsg, .c1qK9) { position: relative; }
+          [data-vigil-snap-media="call"] > :is(.Vbjsg, .c1qK9) > .wUTRn {
+            position: absolute; inset: 0 0 auto; width: 100%; height: 56px;
+            box-sizing: border-box; z-index: 104;
+            background: var(--sigSurface, #1e1e1e);
+          }
+          [data-vigil-snap-media="viewer"] > :is(.Vbjsg, .c1qK9) > .wUTRn,
+          [data-vigil-snap-media="call"] > :is(.Vbjsg, .c1qK9):has([data-vigil-snap-call="incoming"]) > .wUTRn { display: none; }
+          [data-vigil-snap-call] :is(.OJ_8M, .TaVJ0, .Nmv1s, .aflHs, .oZElr, .BS_OD) {
+            min-width: 0 !important; min-height: 0 !important;
+          }
+          [data-vigil-snap-call] :is(.TaVJ0, .Nmv1s) { border-radius: 0; }
+          [data-vigil-snap-call="active"] .Nmv1s { padding-inline: 0; padding-block-start: 0; }
+          /* Only the verified 1:1 grid becomes a full remote tile plus a small
+             self preview. Group calls and screen sharing keep Snap's grids. */
+          [data-vigil-snap-call="active"] .oZElr:has(> .oKUDa) {
+            width: 100% !important; height: 100% !important; aspect-ratio: auto !important;
+          }
+          [data-vigil-snap-call="active"] .BS_OD.oKUDa {
+            width: 100% !important; height: 100% !important; aspect-ratio: auto !important;
+            grid-template: "p1" minmax(0, 1fr) / minmax(0, 1fr) !important;
+            position: relative; align-items: stretch;
+          }
+          [data-vigil-snap-call="active"] .oKUDa > :not(.XGsyQ) {
+            height: 100% !important; inset: auto !important;
+          }
+          [data-vigil-snap-call="active"] .oKUDa > .XGsyQ {
+            position: absolute !important; inset: auto 8px 8px auto !important;
+            width: min(28%, 112px) !important; height: auto !important;
+            aspect-ratio: 3 / 4; grid-area: auto !important;
+          }
+          [data-vigil-snap-call="active"] .oKUDa > .XGsyQ > div { height: 100%; }
+          [data-vigil-snap-call] .qv9Ug { object-fit: contain !important; }
           [data-vigil-snap-media] > :is(.bkCIM, .vigil-snap-tabs) { display: none !important; }
           /* Reply cameras are portalled outside the chat shell. Preserve the
              complete captured frame rather than covering a narrow 9:16 box. */
@@ -6673,6 +6799,8 @@ enum DOMAdapters {
         if (typeof window.__vigilBridge !== 'function') return;
         const away = document.querySelector('.aXEpU .ejVI4');
         const bodyStyle = document.body ? getComputedStyle(document.body) : null;
+        const callShells = [...document.querySelectorAll('._XMCw > :is(.hpge3, .Rnl06, .PvwWu):has(.OJ_8M)')];
+        const remoteAudio = callShells.flatMap(node => [...node.querySelectorAll('audio')]);
         const state = {
           focused: document.hasFocus(), visible: document.visibilityState === 'visible',
           chatMounted: Boolean(document.querySelector('.aXEpU')),
@@ -6683,7 +6811,16 @@ enum DOMAdapters {
           bodyVisible: Boolean(bodyStyle && bodyStyle.visibility !== 'hidden' && bodyStyle.display !== 'none'),
           layout: currentShell?.getAttribute('data-vigil-snap-layout') || 'none',
           pageVerdict: document.documentElement.dataset.vigilPageVerdict || 'none',
-          camera: window.__vigilSnapchatCameraState?.() || { phase: 'untracked', pipeline: 'untracked' }
+          camera: window.__vigilSnapchatCameraState?.() || { phase: 'untracked', pipeline: 'untracked' },
+          call: {
+            presentation: currentShell?.getAttribute('data-vigil-snap-media') || 'none',
+            session: navigator.audioSession?.type || 'unsupported',
+            shells: callShells.length, audio: remoteAudio.length,
+            playing: remoteAudio.filter(media => !media.paused && !media.ended).length,
+            muted: remoteAudio.filter(media => media.muted || media.volume === 0).length,
+            live: remoteAudio.filter(media => media.srcObject?.getAudioTracks?.()
+              .some(track => track.readyState === 'live')).length
+          }
         };
         const signature = JSON.stringify(state);
         if (signature === lastRenderState) return;
@@ -6918,14 +7055,28 @@ enum DOMAdapters {
         // Snapchat's own Close Chat, modal dismissal, and history remain in
         // charge of navigation. Never navigate to or read conversation IDs here.
         const dialog = main.querySelector('.LtQF8');
-        const detail = main.querySelector('.aXEpU, .S4e9r, .Rnl06, .hpge3')
+        const detail = main.querySelector('.aXEpU, .S4e9r, .Rnl06, .PvwWu, .hpge3')
           || !/^\/web\/?$/.test(location.pathname);
         set(shell, 'data-vigil-snap-layout', dialog ? 'dialog' : detail ? 'detail' : preferredPanel);
-        const viewer = main.querySelector('._XMCw > .S4e9r .ecBYF .RdKti .vDdE2');
+        // The outer lightbox exists while loading and on privacy/away screens.
+        // Waiting for the inner player leaves these legitimate phases split.
+        const viewer = main.querySelector('._XMCw > .S4e9r .ecBYF');
+        const calls = [...main.querySelectorAll('._XMCw > :is(.hpge3, .Rnl06, .PvwWu):has(.OJ_8M)')];
+        const call = calls.find(node => node.matches('.hpge3')) || calls[0];
+        for (const node of main.querySelectorAll('[data-vigil-snap-call]')) {
+          if (node !== call) node.removeAttribute('data-vigil-snap-call');
+        }
+        if (call) set(call, 'data-vigil-snap-call', call.matches('.hpge3') ? 'incoming' : 'active');
+        // Desktop Snapchat omits playsinline. Keep remote video in the same
+        // inspected WebKit surface, with its call actions, on an iPhone.
+        for (const video of main.querySelectorAll('._XMCw :is(.OJ_8M, .ecBYF) video')) {
+          if (!video.playsInline) video.playsInline = true;
+        }
         const camera = document.querySelector('.AEZEl .BN1L1');
-        if (viewer || camera) set(shell, 'data-vigil-snap-media', camera ? 'camera' : 'viewer');
+        if (viewer || camera || call) set(shell, 'data-vigil-snap-media', camera ? 'camera'
+          : call?.matches('.hpge3') ? 'call' : viewer ? 'viewer' : 'call');
         else shell.removeAttribute('data-vigil-snap-media');
-        if (viewer) installExport(viewer.closest('.ecBYF'));
+        if (viewer) installExport(viewer);
         for (const preview of document.querySelectorAll('.BN1L1:has(img)')) installExport(preview);
         for (const group of main.querySelectorAll('.aXEpU .ET_CR')) installGroupExport(group);
         if (detail) preferredPanel = 'feed';
@@ -7064,6 +7215,12 @@ enum DOMAdapters {
       addEventListener('focus', schedule);
       addEventListener('blur', schedule);
       document.addEventListener('visibilitychange', schedule);
+      for (const name of ['play', 'pause', 'volumechange', 'loadedmetadata', 'emptied', 'ended']) {
+        document.addEventListener(name, event => {
+          if (event.target instanceof HTMLMediaElement
+              && event.target.closest('._XMCw > :is(.hpge3, .Rnl06, .PvwWu)')) schedule();
+        }, true);
+      }
       window.visualViewport?.addEventListener('resize', schedule);
       window.visualViewport?.addEventListener('scroll', schedule);
       matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', schedule);

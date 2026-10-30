@@ -2969,6 +2969,201 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("!document.querySelector('[data-vigil-snap-media]') && getComputedStyle(document.querySelector('.ChLAv')).visibility === 'visible'", in: webView)
     }
 
+
+    @MainActor
+    func testSnapchatIncomingAndOngoingCallsAndLoadingSnapsFillPhone() async throws {
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(source: DOMAdapters.installedControlsScript(for: .snapchat),
+            injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+        let configuration = WKWebViewConfiguration()
+        configuration.userContentController = controller
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.allowsInlineMediaPlayback = true
+        configuration.mediaTypesRequiringUserActionForPlayback = []
+        let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 780), configuration: configuration)
+        let window = UIWindow(frame: webView.bounds)
+        let viewController = UIViewController()
+        window.rootViewController = viewController
+        viewController.view.addSubview(webView)
+        window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture + Self.snapchatCallFixture,
+            baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-layout=feed]') !== null", in: webView)
+        for width in [320, 390, 430] {
+            webView.frame.size.width = CGFloat(width)
+            try await waitForJavaScriptCondition("innerWidth === \(width)", in: webView)
+            for kind in ["hpge3", "Rnl06", "PvwWu"] {
+                _ = try await webView.evaluateJavaScript("fixtureOpenCall('\(kind)')")
+                let state = try await webView.callAsyncJavaScript("""
+                    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                    return fixtureCallGeometry();
+                    """, arguments: [:], in: nil, contentWorld: .page) as? [String: Any]
+                XCTAssertGreaterThanOrEqual(state?["width"] as? Double ?? 0, Double(width - 1), kind)
+                XCTAssertGreaterThanOrEqual(state?["height"] as? Double ?? 0, 779, kind)
+                XCTAssertEqual(state?["inline"] as? Bool, true, kind)
+                XCTAssertEqual(state?["covered"] as? Bool, false, kind)
+                XCTAssertEqual(state?["overflow"] as? Bool, false, kind)
+                if kind != "hpge3" {
+                    XCTAssertGreaterThanOrEqual(state?["remoteWidth"] as? Double ?? 0, Double(width - 30), kind)
+                    XCTAssertGreaterThanOrEqual(state?["remoteHeight"] as? Double ?? 0, 600, kind)
+                }
+                _ = try await webView.evaluateJavaScript("fixtureCloseCall()")
+            }
+        }
+        _ = try await webView.evaluateJavaScript("fixtureOpenLoadingSnap()")
+        let loading = try await webView.callAsyncJavaScript("""
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+            const r = document.querySelector('.ecBYF').getBoundingClientRect();
+            return r.width >= 429 && r.height >= 779
+              && getComputedStyle(document.querySelector('.ChLAv')).display === 'none';
+            """, arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(loading, true, "Loading/away Snap must not wait for the inner player before filling the phone")
+        _ = try await webView.evaluateJavaScript("fixtureCloseSnap();fixtureOpenCall('Rnl06');fixtureOpenSnap('rows')")
+        try await waitForJavaScriptCondition("""
+            document.querySelector('[data-vigil-snap-media=viewer]') !== null
+              && document.querySelector('.ecBYF').getBoundingClientRect().height >= 779
+              && getComputedStyle(document.getElementById('fixture-call')).display === 'none'
+            """, in: webView)
+        _ = try await webView.evaluateJavaScript("fixtureCloseSnap()")
+        try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=call]') !== null && fixtureCallGeometry().height >= 779", in: webView)
+        _ = try await webView.evaluateJavaScript("fixtureOpenCall('PvwWu',true)")
+        try await waitForJavaScriptCondition("fixtureCallGeometry().height >= 779 && fixtureHangupReachable()", in: webView)
+        _ = try await webView.evaluateJavaScript("document.getElementById('fixture-hangup').click()")
+        try await waitForJavaScriptCondition("!document.getElementById('fixture-call')", in: webView)
+    }
+
+    func testSnapchatCallDiagnosticsExcludePrivateContentAndUnboundedValues() {
+        let result = SocialWebViewStore.sanitizedSnapchatCallDiagnostics([
+            "presentation": "call", "session": "play-and-record", "shells": 1,
+            "audio": 2, "playing": 1, "muted": -1, "live": 1000,
+            "caller": "Private name", "conversationURL": "https://example.com/private",
+            "deviceId": "private-device", "pixels": "private-frame"
+        ])
+        XCTAssertEqual(Set(result.keys), Set(["presentation", "session", "shells", "audio", "playing"]))
+        XCTAssertTrue(SocialWebViewStore.sanitizedSnapchatCallDiagnostics([
+            "presentation": "private", "session": "private", "audio": Double.nan
+        ]).isEmpty)
+    }
+
+    @MainActor
+    func testSnapchatRealWebRTCCallAudioRespectsPreferenceAndSuspension() async throws {
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
+            websiteDataStore: .nonPersistent())
+        let webView = store.webView(for: .snapchat)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 780)
+        let window = UIWindow(frame: webView.bounds)
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture + Self.snapchatCallFixture,
+            baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("document.documentElement.dataset.vigilPageVerdict === 'safe'", in: webView)
+        _ = try await webView.callAsyncJavaScript("globalThis.fetch=async url=>({status:200,url}); return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        let allowed = await store.confirmServiceAccess()
+        XCTAssertTrue(allowed)
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        await store.prepareForegroundInteraction()
+        let result = try await webView.callAsyncJavaScript("""
+            fixtureOpenCall('Rnl06');
+            await fixtureStartLoopback();
+            return await fixtureLoopbackResult();
+            """, arguments: [:], in: nil, contentWorld: .page) as? [String: Any]
+        XCTAssertGreaterThan(result?["energy"] as? Double ?? 0, 0.005, "Real WebRTC must deliver non-silent remote audio")
+        XCTAssertEqual(result?["paused"] as? Bool, false)
+        XCTAssertEqual(result?["muted"] as? Bool, false)
+        XCTAssertEqual(result?["videoWidth"] as? Int, 320)
+        XCTAssertEqual(result?["videoHeight"] as? Int, 480)
+        _ = try await webView.evaluateJavaScript("window.__vigilSetAudioPreference(false)")
+        try await waitForJavaScriptCondition("fixtureLoopback.media.muted && fixtureLoopback.context.state === 'suspended'", in: webView)
+        _ = try await webView.evaluateJavaScript("window.__vigilSetAudioPreference(true)")
+        try await waitForJavaScriptCondition("!fixtureLoopback.media.muted && fixtureLoopback.context.state === 'running'", in: webView)
+        store.suspendAllMedia(relinquishExternalPlayback: false)
+        try await waitForJavaScriptCondition("fixtureLoopback.media.paused && fixtureLoopback.context.state === 'suspended'", in: webView)
+        _ = try await webView.callAsyncJavaScript("await fixtureStopLoopback(); return true;",
+            arguments: [:], in: nil, contentWorld: .page)
+        withExtendedLifetime(store) {}
+    }
+
+    // Selectors and desktop geometry verified against public client 02365173.
+    // Fictional peers; generated media never contacts Snapchat or uses hardware.
+    private static let snapchatCallFixture = #"""
+    <style>
+    .Rnl06{grid-area:secondary}.PvwWu{grid-area:main}.hpge3{position:fixed;width:300px;height:528px;right:0;align-self:center;z-index:103}
+    .WcgH9{grid-template-rows:60px minmax(0,1fr)}.wUTRn{display:flex;align-items:center;justify-content:flex-end;padding:8px}.wUTRn button{min-height:44px;background:#d12c4c;color:#fff;padding:8px 16px}
+    .OJ_8M{display:flex;flex-direction:column;width:100%;height:100%;background:#121212;color:#fff}
+    .TptKW{display:flex;flex-direction:column;border-radius:10px;padding:12px;box-sizing:border-box;background:#1e1e1e;border:1px solid #333;padding-bottom:70px}.TptKW>*{margin-bottom:10px}
+    .Nmv1s{flex:1;max-height:100%;overflow:hidden;position:relative;background:transparent;border:none}.TaVJ0{height:100%}
+    .aflHs{display:flex;height:100%;align-items:center;justify-content:center;padding:5px;overflow:hidden}
+    .oZElr{max-width:100%;height:100%;box-sizing:border-box;display:grid;align-items:center}
+    .rhTUy{position:relative;align-items:center;aspect-ratio:.6111111111}
+    .BS_OD{display:grid;align-items:flex-end}.oKUDa{aspect-ratio:1.1111111111;grid-template:'p1 user' 1fr/2fr 1fr}
+    .BS_OD>div{box-sizing:border-box;width:100%;max-height:100%;padding:.5vw;position:relative}.BS_OD>div>div{border-radius:10px;display:flex;justify-content:center;align-items:center;height:100%;flex:1}
+    .BS_OD>div:nth-child(2){grid-area:p1}.BS_OD .XGsyQ{grid-area:user;z-index:1}
+    .c9EV9,.GKDy4{width:100%;height:100%;position:relative;overflow:hidden;background:#28485b;border-radius:15px}.BS_OD video{width:100%;height:100%;object-fit:cover}
+    .fixture-call-controls{display:flex;flex:0 0 48px;gap:12px;justify-content:center}.fixture-call-controls button{min-width:80px;min-height:44px;background:#48535b;color:#fff}.fixture-call-controls button:last-child{background:#d12c4c}
+    </style><script>
+    function fixtureCloseCall(){document.querySelectorAll('#fixture-call,.Vbjsg>.wUTRn').forEach(e=>e.remove());document.querySelector('.Vbjsg').classList.remove('WcgH9');document.querySelector('._XMCw').style.cssText=''}
+    function fixtureOpenCall(kind='Rnl06',externalHeader=false){
+      fixtureCloseSnap();fixtureCloseCall();
+      const call=document.createElement('div');call.id='fixture-call';call.className=kind;
+      call.innerHTML=`<div class="OJ_8M"><div class="${kind==='hpge3'?'TaVJ0':'Nmv1s'} TptKW">${kind==='hpge3'?'<div>Alex is calling…</div>':''}<div class="aflHs" data-bp="compact"><div class="oZElr XZxfd rhTUy"><div class="BS_OD oKUDa"><div class="XGsyQ"><div><div class="c9EV9"><div class="GKDy4">You</div></div></div></div><div><div><div class="c9EV9"><div class="GKDy4"><video id="fixture-call-video" autoplay muted></video></div></div></div></div></div></div></div><div class="fixture-call-controls"><button id="fixture-call-action" onclick="window.fixtureCallAction=true">${kind==='hpge3'?'Join':'Mute'}</button><button onclick="fixtureCloseCall()">${kind==='hpge3'?'Not Now':'End'}</button></div></div></div>`;
+      document.querySelector('._XMCw').style.cssText='grid-template-areas:"secondary" "main";grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px';
+      document.querySelector('._XMCw').appendChild(call);
+      if(externalHeader){document.querySelector('.Vbjsg').classList.add('WcgH9');
+        document.querySelector('.Vbjsg').insertAdjacentHTML('afterbegin','<div class="wUTRn"><button id="fixture-hangup" onclick="fixtureCloseCall()">Hang up</button></div>');
+        call.querySelector('.fixture-call-controls button:last-child').remove();}
+    }
+    function fixtureHangupReachable(){const b=document.getElementById('fixture-hangup'),r=b.getBoundingClientRect();return r.width>0 && r.height>=44 && b.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2));}
+    function fixtureCallGeometry(){
+      const root=document.getElementById('fixture-call'),box=root.getBoundingClientRect(),remote=root.querySelector('.BS_OD>div:nth-child(2)').getBoundingClientRect();
+      const control=document.getElementById('fixture-call-action'),r=control.getBoundingClientRect();
+      return {width:box.width,height:box.height,remoteWidth:remote.width,remoteHeight:remote.height,
+        inline:document.getElementById('fixture-call-video').playsInline,
+        covered:!control.contains(document.elementFromPoint(r.left+r.width/2,r.top+r.height/2)),
+        overflow:document.documentElement.scrollWidth>innerWidth};
+    }
+    function fixtureOpenLoadingSnap(){fixtureOpenSnap('rows');document.querySelector('.RdKti').remove();}
+    async function fixtureStartLoopback(){
+      const context=new AudioContext();await context.resume();
+      const oscillator=context.createOscillator();oscillator.frequency.value=440;
+      const gain=context.createGain();gain.gain.value=.1;oscillator.connect(gain);
+      const send=context.createMediaStreamDestination();gain.connect(send);oscillator.start();
+      const canvas=document.createElement('canvas');canvas.width=320;canvas.height=480;
+      const paint=()=>{const g=canvas.getContext('2d');g.fillStyle='#84b4d4';g.fillRect(0,0,320,480);
+        g.fillStyle='#f4b942';g.fillRect(0,0,40,480);g.fillStyle='#df635d';g.fillRect(280,0,40,480)};
+      paint();const videoStream=canvas.captureStream(5),videoTimer=setInterval(paint,200);
+      for(const track of videoStream.getTracks())send.stream.addTrack(track);
+      const a=new RTCPeerConnection({iceServers:[]}),b=new RTCPeerConnection({iceServers:[]});
+      a.onicecandidate=e=>{if(e.candidate)b.addIceCandidate(e.candidate).catch(()=>{})};
+      b.onicecandidate=e=>{if(e.candidate)a.addIceCandidate(e.candidate).catch(()=>{})};
+      const received=new Promise(resolve=>b.ontrack=e=>resolve(e.streams[0]));
+      for(const track of send.stream.getTracks())a.addTrack(track,send.stream);
+      await a.setLocalDescription(await a.createOffer());await b.setRemoteDescription(a.localDescription);
+      await b.setLocalDescription(await b.createAnswer());await a.setRemoteDescription(b.localDescription);
+      const stream=await received,media=document.createElement('audio');media.id='fixture-remote-audio';media.autoplay=true;
+      document.getElementById('fixture-call').prepend(media);media.srcObject=stream;
+      // React mounts/ref-assigns before its media effects. Let the insertion
+      // hold and asynchronous classification finish before explicit play().
+      await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));await media.play();
+      const video=document.getElementById('fixture-call-video');video.srcObject=stream;await video.play();
+      const analyser=context.createAnalyser();context.createMediaStreamSource(stream).connect(analyser);
+      window.fixtureLoopback={context,oscillator,a,b,media,analyser,video,videoStream,videoTimer};
+    }
+    async function fixtureLoopbackResult(){
+      await new Promise(r=>setTimeout(r,1000));
+      const {media,analyser}=fixtureLoopback,values=new Float32Array(analyser.fftSize);analyser.getFloatTimeDomainData(values);
+      return {energy:Math.sqrt(values.reduce((s,x)=>s+x*x,0)/values.length),paused:media.paused,muted:media.muted,
+        videoWidth:fixtureLoopback.video.videoWidth,videoHeight:fixtureLoopback.video.videoHeight};
+    }
+    async function fixtureStopLoopback(){const f=fixtureLoopback;f.oscillator.stop();clearInterval(f.videoTimer);
+      f.videoStream.getTracks().forEach(t=>t.stop());f.a.close();f.b.close();f.media.remove();await f.context.close();}
+    </script>
+    """#
+
     private static let snapchatMobileShellFixture = #"""
     <!doctype html><html theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
