@@ -15230,3 +15230,172 @@ extension VigilSocialTests {
         }
     }
 }
+
+extension VigilSocialTests {
+    static let instagramInteractionBoundariesHTML = #"""
+    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0}#thread{height:844px;overflow:auto}#thread>div{height:1200px}
+    #preview{display:block;width:150px;height:100px}#viewer{position:fixed;inset:0;background:white;z-index:2}
+    #stack{height:844px;overflow:auto}video{display:block;width:390px;height:700px}.card{height:844px}
+    .sheet{position:fixed;left:0;top:300px;width:390px;height:544px;background:white;z-index:4;overflow:auto}
+    #people{display:flex;width:100%;overflow:auto;height:90px}#people>div{min-width:1000px}
+    #query,#search{display:block;height:36px}#comment-list{height:280px;overflow:auto}#rows{height:1600px}
+    #sheet.animating{top:620px;height:224px;transition:transform 900ms linear}#sheet.raised{transform:translateY(-300px)}
+    </style><script>window.fetch=async()=>({ok:true,json:async()=>({})});window.fixtureMode='release';
+    </script></head><body><main id="thread"><div><div id="preview">Received Reel</div><input placeholder="Search messages"></div></main><script>
+    window.fixtureFire=(id,type,y=60)=>{const e=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,
+      isPrimary:true,clientX:100,clientY:y});document.getElementById(id).dispatchEvent(e);return e.defaultPrevented;};
+    window.fixtureOpen=()=>{
+      if(document.getElementById('viewer'))return;
+      const viewer=document.createElement('div');viewer.id='viewer';
+      if(fixtureMode!=='anonymous-release')viewer.setAttribute('role','dialog');
+      viewer.innerHTML='<div id="stack"><div class="card"><video id="reel"></video>'
+        +'<button id="send" aria-label="Send post">Send</button><button id="comments" aria-label="Comments">Comments</button></div>'
+        +'<div class="card"><video></video><button id="next" aria-label="Next reel">Next</button></div></div>';
+      document.body.append(viewer);
+      if(fixtureMode==='moved-preview')viewer.append(document.getElementById('preview'));
+      document.getElementById('send').onclick=()=>fixtureSheet(false);
+      document.getElementById('comments').onclick=()=>fixtureSheet(true);
+      if(fixtureMode.endsWith('-press')){const control=document.getElementById(fixtureMode==='comments-press'?'comments':'send');
+        control.onclick=null;control.onpointerup=()=>fixtureSheet(fixtureMode==='comments-press');}
+    };
+    document.getElementById('preview').onpointerup=()=>{if(!['ordinary-chat','cancelled-preview'].includes(fixtureMode))fixtureOpen();};
+    window.fixtureSheet=comments=>{
+      let sheet=document.createElement('section');sheet.id='sheet';sheet.className='sheet';sheet.setAttribute('role','dialog');
+      if(fixtureMode.endsWith('-reused')){
+        const stack=document.getElementById('stack');document.getElementById('viewer').append(...stack.children);
+        sheet=stack;sheet.id='sheet';sheet.className='sheet';sheet.setAttribute('role','dialog');
+      }
+      sheet.innerHTML=comments?'<div id="handle" role="button" aria-label="Drag comments" style="height:40px;touch-action:none">Grip</div>'
+        +'<h2>Comments</h2><div id="comment-list"><div id="rows">Comments</div></div><textarea id="query" placeholder="Add a comment"></textarea>'
+        :'<div id="search-box"><button id="search" aria-label="Search people">Search</button><input id="query" placeholder="Search"></div>'
+        +'<div id="people"><div><button id="friend"><img width="40" height="40" alt="Friend">Friend</button></div></div><div id="rows">More recipients</div>';
+      sheet.innerHTML+='<button id="close" aria-label="Close">Close</button><div style="height:1000px"></div>';
+      if(fixtureMode.endsWith('-reused'))document.getElementById('viewer').append(sheet);else document.body.append(sheet);
+      document.getElementById('close').onclick=()=>sheet.remove();
+      if(fixtureMode==='recipient-nested')document.getElementById('search-box').setAttribute('role','dialog');
+      if(['recipient-backdrop','recipient-retained'].includes(fixtureMode)){const backdrop=document.createElement('div');backdrop.setAttribute('role','dialog');
+        backdrop.id='backdrop';backdrop.style.cssText='position:fixed;inset:0;z-index:3;background:rgba(0,0,0,.4)';
+        backdrop.innerHTML='<button id="probe" style="position:absolute;top:100px">Backdrop</button>';
+        document.body.append(backdrop);backdrop.append(sheet);
+        if(fixtureMode==='recipient-retained'){backdrop.style.background='white';const viewer=document.getElementById('viewer');
+          viewer.setAttribute('aria-hidden','true');backdrop.prepend(viewer);}}
+      if(fixtureMode==='recipient-animation'){
+        sheet.classList.add('animating');fixtureAnimationStart=performance.now();fixtureAnimationSamples=0;fixtureAnimationMisses=0;
+        const sample=()=>{const elapsed=performance.now()-fixtureAnimationStart;
+          if(elapsed>180&&elapsed<650){fixtureAnimationSamples++;if(!fixtureNativeAllows('search'))fixtureAnimationMisses++;}
+          if(elapsed<700)requestAnimationFrame(sample);else fixtureAnimationDone=true;};
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{sheet.classList.add('raised');requestAnimationFrame(sample);}));
+      }
+      if(fixtureMode==='keyboard-ancestor'){
+        const shell=document.createElement('div');shell.id='shell';shell.style.cssText='height:700px;overflow:auto';
+        const spacer=document.createElement('div');spacer.style.height='1600px';
+        const viewer=document.getElementById('viewer');shell.append(...viewer.children,sheet,spacer);viewer.append(shell);
+        fixtureFire('reel','pointerdown',200);fixtureFire('reel','pointerup',200);
+      }
+    };
+    window.fixtureNativeAllows=id=>{const box=document.getElementById(id).getBoundingClientRect(),x=(box.left+box.width/2)/innerWidth,y=(box.top+box.height/2)/innerHeight;
+      const lock=fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1);
+      return !!lock?.locked&&lock.scrollingRegions.some(r=>x>=r[0]&&x<=r[0]+r[2]&&y>=r[1]&&y<=r[1]+r[3]);};
+    window.fixtureBackground=()=>{
+      const blocked=fixtureFire('reel','pointerdown',200);const move=fixtureFire('reel','pointermove',100);fixtureFire('reel','pointerup',100);
+      const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});document.getElementById('reel').dispatchEvent(wheel);
+      const next=new MouseEvent('click',{bubbles:true,cancelable:true});document.getElementById('next').dispatchEvent(next);
+      history.pushState({},'', '/reel/Other456/');
+      return !blocked&&move&&wheel.defaultPrevented&&next.defaultPrevented&&location.pathname==='/direct/t/friend/'
+        &&fixtureLocks.filter(p=>p.type==='reelScrollLock').every(p=>p.locked);
+    };
+    window.fixtureBegin=()=>{
+      if(fixtureMode==='link-release'){const link=document.createElement('a');link.id='preview';link.href='/reel/Shared123/';
+        link.textContent='Received Reel';link.onpointerup=fixtureOpen;document.getElementById('preview').replaceWith(link);}
+      fixtureFire('preview','pointerdown');
+      if(fixtureMode==='cancelled-preview'){fixtureFire('preview','pointercancel');fixtureOpen();return;}
+      fixtureFire('preview','pointerup');
+      // Let the DOM observer run before the final click, as on a quick Direct activation.
+      if(fixtureMode.includes('release')||fixtureMode==='moved-preview'||fixtureMode==='ordinary-chat')return;
+      document.getElementById('preview').click();
+      // The remaining modes isolate sheet behavior from the opening regression.
+      history.replaceState({},'', '/reel/Shared123/');
+      history.replaceState({},'', '/direct/t/friend/');
+      setTimeout(()=>{
+        fixtureFire('reel','pointerdown',200);fixtureFire('reel','pointerup',200);
+        const id=fixtureMode.startsWith('comments')?'comments':'send';
+        if(fixtureMode.endsWith('-press')){fixtureFire(id,'pointerdown',730);fixtureFire(id,'pointerup',730);}
+        else document.getElementById(id).click();
+      },80);
+    };
+    window.fixtureReady=()=>{
+      if(['ordinary-chat','cancelled-preview'].includes(fixtureMode))return true;
+      if(fixtureMode.includes('release')||fixtureMode==='moved-preview')return document.documentElement.hasAttribute('data-vigil-single-reel');
+      const sheet=document.getElementById('sheet');
+      return !!sheet&&(fixtureMode.startsWith('comments')?sheet.dataset.vigilInstagramCommentsSheet==='true'
+        :sheet.dataset.vigilInstagramRecipientSheet==='true')&&(fixtureMode!=='recipient-animation'||window.fixtureAnimationDone);
+    };
+    window.fixtureVerify=()=>{
+      if(['ordinary-chat','cancelled-preview'].includes(fixtureMode)){
+        const e=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});document.getElementById('thread').dispatchEvent(e);
+        return !e.defaultPrevented&&!document.documentElement.hasAttribute('data-vigil-single-reel');
+      }
+      if(fixtureMode.includes('release')||fixtureMode==='moved-preview'){
+        document.getElementById('preview').click();return fixtureBackground();
+      }
+      if(fixtureMode==='recipient-retired'){const sheet=document.getElementById('sheet');
+        if(sheet.hasAttribute('role')){sheet.removeAttribute('role');return false;}
+        return !sheet.hasAttribute('data-vigil-instagram-recipient-sheet')&&!fixtureNativeAllows('friend')&&fixtureBackground();}
+      if(fixtureMode==='recipient-animation'&&(!fixtureAnimationSamples||fixtureAnimationMisses))return false;
+      if(!fixtureNativeAllows('query')||(fixtureMode==='recipient-nested'&&!fixtureNativeAllows('friend'))
+        ||(['recipient-backdrop','recipient-retained'].includes(fixtureMode)&&(fixtureNativeAllows('probe')||document.getElementById('backdrop').hasAttribute('data-vigil-instagram-recipient-sheet'))))return false;
+      const query=document.getElementById('query');query.focus();query.value='A friend';
+      const id=fixtureMode.startsWith('comments')?'comment-list':'people';
+      const list=document.getElementById(id);const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100,deltaX:100});list.dispatchEvent(wheel);
+      fixtureFire(id,'pointerdown',450);const move=fixtureFire(id,'pointermove',420);fixtureFire(id,'pointerup',420);
+      const sheet=document.getElementById('sheet');sheet.scrollTop=100;
+      const shell=document.getElementById('shell');if(shell){shell.scrollTop=120;shell.dispatchEvent(new Event('scroll'));}
+      return !wheel.defaultPrevented&&!move&&document.activeElement===query&&fixtureBackground()
+        &&sheet.scrollTop===100&&(!shell||shell.scrollTop===120);
+    };
+    window.fixtureFinish=()=>{document.getElementById('sheet')?.remove();document.getElementById('viewer')?.remove();};
+    window.fixtureReleased=()=>!document.documentElement.hasAttribute('data-vigil-single-reel')
+      &&!fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1)?.locked;
+    </script></body></html>
+    """#
+
+    @MainActor
+    func testInstagramInteractionBoundariesAcrossActivationSheetsAndKeyboard() async throws {
+        for mode in ["release", "anonymous-release", "link-release", "moved-preview", "recipient-animation", "recipient-nested", "recipient-backdrop", "recipient-retained", "recipient-retired",
+                     "recipient-reused", "comments-reused", "comments-press", "send-press", "keyboard-ancestor", "cancelled-preview", "ordinary-chat"] {
+            let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
+            controller.add(bridge, name: "vigil")
+            controller.addUserScript(WKUserScript(source: "window.__vigilDocumentID='interaction-fixture';window.fixtureLocks=[];"
+                + "const post=window.webkit.messageHandlers.vigil.postMessage.bind(window.webkit.messageHandlers.vigil);"
+                + "window.webkit.messageHandlers.vigil.postMessage=p=>{fixtureLocks.push(p);post(p);};"
+                + DOMAdapters.documentStartScript(for: .instagram, unclassifiedMediaPolicy: .conceal, audioEnabled: true, contentSafetyEnabled: false),
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            controller.addUserScript(WKUserScript(source: DOMAdapters.controlsScript(for: .instagram),
+                injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+            let configuration = WKWebViewConfiguration()
+            configuration.userContentController = controller
+            configuration.websiteDataStore = .nonPersistent()
+            let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+            let window = UIWindow(frame: page.frame)
+            window.rootViewController = UIViewController()
+            window.rootViewController?.view.addSubview(page)
+            window.isHidden = false
+            defer { page.removeFromSuperview(); window.isHidden = true }
+            let loaded = expectation(description: "Interaction boundary \(mode)")
+            let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+            page.navigationDelegate = delegate
+            page.loadHTMLString(Self.instagramInteractionBoundariesHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+            await fulfillment(of: [loaded], timeout: 5)
+            _ = try await page.evaluateJavaScript("fixtureMode='\(mode)';fixtureBegin()")
+            try await Task.sleep(nanoseconds: 150_000_000)
+            try await waitForJavaScriptCondition("fixtureReady()", in: page)
+            try await waitForJavaScriptCondition("fixtureVerify()", in: page)
+            let works = try await page.evaluateJavaScript("fixtureVerify()") as? Bool
+            XCTAssertEqual(works, true, "Combined interaction: \(mode)")
+            _ = try await page.evaluateJavaScript("fixtureFinish()")
+            try await waitForJavaScriptCondition("fixtureReleased()", in: page)
+            page.navigationDelegate = nil
+        }
+    }
+}

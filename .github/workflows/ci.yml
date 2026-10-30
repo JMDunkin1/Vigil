@@ -46,6 +46,10 @@ jobs:
         timeout-minutes: 3
         run: node scripts/test-instagram-comments-webkit.mjs
 
+      - name: Test Instagram activation, sheet scrolling, and keyboard boundaries
+        timeout-minutes: 4
+        run: node scripts/test-instagram-interactions-webkit.mjs
+
       - name: Test Instagram chat media playback through photo transitions
         timeout-minutes: 3
         run: node scripts/test-instagram-chat-media-webkit.mjs

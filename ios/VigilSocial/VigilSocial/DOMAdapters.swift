@@ -2682,9 +2682,10 @@ enum DOMAdapters {
       };
       const reportNativeScrollLock = (locked, force = false) => {
         const sheets = locked ? [...document.querySelectorAll(
-          '[data-vigil-instagram-comments-sheet="true"], input, textarea, [contenteditable="true"], [role="slider"]'
+          '[data-vigil-instagram-comments-sheet="true"]'
         ), ...commentsDismissControls(),
-          ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)] : [];
+          ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet),
+          ...document.querySelectorAll('input, textarea, [contenteditable="true"], [role="slider"]')] : [];
         const scrollingRegions = [...new Set(sheets)].map(node => nativeGestureRegion(node, true)).filter(Boolean).slice(0, 24);
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
@@ -2821,8 +2822,8 @@ enum DOMAdapters {
         // article without changing the item URL. Keep observing the live page.
         if (route && modalContext && !activeViewer(modalContext)) modalContext = null;
         if (route && !modalContext) {
-          const modal = foregroundModal(sharedIntent?.origin || viewerOrigin, viewerBackground);
-          if (!sharedIntent?.origin || !modal?.contains(sharedIntent.origin)) modalContext = modal;
+          const modal = foregroundModal(sharedIntent?.origin || viewerOrigin, sharedIntent?.background || viewerBackground);
+          modalContext = modal;
         }
         const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
           || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
@@ -2832,9 +2833,7 @@ enum DOMAdapters {
         if (!route && location.pathname.startsWith('/direct/') && sharedIntent
             && sharedIntent.source === location.pathname && Date.now() - sharedIntent.at < 10000) {
           const modal = foregroundModal(sharedIntent.origin, sharedIntent.background);
-          modalContext = modal && (sharedIntent.route
-            ? !sharedIntent.origin || !modal.contains(sharedIntent.origin)
-            : modal !== sharedIntent.previousModal) ? modal : null;
+          modalContext = modal && (sharedIntent.route || modal !== sharedIntent.previousModal) ? modal : null;
           if (modalContext) {
             const route = sharedIntent.route || [...modalContext.querySelectorAll('a[href]')]
               .map(link => mediaRoute(link.href)).find(Boolean);
@@ -2895,12 +2894,20 @@ enum DOMAdapters {
           && rect.top < innerHeight * 0.88;
       };
       const foregroundModal = (origin = null, background = null) => {
+        // React can move the activated preview into its viewer. Only exclude
+        // the origin while it still belongs to the captured conversation.
+        if (background && !background.contains(origin)) origin = null;
         const dialogs = [...document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
         )].filter(modal => activeViewer(modal) && !inSheet(modal) && !modal.contains(origin) && modal !== background
           && ([...modal.querySelectorAll('video, img')].some(fullScreenMedia)
             || (modal.getBoundingClientRect().width >= innerWidth * 0.72
-              && modal.getBoundingClientRect().height >= innerHeight * 0.6)));
+              && modal.getBoundingClientRect().height >= innerHeight * 0.6
+              && [...modal.querySelectorAll('video, img')].some(media => {
+                if (!activeModal(media) || inSheet(media)) return false;
+                const box = media.getBoundingClientRect();
+                return media instanceof HTMLVideoElement || box.width >= 180 && box.height >= 140;
+              }))));
         // Direct itself may be exposed as a dialog and contain every message
         // attachment. Pin the innermost active media dialog so closing its
         // viewer releases the retained chat instead of keeping the whole
@@ -2915,7 +2922,9 @@ enum DOMAdapters {
         // Recent Direct viewers use an anonymous fixed portal, without dialog
         // semantics. The message thread itself must remain scrollable.
         for (const media of document.querySelectorAll('video, img')) {
-          if (!activeModal(media)) continue;
+          if (!activeModal(media) || inSheet(media)) continue;
+          const mediaBox = media.getBoundingClientRect();
+          if (!(media instanceof HTMLVideoElement) && (mediaBox.width < 180 || mediaBox.height < 140)) continue;
           for (let node = media.parentElement; node && node !== document.body; node = node.parentElement) {
             const box = node.getBoundingClientRect();
             const position = getComputedStyle(node).position;
@@ -2931,7 +2940,8 @@ enum DOMAdapters {
       const rememberShare = (value, origin = null) => {
         const route = mediaRoute(value);
         if (!route || !location.pathname.startsWith('/direct/')) return;
-        if (!origin && sharedIntent?.source === location.pathname && Date.now() - sharedIntent.at < 10000
+        if (sharedIntent?.source === location.pathname && Date.now() - sharedIntent.at < 10000
+            && (!origin || origin === sharedIntent.origin || origin.contains(sharedIntent.origin) || sharedIntent.origin?.contains(origin))
             && (!sharedIntent.route || sharedIntent.route.id === route.id)) {
           sharedIntent.route = route;
         } else {
@@ -2943,6 +2953,24 @@ enum DOMAdapters {
           sharedStory = { id: route.id, at: Date.now() };
           try { sessionStorage.setItem(sharedStoryKey, JSON.stringify(sharedStory)); } catch (_) {}
         }
+      };
+      const rememberDirectActivation = target => {
+        if (pinnedID || !location.pathname.startsWith('/direct/') || !(target instanceof Element)
+            || inSheet(target) || target.closest('nav, [role="navigation"]')) return;
+        const link = target.closest('a[href]');
+        const route = mediaRoute(link?.href);
+        if (link && link.getAttribute('href') !== '#' && !route) return;
+        // Pointer release may open the viewer before click (including Vigil's
+        // Direct quick-tap adapter). Keep the pre-activation portal snapshot.
+        if (sharedIntent?.source === location.pathname && Date.now() - sharedIntent.at < 1500
+            && (sharedIntent.origin === target || sharedIntent.origin?.contains(target)
+              || target.contains(sharedIntent.origin))) {
+          if (route) sharedIntent.route = route;
+          return;
+        }
+        sharedIntent = { route, origin: target, source: location.pathname, at: Date.now(),
+          previousModal: foregroundModal(),
+          background: target.closest('main, [role="main"], [role="dialog"], [aria-modal="true"]') };
       };
       window.__vigilInstagramSharedItem = Object.freeze({
         isSharedStory(value = location.href) {
@@ -2983,7 +3011,14 @@ enum DOMAdapters {
       const recipientSearchSelector = 'input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"]';
       const recipientSheet = target => {
         const dialog = target?.closest?.('[role="dialog"], [aria-modal="true"]');
-        if (!dialog || !activeModal(dialog) || (pinnedCard && dialog.contains(pinnedCard))) return null;
+        if (!dialog || !activeModal(dialog) || (pinnedCard && dialog.contains(pinnedCard))
+            || dialog === viewerBackground || dialog === sharedIntent?.background
+            || modalContext && dialog.contains(modalContext)) return null;
+        const bounds = dialog.getBoundingClientRect();
+        if (bounds.top <= 1 && bounds.left <= 1 && bounds.right >= innerWidth - 1 && bounds.bottom >= innerHeight - 1) {
+          const color = getComputedStyle(dialog).backgroundColor;
+          if (!/^rgb\([^/]*\)$/.test(color) && !/(?:,|\/)\s*(?:1(?:\.0+)?|100%)\s*\)$/.test(color)) return null;
+        }
         // Direct's retained thread can itself be a dialog with a Search box.
         // It is not a recipient sheet and must never exempt its opened media.
         if (dialog.matches('main, [role="main"]') || dialog.querySelector('main, [role="main"], article, [role="article"]')
@@ -2995,8 +3030,9 @@ enum DOMAdapters {
               const box = media.getBoundingClientRect();
               return box.width >= 180 && box.height >= 140;
             })) return null;
-        const owns = node => node.closest('[role="dialog"], [aria-modal="true"]') === dialog
-          && activeModal(node) && node.getClientRects().length > 0;
+        // A Search subdialog and the horizontal people list can be siblings
+        // inside one picker. The verified media-free outer dialog owns both.
+        const owns = node => dialog.contains(node) && activeModal(node) && node.getClientRects().length > 0;
         if ([...dialog.querySelectorAll(recipientSearchSelector)].some(owns)) return dialog;
         // The shortlist initially exposes a Search button, then mounts the
         // real textbox on activation. Preserve that first native press/focus
@@ -3009,8 +3045,8 @@ enum DOMAdapters {
         return searchControl ? dialog : null;
       };
       const normalizeRecipientSheets = () => {
-        for (const dialog of document.querySelectorAll('[role="dialog"], [aria-modal="true"]')) {
-          if (recipientSheet(dialog)) dialog.dataset.vigilInstagramRecipientSheet = 'true';
+        for (const dialog of document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]')) {
+          if (recipientSheet(dialog) === dialog) dialog.dataset.vigilInstagramRecipientSheet = 'true';
           else dialog.removeAttribute('data-vigil-instagram-recipient-sheet');
         }
       };
@@ -3041,13 +3077,15 @@ enum DOMAdapters {
         clearTimeout(sheetTransitionTimer);
         sheetTransitionTimer = setTimeout(() => { sheetTransitionTimer = 0; reconcile(); }, Math.max(0, until - Date.now()));
       };
-      const rememberSheetOpening = target => {
-        if (!pinnedID || !modalContext || !activeViewer(modalContext) || inSheet(target)) return;
+      const sheetOpeningControl = target => {
         const control = target?.closest?.('button, [role="button"], a[href]');
-        if (!control || !modalContext.contains(control)) return;
+        if (!control || modalContext && !modalContext.contains(control)) return null;
         const labels = [control, ...control.querySelectorAll('[aria-label], title')].map(node =>
           String(node.getAttribute('aria-label') || node.textContent || '').replace(/\s+/g, ' ').trim());
-        if (!labels.some(label => /^(?:(?:send|share)(?: (?:post|reel|video|to))?|comments?|view(?: all)?(?: \d+)? comments?)$/i.test(label))) return;
+        return labels.some(label => /^(?:(?:send|share)(?: (?:post|reel|video|to))?|comments?|view(?: all)?(?: \d+)? comments?)$/i.test(label)) ? control : null;
+      };
+      const rememberSheetOpening = target => {
+        if (!pinnedID || !modalContext || !activeViewer(modalContext) || inSheet(target) || !sheetOpeningControl(target)) return;
         // A sheet may mount one render after Instagram aria-hides the viewer.
         // Retain this already-pinned item through that bounded presentation gap.
         sheetOpeningUntil = Date.now() + 1500;
@@ -3080,14 +3118,21 @@ enum DOMAdapters {
         // on the scheduled check, so the retained chat is never pinned forever.
         return Date.now() < Math.max(sheetOpeningUntil, sheetClosingUntil);
       };
-      const restoreScroll = () => lockedScroll.forEach((position, node) => {
-        if (!node.isConnected || (modalContext && !modalContext.contains(node))) {
-          node.removeAttribute('data-vigil-single-reel-scroll');
-          lockedScroll.delete(node);
-          return;
-        }
-        if (node.scrollTop !== position) node.scrollTop = position;
-      });
+      const restoreScroll = () => {
+        const sheets = [...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]')]
+          .filter(activeViewer);
+        lockedScroll.forEach((position, node) => {
+          if (!node.isConnected || (modalContext && !modalContext.contains(node)) || inSheet(node)) {
+            node.removeAttribute('data-vigil-single-reel-scroll');
+            lockedScroll.delete(node);
+            return;
+          }
+          // Keyboard focus may scroll a shared ancestor to reveal the composer.
+          // Freeze the Reel's own scroller, not a foreground sheet's ancestor.
+          if (sheets.some(sheet => node.contains(sheet))) return;
+          if (node.scrollTop !== position) node.scrollTop = position;
+        });
+      };
       const captureReelScroll = target => {
         if (pinnedKind !== 'reel') return;
         // Capture at input time, after Instagram has positioned the sent item.
@@ -3113,6 +3158,9 @@ enum DOMAdapters {
       const containPress = event => {
         if (!syncRoute() || inSheet(event.target)) return false;
         if (reelAdvanceControl(event.target)) { cancel(event); return true; }
+        // These controls can open on pointer release rather than click. Keep
+        // their complete press lifecycle; movement still meets the Reel guard.
+        if (sheetOpeningControl(event.target)) return false;
         // Instagram's SwipeArea needs the complete start/move/end lifecycle.
         // Vertical movement and navigation to another post remain contained.
         if (allowsCarouselPan(event.target)) return false;
@@ -3468,7 +3516,26 @@ enum DOMAdapters {
         restoreScroll();
         reportNativeScrollLock(true);
       };
+      let nativeGeometryFrame = 0;
+      let nativeGeometryUntil = 0;
+      const refreshNativeGeometry = () => {
+        nativeGeometryFrame = 0;
+        normalizeRecipientSheets();
+        syncRoute();
+        if (performance.now() < nativeGeometryUntil) nativeGeometryFrame = requestAnimationFrame(refreshNativeGeometry);
+      };
+      const scheduleNativeGeometry = () => {
+        // Recipients move during the opening/keyboard animation without DOM
+        // changes in every frame. Publish their current boundary before taps.
+        nativeGeometryUntil = performance.now() + 1500;
+        if (!nativeGeometryFrame) nativeGeometryFrame = requestAnimationFrame(refreshNativeGeometry);
+      };
+      const sheetLayoutTarget = target => target instanceof Element && (target.closest(
+        '[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]')
+        || target.querySelector('[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]'));
       window.addEventListener('touchstart', event => {
+        rememberDirectActivation(event.target);
+        rememberSheetOpening(event.target);
         if (!syncRoute() || inSheet(event.target) || event.touches.length !== 1) { gesture = null; return; }
         captureReelScroll(event.target);
         gesture = { x: event.touches[0].clientX, y: event.touches[0].clientY, blocked: false,
@@ -3491,11 +3558,14 @@ enum DOMAdapters {
         }
       }, { capture: true, passive: false });
       for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
+        if (type === 'touchcancel' && !pinnedID) sharedIntent = null;
         if (gesture?.blocked) cancel(event);
         else if (gesture?.contained) event.stopImmediatePropagation();
         gesture = null;
       }, { capture: true, passive: false });
       window.addEventListener('pointerdown', event => {
+        rememberDirectActivation(event.target);
+        rememberSheetOpening(event.target);
         if (event.pointerType === 'touch') touchPointers.add(event.pointerId);
         if (touchPointers.size > 1) {
           pointerGesture = null;
@@ -3522,12 +3592,14 @@ enum DOMAdapters {
         }
       }, true);
       for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
+        if (type === 'pointercancel' && !pinnedID) sharedIntent = null;
         touchPointers.delete(event.pointerId);
         if (pointerGesture?.blocked) cancel(event);
         else if (pointerGesture?.contained) event.stopImmediatePropagation();
         pointerGesture = null;
       }, true);
       for (const type of ['mousedown', 'mouseup', 'contextmenu']) window.addEventListener(type, event => {
+        if (type === 'mousedown') { rememberDirectActivation(event.target); rememberSheetOpening(event.target); }
         if (containPress(event) && type === 'contextmenu') cancel(event);
       }, true);
       window.addEventListener('wheel', event => {
@@ -3544,14 +3616,9 @@ enum DOMAdapters {
       }, true);
       window.addEventListener('click', event => {
         rememberSheetOpening(event.target);
+        rememberDirectActivation(event.target);
         const link = event.target?.closest?.('a[href]');
         if (!pinnedID && link) rememberShare(link.href, link);
-        if (!pinnedID && (!link || link.getAttribute('href') === '#') && location.pathname.startsWith('/direct/') && !inSheet(event.target)
-            && event.target instanceof Element && !event.target.closest('nav, [role="navigation"]')) {
-          sharedIntent = { route: null, origin: event.target, source: location.pathname,
-            at: Date.now(), previousModal: foregroundModal(),
-            background: event.target.closest('main, [role="main"], [role="dialog"], [aria-modal="true"]') };
-        }
         const next = reelAdvanceControl(event.target);
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
         else if (syncRoute() && pinnedKind === 'story' && !inSheet(event.target)
@@ -3580,6 +3647,9 @@ enum DOMAdapters {
       window.addEventListener('resize', reconcile, true);
       window.visualViewport?.addEventListener('resize', reconcile);
       window.visualViewport?.addEventListener('scroll', reconcile);
+      for (const type of ['transitionrun', 'animationstart', 'focusin']) window.addEventListener(type, event => {
+        if (pinnedID && sheetLayoutTarget(event.target)) scheduleNativeGeometry();
+      }, true);
       for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
         window.addEventListener(type, event => {
           const target = event.target, sheets = '[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]';
@@ -3589,7 +3659,11 @@ enum DOMAdapters {
               || modalContext && (target === modalContext || target.contains(modalContext)))) reconcile();
         }, true);
       }
-      new MutationObserver(reconcile).observe(document.documentElement, {
+      new MutationObserver(records => {
+        reconcile();
+        if (pinnedID && records.some(record => sheetLayoutTarget(record.target)
+            && (record.type === 'childList' || ['style', 'class', 'hidden', 'aria-hidden'].includes(record.attributeName)))) scheduleNativeGeometry();
+      }).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'role', 'aria-modal', 'aria-label', 'placeholder', 'type', 'name', 'data-vigil-instagram-comments-sheet']
       });
       reconcile();

@@ -58,7 +58,7 @@ struct Scenario: Decodable {
                 fixtureWindow?.close()
                 fixtureWindow = nil
             }
-            print("VIGIL_INSTAGRAM_COMMENTS_WEBKIT_COMPLETE")
+            print(CommandLine.arguments.count > 2 ? CommandLine.arguments[2] : "VIGIL_INSTAGRAM_COMMENTS_WEBKIT_COMPLETE")
             exit(0)
         } catch { print("ERROR \(error)"); exit(1) }
     }
