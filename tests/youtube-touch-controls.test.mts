@@ -11,7 +11,7 @@ const resources = resolve(projectRoot, 'ios/VigilSocial/VigilYouTubeInteractionE
 const parity = await readFile(resolve(resources, 'youtube-parity.js'), 'utf8');
 const responseGuard = await readFile(resolve(resources, 'youtube-player-response.js'), 'utf8');
 
-function touchFixture() {
+function touchFixture(parsed = true) {
   let clock = 0, position = 60;
   const seeks: number[] = [], attributes = new Map<string, string>();
   const handlers = new Map<string, Array<(event: unknown) => void>>();
@@ -39,15 +39,20 @@ function touchFixture() {
   // Simulate WebKit reporting the old position while a seek remains in flight.
   Object.defineProperty(video, 'currentTime', { get: () => position, set: (value: number) => { seeks.push(value); } });
   const html = new Element();
+  const observers: Array<() => void> = [];
+  const document = { documentElement: parsed ? html : null, head: parsed ? html : null, getElementById: () => parsed ? html : null,
+    createElement: () => new Element(), querySelectorAll: (selector: string) => selector === 'video' ? [video] : [],
+    addEventListener(name: string, fn: (event: unknown) => void) { handlers.set(name, [...handlers.get(name) || [], fn]); } };
   const window: Record<string, unknown> = { innerWidth: 400, innerHeight: 800 }; window.top = window;
   runInNewContext(parity, {
     window, location: new URL('https://m.youtube.com/watch?v=abcdefghijk'),
-    document: { documentElement: html, head: html, getElementById: () => html,
-      createElement: () => new Element(), querySelectorAll: (selector: string) => selector === 'video' ? [video] : [],
-      addEventListener(name: string, fn: (event: unknown) => void) { handlers.set(name, [...handlers.get(name) || [], fn]); } },
+    document,
     Element, HTMLElement: Element, HTMLAnchorElement: Element, URL,
     innerWidth: 400, innerHeight: 800, performance: { now: () => clock },
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class {
+      constructor(callback: (mutations: never[]) => void) { observers.push(() => callback([])); }
+      observe() {} disconnect() {}
+    },
     getComputedStyle: () => ({ display: 'block', visibility: 'visible' }),
     addEventListener() {}, setInterval() {}, setTimeout() {}, requestAnimationFrame(fn: () => void) { fn(); }
   });
@@ -59,10 +64,24 @@ function touchFixture() {
     for (const handler of handlers.get(name) || []) { handler(event); if (stopped) break; }
     return prevented;
   };
-  return { video, seeks, fire, button(label: string) { const control = new Element(); control.label = label; return control; },
+  return { video, seeks, fire, window,
+    parse() {
+      parsed = true; document.documentElement = html; document.head = html;
+      for (const observer of observers) observer();
+    },
+    button(label: string) { const control = new Element(); control.label = label; return control; },
     tap(x = 320, trusted = true) { fire('touchstart', video, trusted, x); clock += 40; const prevented = fire('touchend', video, trusted, x); clock += 60; return prevented; },
     advance(ms: number, value = position) { clock += ms; position = value; } };
 }
+
+test('document-start controls survive a missing page root and finish installing', () => {
+  const f = touchFixture(false);
+  assert.equal(f.window.__vigilYouTubeParityReady, true);
+  assert.doesNotThrow(() => f.parse());
+  assert.equal(f.tap(), false);
+  assert.equal(f.tap(), true);
+  assert.deepEqual(f.seeks, [70]);
+});
 
 test('every additional rapid player tap seeks another ten seconds during an unfinished seek', () => {
   const f = touchFixture();
@@ -94,6 +113,7 @@ test('synthetic taps and active advertisements cannot invoke the custom seek pat
 test('the page response guard prunes nested mobile players and handles subsequent initial responses', () => {
   const window: Record<string, unknown> = {};
   runInNewContext(responseGuard, { window, location: new URL('https://m.youtube.com/watch?v=abcdefghijk'), URL });
+  assert.equal(window.__vigilYouTubeResponseGuardReady, true);
   const player = { videoDetails: { videoId: 'abcdefghijk', keywords: ['economics', 'lecture'] }, streamingData: { formats: [{ url: 'original-stream' }] }, adPlacements: [{}], playerAds: [{}], adSlots: [{}] };
   window.ytInitialPlayerResponse = { contents: [{ watch: { playerResponse: player } }], metadata: { adPlacements: 'retain ordinary metadata' } };
   const clean = JSON.parse(JSON.stringify(window.ytInitialPlayerResponse));
@@ -104,6 +124,15 @@ test('the page response guard prunes nested mobile players and handles subsequen
   assert.equal('playerAds' in (window.ytInitialPlayerResponse as object), false);
   window.ytInitialPlayerResponse = { ...player, adSlots: { unknownSchema: true } };
   assert.equal('adPlacements' in (window.ytInitialPlayerResponse as object), true, 'unexpected schemas preserve the response');
+});
+
+test('a failed response guard cannot report completed ad protection', () => {
+  const window = {};
+  Object.defineProperty(window, 'fetch', { value: () => {}, writable: false });
+  assert.throws(() => runInNewContext(responseGuard, {
+    window, location: new URL('https://m.youtube.com/'), URL
+  }), /read only|readonly|not writable|Cannot assign/i);
+  assert.equal((window as Record<string, unknown>).__vigilYouTubeResponseGuardReady, undefined);
 });
 
 test('mobile initial-data strings and legacy player args lose only recognized ad arrays', () => {

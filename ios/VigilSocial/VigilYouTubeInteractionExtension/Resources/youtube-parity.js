@@ -259,7 +259,6 @@ installYouTubeCommentAvatarMask();
     'button[aria-label^="Skip ads" i]'
   ].join(',');
   const EDGE_GESTURE_WIDTH = 24;
-  const html = document.documentElement;
   const focusedEntryURL = 'https://m.youtube.com/feed/subscriptions';
   let gesture = null;
   let adAuditTimer = 0;
@@ -331,7 +330,8 @@ installYouTubeCommentAvatarMask();
     }
   `;
   const installStyle = () => {
-    if (!document.getElementById(STYLE_ID)) (document.head || html).append(style);
+    const root = document.head || document.documentElement;
+    if (root && !document.getElementById(STYLE_ID)) root.append(style);
   };
   const mainVideo = () => Array.from(document.querySelectorAll('video'))
     .filter(video => {
@@ -403,7 +403,8 @@ installYouTubeCommentAvatarMask();
     const height = Number(window.visualViewport?.height || innerHeight || 0);
     const allowed = moreVideosAllowedForState(playerIsExpandedFullscreen(video), width, height);
     const value = allowed ? 'allowed' : 'suppressed';
-    if (html.getAttribute(MORE_VIDEOS_ATTRIBUTE) !== value) html.setAttribute(MORE_VIDEOS_ATTRIBUTE, value);
+    const html = document.documentElement;
+    if (html && html.getAttribute(MORE_VIDEOS_ATTRIBUTE) !== value) html.setAttribute(MORE_VIDEOS_ATTRIBUTE, value);
     return allowed;
   };
   let moreVideosUpdatePending = false;
@@ -613,12 +614,13 @@ installYouTubeCommentAvatarMask();
     ));
   };
   new MutationObserver(mutations => {
+    installStyle();
     if (mutations.some(value => [...value.addedNodes].some(node => node instanceof Element))) scheduleAdAudit();
     if (mutations.some(mutationChangesPlayerTopology)) {
       scheduleMoreVideosAvailability();
     }
     recoverFromShorts();
-  }).observe(html, { childList: true, subtree: true });
+  }).observe(document, { childList: true, subtree: true });
   for (const name of [
     'popstate', 'pageshow', 'yt-navigate-finish', 'yt-page-data-updated',
     'state-navigateend', 'state-navigatecomplete', '__vigilRouteChanged'
@@ -648,4 +650,5 @@ installYouTubeCommentAvatarMask();
       enterFullscreen, playerForVideo, isShortsRoute, isWatchRoute, seekBy
     })
   });
+  window.__vigilYouTubeParityReady = true;
 })();

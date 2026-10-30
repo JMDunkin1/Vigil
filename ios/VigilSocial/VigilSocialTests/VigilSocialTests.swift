@@ -8283,6 +8283,64 @@ final class VigilSocialTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testYouTubeRecoversMissingAllowanceAndAdScriptInjections() async throws {
+        let store = SocialWebViewStore(fixedService: .youtube, loadInitialPages: false)
+        let page = store.webView(for: .youtube)
+        let controller = page.configuration.userContentController
+        let retained = controller.userScripts.filter {
+            !$0.source.contains("window.__vigilYouTubeLimits = true")
+                && !$0.source.contains("window.__vigilYouTubeResponseGuard = true")
+        }
+        controller.removeAllUserScripts()
+        retained.forEach(controller.addUserScript)
+        page.loadHTMLString("<html><body><ytm-app>Benign fixture</ytm-app></body></html>",
+            baseURL: URL(string: "https://m.youtube.com/feed/subscriptions"))
+        try await waitForJavaScriptCondition(SocialWebViewStore.youtubeProtectionProbe, in: page)
+        for _ in 0..<100 where page.isHidden { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertFalse(page.isHidden)
+        XCTAssertNotEqual(store.health[.youtube], .unsupported("YouTube’s playback protections could not start. Reload or update Vigil to retry."))
+    }
+
+    @MainActor
+    func testYouTubeDoesNotTrustPartialInstallationFlagsOrGenericPageHealth() async throws {
+        let store = SocialWebViewStore(fixedService: .youtube, loadInitialPages: false)
+        let page = store.webView(for: .youtube)
+        let controller = page.configuration.userContentController
+        let scripts = controller.userScripts
+        controller.removeAllUserScripts()
+        controller.addUserScript(WKUserScript(
+            source: "window.__vigilYouTubeLimits = true; window.__vigilYouTubeParityInstalled = true;",
+            injectionTime: .atDocumentStart, forMainFrameOnly: false))
+        scripts.forEach(controller.addUserScript)
+        page.loadHTMLString("<html><body><ytm-app>Benign fixture</ytm-app></body></html>",
+            baseURL: URL(string: "https://m.youtube.com/feed/subscriptions"))
+        for _ in 0..<100 {
+            if case .unsupported = store.health[.youtube] { break }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertTrue(page.isHidden)
+        _ = try await page.evaluateJavaScript("window.__vigilBridge?.({type:'health', state:'ready'}); true")
+        try await Task.sleep(for: .milliseconds(100))
+        if case .unsupported = store.health[.youtube] {} else { XCTFail("Unprotected YouTube became usable") }
+        XCTAssertTrue(page.isHidden)
+    }
+
+    @MainActor
+    func testYouTubeRefusesBuildsMissingBundledPlaybackProtections() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("bundle")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try PropertyListSerialization.data(fromPropertyList: ["CFBundleIdentifier": "tech.caseline.vigil.missing-youtube-fixture"],
+            format: .xml, options: 0).write(to: directory.appendingPathComponent("Info.plist"))
+        let bundle = try XCTUnwrap(Bundle(url: directory))
+        let store = SocialWebViewStore(fixedService: .youtube, bundle: bundle)
+        let page = store.webView(for: .youtube)
+        XCTAssertNil(page.url)
+        XCTAssertTrue(page.isHidden)
+        if case .unsupported = store.health[.youtube] {} else { XCTFail("Missing YouTube resources were accepted") }
+    }
+
     func testContentBlockerReloadCacheInvalidatesForEveryAppBuild() {
         let firstBuild = YouTubeContentBlockerReloadPolicy.buildFingerprint(
             bundleIdentifier: "tech.caseline.vigil.instagram",

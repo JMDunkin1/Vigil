@@ -426,6 +426,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var instagramSharedViewerScrollLocked = false
     private var instagramSharedItemPanGuard: InstagramSharedItemPanGuard?
     private var servicesWithUsableContent: Set<SocialService> = []
+    private var youtubeProtectionVerified = false
     private var mediaClassificationTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var mediaClassificationDeadlineTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     private var nativeMediaClassificationExecutions: Set<UUID> = []
@@ -570,6 +571,18 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             serviceAccessIsSettling = true
             return false
         }
+        if fixedService == .youtube, !fixedService.usesUnmodifiedAuthenticationDocument(url) {
+            let generation = mainDocumentGenerations[.youtube, default: 0]
+            let intact = (try? await view.evaluateJavaScript(Self.youtubeProtectionProbe)) as? Bool == true
+            if !intact || !youtubeProtectionVerified {
+                youtubeProtectionVerified = false
+                view.isHidden = true
+                guard await verifyYouTubeProtection(in: view, generation: generation) else {
+                    serviceAccessDetail = "YouTube’s playback protections could not start. Reload or update Vigil to retry."
+                    return false
+                }
+            }
+        }
         do {
             let result = try await view.callAsyncJavaScript("""
                 const diagnostics = [];
@@ -713,6 +726,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let bridge = ScriptMessageBridge { [weak self] message in
             Task { @MainActor in self?.handle(message, service: service) }
         }
+        let youtubeLimitsSource = service == .youtube ? Self.bundledYouTubeLimitsScript(in: bundle) : nil
         controller.add(bridge, name: "vigil")
         if service == .youtube {
             controller.addUserScript(WKUserScript(source: Self.youtubeOrientationScript,
@@ -725,12 +739,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             }, contentWorld: .page, name: "vigilYouTube")
             controller.addUserScript(WKUserScript(source: YouTubeExternalPlaybackScript.source,
                 injectionTime: .atDocumentStart, forMainFrameOnly: true, in: .defaultClient))
-            if let resource = bundle.url(forResource: "youtube-limits", withExtension: "js"),
-               let source = try? String(contentsOf: resource, encoding: .utf8) {
-                let snapshot = YouTubeLimitsConnection.statusSnapshot(bundle: bundle)
-                let seed = (try? JSONSerialization.data(withJSONObject: snapshot))
-                    .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
-                controller.addUserScript(WKUserScript(source: "window.__vigilYouTubeInitialStatus = \(seed);\n" + source,
+            if let source = youtubeLimitsSource {
+                controller.addUserScript(WKUserScript(source: source,
                     injectionTime: .atDocumentStart, forMainFrameOnly: false))
             }
         }
@@ -847,9 +857,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             return !self.mediaPlaybackIsSuspended && self.hasRecentConfirmedAccess
                 && self.accessRestriction?() != true
         }
-        if service == .youtube, youtubeParitySource == nil {
+        if service == .youtube { webView.isHidden = true }
+        if service == .youtube, youtubeParitySource == nil || youtubeLimitsSource == nil {
             health[service] = .unsupported(
-                "This YouTube build is missing its ordinary-watch gesture policy."
+                "This YouTube build is missing its playback protections. Update Vigil before using YouTube."
             )
         } else if loadInitialPages {
             // Navigation runs in WebKit's processes. Start it before finishing
@@ -1038,6 +1049,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func resumeSuspendedMedia() {
         guard accessRestriction?() != true else { suspendAllMedia(); return }
+        guard fixedService != .youtube || youtubeProtectionVerified else { suspendAllMedia(); return }
         guard mediaPlaybackIsSuspended else { return }
         mediaPlaybackIsSuspended = false
         externalPlaybackRelinquishTask?.cancel()
@@ -1469,6 +1481,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                     : .degraded(detail)
             default: nextHealth = .loading
             }
+            // A usable YouTube DOM does not prove that the separate allowance
+            // and ad scripts installed. Never let that report clear a failed check.
+            if service == .youtube, !youtubeProtectionVerified { return }
             if health[service] != nextHealth { health[service] = nextHealth }
         case "audio":
             guard let enabled = body["enabled"] as? Bool,
@@ -2021,6 +2036,62 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         return responseGuard + "\n" + controls
     }
 
+    static func bundledYouTubeLimitsScript(in bundle: Bundle) -> String? {
+        guard let url = bundle.url(forResource: "youtube-limits", withExtension: "js"),
+              let source = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let snapshot = YouTubeLimitsConnection.statusSnapshot(bundle: bundle)
+        let seed = (try? JSONSerialization.data(withJSONObject: snapshot))
+            .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
+        return "window.__vigilYouTubeInitialStatus = \(seed);\n" + source
+    }
+
+    static let youtubeProtectionProbe = """
+    Boolean(window.__vigilYouTubeLimitsHealth?.() && window.__vigilYouTubeParityReady
+      && window.__vigilYouTubeResponseGuardReady && document.getElementById('vigil-youtube-parity-style'))
+    """
+
+    private func verifyYouTubeProtection(in webView: WKWebView, generation: UInt64) async -> Bool {
+        let isCurrent = {
+            self.webViews[.youtube] === webView && self.mainDocumentGenerations[.youtube, default: 0] == generation
+        }
+        guard isCurrent() else { return false }
+        var installed = (try? await webView.evaluateJavaScript(Self.youtubeProtectionProbe)) as? Bool == true
+        if !installed, let limits = Self.bundledYouTubeLimitsScript(in: bundle),
+           let parity = Self.bundledYouTubeParityScript(in: bundle) {
+            // These guards are idempotent. Recover a missed document-start
+            // injection using the exact bundled scripts and the existing ledger.
+            guard isCurrent() else { return false }
+            _ = try? await webView.evaluateJavaScript(limits)
+            guard isCurrent() else { return false }
+            _ = try? await webView.evaluateJavaScript(parity)
+            guard isCurrent() else { return false }
+            installed = (try? await webView.evaluateJavaScript(Self.youtubeProtectionProbe)) as? Bool == true
+        }
+        // A shared ledger has no synchronous seed. Give the existing bounded
+        // status request time to finish without opening an unverified page.
+        let scriptsStarted = (try? await webView.evaluateJavaScript(
+            "Boolean(window.__vigilYouTubeLimitsHealth && window.__vigilYouTubeParityReady && window.__vigilYouTubeResponseGuardReady)"
+        )) as? Bool == true
+        if !installed, scriptsStarted {
+            for _ in 0..<65 {
+                guard isCurrent(), !Task.isCancelled else { return false }
+                try? await Task.sleep(for: .milliseconds(100))
+                installed = (try? await webView.evaluateJavaScript(Self.youtubeProtectionProbe)) as? Bool == true
+                if installed { break }
+            }
+        }
+        guard isCurrent() else { return false }
+        youtubeProtectionVerified = installed
+        webView.isHidden = !installed
+        if !installed {
+            suspendAllMedia()
+            health[.youtube] = .unsupported("YouTube’s playback protections could not start. Reload or update Vigil to retry.")
+        } else if servicesWithUsableContent.contains(.youtube) {
+            health[.youtube] = .ready
+        }
+        return installed
+    }
+
     static func isCurrentMainDocumentMessage(
         _ documentID: Any?,
         currentDocumentID: String?
@@ -2051,6 +2122,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         let generation = mainDocumentGenerations[service, default: 0]
         Task { @MainActor [weak self, weak webView] in
             guard let self, let webView else { return }
+            if service == .youtube,
+               !(await self.verifyYouTubeProtection(in: webView, generation: generation)) { return }
             let installed = try? await webView.evaluateJavaScript(
                 DOMAdapters.mainFrameInstallationProbe(for: service)
             ) as? Bool
@@ -2497,7 +2570,12 @@ extension SocialWebViewStore: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         youtubeAllowsLandscape = false
         guard let service = service(for: webView) else { return }
-        if service == .youtube { stopYouTubeExternalPlayback(); lastConfirmedServiceAccess = nil }
+        if service == .youtube {
+            stopYouTubeExternalPlayback(); lastConfirmedServiceAccess = nil
+            youtubeProtectionVerified = false
+            webView.isHidden = true
+            health[service] = .loading
+        }
         if service == .instagram { instagramSharedViewerScrollLocked = false }
         mainDocumentGenerations[service, default: 0] &+= 1
         let generation = mainDocumentGenerations[service, default: 0]
@@ -2537,6 +2615,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         webView.scrollView.refreshControl?.endRefreshing()
         updateAuxiliaryPageHealthIfNeeded(for: service, in: webView)
         if let url = webView.url, service.usesUnmodifiedAuthenticationDocument(url) {
+            if service == .youtube { webView.isHidden = false }
             if service.auxiliaryPageHealth(for: url) == nil {
                 servicesWithUsableContent.insert(service)
                 health[service] = .ready

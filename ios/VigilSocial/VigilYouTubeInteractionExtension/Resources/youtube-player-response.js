@@ -215,5 +215,6 @@
   installXHRPlayerResponseGuard();
   for (const key of ['ytInitialPlayerResponse', 'ytInitialData', 'ytplayer']) installInitialPlayerResponseGuard(key);
   installParsedPlayerResponseGuard();
+  window.__vigilYouTubeResponseGuardReady = true;
 
 })();

@@ -282,6 +282,7 @@
     const dismiss = document.createElement('button'); dismiss.type = 'button'; dismiss.textContent = '×'; dismiss.setAttribute('aria-label','Dismiss notification');
     dismiss.addEventListener('click', () => { notice.hidden = true; });
     noticeShadow.append(noticeStyle, message, dismiss); document.body.append(notice);
+    render();
     void request({ action: 'status' }).catch(error => show(error.message));
   }
   // Feed metadata is read as data, never evaluated as page code.
@@ -622,7 +623,7 @@
     }
   }
   function updateFinishedScreen() {
-    if (!topFrame) return;
+    if (!topFrame || !document.documentElement) return;
     const full = Boolean(state?.slots?.filter(Boolean).length === 4);
     const id = currentID();
     const slot = state?.slots?.find(slot => slot?.videoId === id);
@@ -748,6 +749,7 @@
     'ytd-feed-nudge-renderer'
   ].join(',');
   function clean() {
+    if (!document.documentElement) return;
     updateHeldPlayer();
     document.documentElement.toggleAttribute('data-vigil-feed-pending', Boolean(feedName() && !state));
     mount();
@@ -1011,6 +1013,12 @@
     clean();
   }, 500);
   setInterval(() => { if (!lease && !busy) void request({ action: 'status' }).catch(error => show(error.message)); }, 30000);
+  // A native installation check must test the working limiter and mounted
+  // allowance, rather than the flag set before initialization has completed.
+  window.__vigilYouTubeLimitsHealth = () => {
+    clean(); render();
+    return Boolean(state && panel?.isConnected && document.getElementById('vigil-limits-style'));
+  };
   if (document.documentElement) clean();
   if (!document.body) document.addEventListener('DOMContentLoaded', clean, { once: true });
   void prepareCurrentVideo();
