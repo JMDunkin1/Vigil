@@ -43,12 +43,17 @@ const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
     "madaradex", "webtoonclub", "manhwaden", "manhwasusu", "myreadingmanga", "mangamaniacs",
     "mangaxl", "mangasushi", "manhuabuddy", "mangabats", "mangazin", "kitsumanga", "likemanga",
     "yaoimangaonline", "hentaidb", "hentara", "xtoonhub", "toonverse", "hotcomics",
+    // Readers surfaced by live Google result pagination, not just directories.
+    "zazamanga", "mangaowl", "mangapark", "mgread", "manganelo", "nelomanga",
     "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls",
     "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"
 ];
 // Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
 // product IDs. Ordinary subjects retain their own accents and spellings.
 const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+    { pattern: /(?:^|[^\p{L}\p{N}])zaza[\s_.\p{Pd}]+manga(?=$|[^\p{L}\p{N}])/giu.source, replacement: " zazamanga " },
+    { pattern: /(?:^|[^\p{L}\p{N}])nelo[\s_.\p{Pd}]+manga(?=$|[^\p{L}\p{N}])/giu.source, replacement: " nelomanga " },
+    { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+nelo(?=$|[^\p{L}\p{N}])/giu.source, replacement: " manganelo " },
     { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+fire(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangafire " },
     { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+kakalots?(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangakakalot " },
     { pattern: /(?:^|[^\p{L}\p{N}])everything[\s_.\p{Pd}]+moe(?=$|[^\p{L}\p{N}])/giu.source, replacement: " everythingmoe " },

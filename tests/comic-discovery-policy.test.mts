@@ -14,6 +14,7 @@ import { now, usageFixture } from "./test-helpers.mjs";
 
 const chartDomains = ["toonily.me", "omegascans.org", "manhwabuddy.com", "mangadna.com", "manghaha.com", "toonily.com", "mangaforfree.com", "manhwaclub.net"];
 const reportedDomains = ["qtoon.com", "qtoon.net", "qtoon.org", "qtoon.ai", "comicle.com",
+  "zazamanga.com", "mangaowl.io", "nelomanga.net", "mgread.io", "mangapark.cc", "mangapark.one", "mangapark.tv", "mangafreak.net",
   "comicle-manga-manhwa-comics.soft112.com", "line-webtoon.soft112.com", "manta-unlimited-trending-webtoons.soft112.com",
   "mangakakalots.co.uk", "mangafire.to", "atsu.moe", "everythingmoe.com", "cubari.moe",
   "weebcentral.com", "onisaga.com", "mangahub.io", "mangafreak.me", "manganato.gg", "kakamanga.com",
@@ -29,6 +30,7 @@ runInContext(await readFile(new URL("../extension/google-safe-search.js", import
 const guard = (url: string) => Boolean(runInContext(`explicitSearchBlockRedirect(${JSON.stringify(url)})`, browser));
 const search = (query: string) => `https://catalog.example/search?q=${encodeURIComponent(query)}`;
 const blockedQueries = [
+  "zazamanga", "Zaza Manga alternatives", "mangaowl", "mangapark", "mgread", "manganelo", "Nelo Manga",
   "mangadex", "mangakakalots alternatives", "Manga Kakalot", "Manga Fire mirrors", "mangafire",
   "Atsumaru", "ＡＴＳＵＭＡＲＵ", "Everything Moe alternatives", "Cubari Proxy", "Weeb Central",
   "mangasee123", "xtoonhub99", "mangago", "onisaga", "mangafreak", "mangahub", "mangadistrict",
@@ -43,7 +45,8 @@ const blockedQueries = [
 ];
 const allowedQueries = ["corn smut fungus", "manga drawing tutorials", "comic book history", "uncensored interview", "mature gardening", "manga chapter 19", "nottoonily", "omegascanscope", "mangadnasequence",
   "notqtoon", "qtoonscope", "comiclearning", "manta ray", "toptoonscope", "comic drawing software",
-  "notmangafire", "mangafireplace", "everythingmoescope", "atsu", "akuma", "naisho", "schale", "read manga history"];
+  "notmangafire", "mangafireplace", "everythingmoescope", "atsu", "akuma", "naisho", "schale", "read manga history",
+  "manga owl drawing tutorial", "notmangaowl", "zazamangascope"];
 const blockedUrls = [
   ...blockedQueries.flatMap(query => [search(query), search(encodeURIComponent(query))]),
   ...[...chartDomains, ...reportedDomains].flatMap(domain => [
@@ -56,6 +59,7 @@ const blockedUrls = [
   "https://qtoon-manga-manhua-comics.soft112.com/", "https://example.org/q-toon/alternatives",
   "https://proxy.cubari.moe./", "https://mangafire.example/", "https://mangakakalot.example/",
   "https://mangasee999.example/", "https://xtoonhub99.example/", "https://example.org/manga-fire/alternatives",
+  "https://mangaowl.example/", "https://mangapark.example/", "https://example.org/zaza-manga/alternatives",
   "https://example.org/reviews/qtoon.ai/", "https://example.org/comicle-manga-alternatives/"
 ];
 const allowedUrls = [

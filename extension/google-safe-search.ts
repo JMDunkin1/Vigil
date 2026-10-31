@@ -6,6 +6,7 @@ import { containsExplicitSearchKeyword, normalizeExplicitMediaText } from "../sr
 import { browserPermanentBlockedDomains } from "../src/browserStaticProtection.js";
 import { browserProtectionPageURL } from "../src/browserExtensionPages.js";
 import { matchSemanticExplicitUrl } from "../src/explicitUrlContext.js";
+import { googleSearchResultContainer, googleSearchResultDestinations, isGoogleSearchResultsPage } from "../src/searchResultCards.js";
 
 const GOOGLE_SEARCH_HOSTNAMES = new Set(["google.com", "www.google.com", "images.google.com"]);
 const PERSON_EXPOSURE_MARKERS = new Set([
@@ -48,6 +49,7 @@ const SAFE_SEARCH_EVIDENCE_LIFETIME_MS = 30 * 60 * 1000;
 const safeSearchSubjects = new Map<string, number>();
 const permanentBlockedDomains = new Set(browserPermanentBlockedDomains());
 const hiddenSafeSearchElements = new Map<HTMLElement, { display: string; priority: string }>();
+const hiddenBlockedSearchResults = new Map<HTMLElement, { display: string; priority: string }>();
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
 let safeSearchLockObservedUrl = "";
@@ -338,7 +340,39 @@ function redirectAfterSearchWarning(target: string, navigation: "replace" | "ass
   });
 }
 
+function hideBlockedGoogleResultCards(): void {
+  const matches = new Set<HTMLElement>();
+  if (isGoogleSearchResultsPage()) {
+    for (const anchor of document.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+      const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
+      if (!googleSearchResultDestinations(anchor).some(url => explicitSearchBlockRedirect(url))
+        && !containsExplicitMediaLabel(label)) continue;
+      const card = googleSearchResultContainer(anchor);
+      if (card) matches.add(card);
+    }
+  }
+  for (const card of matches) {
+    if (!hiddenBlockedSearchResults.has(card)) hiddenBlockedSearchResults.set(card, {
+      display: card.style.getPropertyValue("display"), priority: card.style.getPropertyPriority("display")
+    });
+    card.setAttribute("data-vigil-search-result", "blocked");
+    if (card.style.getPropertyValue("display") !== "none" || card.style.getPropertyPriority("display") !== "important") {
+      card.style.setProperty("display", "none", "important");
+    }
+  }
+  for (const [card, previous] of hiddenBlockedSearchResults) {
+    if (matches.has(card)) continue;
+    if (card.style.getPropertyValue("display") === "none" && card.style.getPropertyPriority("display") === "important") {
+      if (previous.display) card.style.setProperty("display", previous.display, previous.priority);
+      else card.style.removeProperty("display");
+    }
+    card.removeAttribute("data-vigil-search-result");
+    hiddenBlockedSearchResults.delete(card);
+  }
+}
+
 function scanSafeSearchContext(): void {
+  hideBlockedGoogleResultCards();
   observeSafeSearchNotice();
   hideGoogleResultsWithSharedFileLinks();
   // Cached evidence can arrive after the initial URL/control checks on any
@@ -625,7 +659,8 @@ function enforceGoogleSafeSearchForLink(event: MouseEvent): void {
   if (!anchor) return;
   observeSafeSearchNotice();
   const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
-  if (containsExplicitMediaLabel(label) || contextualLinkIsBlocked(anchor)) {
+  if (containsExplicitMediaLabel(label) || contextualLinkIsBlocked(anchor)
+    || googleSearchResultDestinations(anchor).some(url => explicitSearchBlockRedirect(url))) {
     event.preventDefault();
     event.stopImmediatePropagation();
     redirectAfterSearchWarning(browserProtectionPageURL("blocked.html"), "assign");

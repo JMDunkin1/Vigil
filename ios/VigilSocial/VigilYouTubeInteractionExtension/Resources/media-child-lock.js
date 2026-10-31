@@ -49,12 +49,17 @@ const ADDITIONAL_EXPLICIT_SEARCH_TERMS = [
     "madaradex", "webtoonclub", "manhwaden", "manhwasusu", "myreadingmanga", "mangamaniacs",
     "mangaxl", "mangasushi", "manhuabuddy", "mangabats", "mangazin", "kitsumanga", "likemanga",
     "yaoimangaonline", "hentaidb", "hentara", "xtoonhub", "toonverse", "hotcomics",
+    // Readers surfaced by live Google result pagination, not just directories.
+    "zazamanga", "mangaowl", "mangapark", "mgread", "manganelo", "nelomanga",
     "futanari", "ecchi", "sexdoll", "sexdolls", "lovedoll", "lovedolls",
     "sexrobot", "sexrobots", "sextoy", "sextoys", "masturbator", "masturbators"
 ];
 // Normalize known vocabulary, rather than fuzzy-matching arbitrary names or
 // product IDs. Ordinary subjects retain their own accents and spellings.
 const EXPLICIT_VOCABULARY_REPLACEMENTS = [
+    { pattern: /(?:^|[^\p{L}\p{N}])zaza[\s_.\p{Pd}]+manga(?=$|[^\p{L}\p{N}])/giu.source, replacement: " zazamanga " },
+    { pattern: /(?:^|[^\p{L}\p{N}])nelo[\s_.\p{Pd}]+manga(?=$|[^\p{L}\p{N}])/giu.source, replacement: " nelomanga " },
+    { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+nelo(?=$|[^\p{L}\p{N}])/giu.source, replacement: " manganelo " },
     { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+fire(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangafire " },
     { pattern: /(?:^|[^\p{L}\p{N}])manga[\s_.\p{Pd}]+kakalots?(?=$|[^\p{L}\p{N}])/giu.source, replacement: " mangakakalot " },
     { pattern: /(?:^|[^\p{L}\p{N}])everything[\s_.\p{Pd}]+moe(?=$|[^\p{L}\p{N}])/giu.source, replacement: " everythingmoe " },
@@ -406,6 +411,88 @@ function containsContextualExplicitMedia(value) {
 }
 /* eslint-enable no-unused-vars */
 // END GENERATED EXPLICIT MEDIA CONTEXT
+// BEGIN GENERATED SEARCH RESULT HELPERS
+/* eslint-disable no-unused-vars -- Shared search helpers include the destination resolver used by the search guard. */
+// Shared by the search and media guards. Keep the title, citation, snippet,
+// thumbnail and sitelinks together without hiding neighboring results.
+function isGoogleSearchResultsPage() {
+    return /^(?:(?:www|images)\.)?google\.(?:com|[a-z]{2,3}|(?:com|co)\.[a-z]{2})$/u.test(String(location.hostname || "").toLowerCase().replace(/\.$/u, ""))
+        && location.pathname === "/search";
+}
+function googleSearchResultContainer(element) {
+    if (!isGoogleSearchResultsPage() || element.closest("header, nav, footer, form, [role='navigation'], [role='search'], #searchform"))
+        return null;
+    // AI Overview recommendations are list rows. Hiding only their linked name
+    // leaves a dangling description, so keep each recommendation together.
+    const row = element.closest("li, [role='listitem']");
+    if (row && row.querySelectorAll("h3").length <= 1 && !row.querySelector("input, textarea"))
+        return row;
+    const results = element.closest("#rso, #search");
+    if (!results)
+        return element.closest("p");
+    let card = null;
+    for (let candidate = element, depth = 0; candidate && candidate !== results && depth < 16; candidate = candidate.parentElement, depth += 1) {
+        if (!(candidate instanceof HTMLElement) || candidate.matches("main, [role='main'], #center_col, #rcnt"))
+            break;
+        // Current desktop/mobile wrappers can contain several sitelink headings.
+        // A wrapper around independent result cards is a group, not one result.
+        const headings = candidate.querySelectorAll("h3").length;
+        const sitelinkTable = Boolean(candidate.querySelector("table"))
+            && [...candidate.querySelectorAll("h3")].filter(heading => !heading.closest("table")).length === 1;
+        if (candidate.matches(".MjjYud, .g, .Gx5Zad")
+            && !candidate.querySelector(".MjjYud, .g, .Gx5Zad") && (headings <= 1 || sitelinkTable))
+            return candidate;
+        if (headings > 1)
+            break;
+        if (headings === 1)
+            card = candidate;
+    }
+    return card;
+}
+function googleSearchResultDestinations(anchor) {
+    if (!isGoogleSearchResultsPage())
+        return [];
+    const destinations = new Set();
+    let url;
+    try {
+        url = new URL(anchor.href, location.href);
+    }
+    catch {
+        return [];
+    }
+    if (!/^https?:$/u.test(url.protocol))
+        return [];
+    const google = /^(?:www\.)?google\.(?:com|[a-z]{2,3}|(?:com|co)\.[a-z]{2})$/u.test(url.hostname);
+    if (!google)
+        destinations.add(url.href);
+    else if (["/url", "/goto", "/aclk", "/imgres"].includes(url.pathname)) {
+        for (const key of ["q", "url", "adurl", "imgurl"]) {
+            const value = url.searchParams.get(key) || "";
+            if (/^https?:\/\//iu.test(value)) {
+                try {
+                    destinations.add(new URL(value).href);
+                }
+                catch { /* Ignore malformed redirect destinations. */ }
+            }
+        }
+        // Opaque redirects cannot be decoded as URLs. The rendered citation still
+        // identifies the result's actual domain without interpreting opaque bytes.
+        const card = googleSearchResultContainer(anchor);
+        for (const citation of (card || anchor).querySelectorAll("cite")) {
+            const text = (citation.textContent || "").normalize("NFKC").replace(/\p{Cf}/gu, "").trim();
+            const first = text.split(/[\s›»]/u)[0];
+            try {
+                const cited = new URL(/^https?:\/\//iu.test(first) ? first : `https://${first}`);
+                if (/^[a-z0-9.-]+\.[a-z]{2,}$/iu.test(cited.hostname))
+                    destinations.add(`${cited.origin}/`);
+            }
+            catch { /* A citation need not contain a URL. */ }
+        }
+    }
+    return [...destinations];
+}
+/* eslint-enable no-unused-vars */
+// END GENERATED SEARCH RESULT HELPERS
   const explicitTitle = value => {
     const text = String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '');
     if (containsContextualExplicitMedia(text)) return true;
@@ -535,6 +622,8 @@ function containsContextualExplicitMedia(value) {
     element.querySelectorAll('video, audio').forEach(media => { try { media.pause(); } catch {} });
   };
   const mediaContainer = label => {
+    const searchResult = googleSearchResultContainer(label);
+    if (searchResult) return searchResult;
     // Marketplace titles and images often use separate links. Select their
     // shared product card before the generic smallest-media fallback.
     const host = location.hostname.toLowerCase();

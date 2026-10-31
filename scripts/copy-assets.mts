@@ -11,6 +11,7 @@ const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const projectRoot = dirname(dirname(runtimeRoot));
 const ignoredSourceExtensions = new Set([".ts", ".mts"]);
 const extensionPageHelper = (await readFile(join(runtimeRoot, "src/browserExtensionPages.js"), "utf8")).replace(/^export /gmu, "");
+const searchResultHelpers = (await readFile(join(runtimeRoot, "src/searchResultCards.js"), "utf8")).replace(/^export /gmu, "");
 const socialIcons = [
   { name: "instagram.png", source: ["Icons", "instagram.png"] },
   {
@@ -167,6 +168,7 @@ async function makeExtensionScriptsClassic(): Promise<void> {
       source += "\nexport {};\n";
     }
     if (name === "google-safe-search.js") {
+      source = source.replace(/^import .*searchResultCards\.js["'];?\s*$/mu, () => searchResultHelpers);
       const semanticUrlMatcher = (await readFile(join(runtimeRoot, "src/explicitUrlContext.js"), "utf8"))
         .replace(/^import .*\sfrom\s["'][^"']+["'];?\s*$/gmu, "").replace(/^export /gmu, "");
       source = source.replace(/^import .*explicitUrlContext\.js["'];?\s*$/mu,
@@ -217,6 +219,9 @@ await cp(join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Res
 const mediaGuardPath = join(projectRoot, "ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/media-child-lock.js");
 const mediaContext = (await readFile(join(runtimeRoot, "src/explicitMediaContext.js"), "utf8")).replace(/^export /gmu, "");
 await writeFile(mediaGuardPath, (await readFile(mediaGuardPath, "utf8")).replace(
+  /\/\/ BEGIN GENERATED SEARCH RESULT HELPERS[\s\S]*?\/\/ END GENERATED SEARCH RESULT HELPERS/u,
+  () => `// BEGIN GENERATED SEARCH RESULT HELPERS\n/* eslint-disable no-unused-vars -- Shared search helpers include the destination resolver used by the search guard. */\n${searchResultHelpers}/* eslint-enable no-unused-vars */\n// END GENERATED SEARCH RESULT HELPERS`
+).replace(
   /\/\/ BEGIN GENERATED CONTEXTUAL PLATFORMS[\s\S]*?\/\/ END GENERATED CONTEXTUAL PLATFORMS/u,
   `// BEGIN GENERATED CONTEXTUAL PLATFORMS\n  const contextualHosts = ${JSON.stringify(CONTEXTUAL_SEARCH_PLATFORMS)};\n  const currentHost = location.hostname.toLowerCase().replace(/\\.$/u, '');\n  const isContextualPlatform = contextualHosts.some(domain => currentHost === domain || currentHost.endsWith('.' + domain));\n// END GENERATED CONTEXTUAL PLATFORMS`
 ).replace(

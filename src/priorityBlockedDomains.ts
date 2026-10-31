@@ -254,6 +254,16 @@ export const DEFAULT_HTTP_FILTER_BYPASS_BLOCKED_SITES = [
 ] as const;
 
 export const DEFAULT_MATURE_COMIC_BLOCKED_SITES = [
+  // Live Google/Safari discovery and first-party catalog checks, October 31.
+  // Evidence and inconclusive candidates: research/2026-10-31-live-manga-search.md.
+  "zazamanga.com",
+  "mangaowl.io",
+  "nelomanga.net",
+  "mgread.io",
+  "mangapark.cc",
+  "mangapark.one",
+  "mangapark.tv",
+  "mangafreak.net",
   // Directory-wide explicit-reader audit: research/2026-10-30-manga-directory-audit.json.
   "18comic.vip",
   "3hentai.net",
