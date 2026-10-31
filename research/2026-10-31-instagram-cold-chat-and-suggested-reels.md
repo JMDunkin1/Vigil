@@ -88,12 +88,20 @@ and a keyboard-panned visual viewport are covered.
 The guard immediately hides the recommendation surface and pauses its media.
 A document-bound native message activates a separate block state, suspends the
 WebView's media, removes native scrolling exceptions, and prevents an ordinary
-resume or stale viewer-unlock message from releasing the block. The native UI
-shows only **Blocked**, **Back**, and `V1-SOC-INSTAGRAM-REELS`; its accessibility
-hint contains the full restriction. The diagnostic label is not authorization.
+resume or stale viewer-unlock message from releasing containment. Following the
+user's delivery feedback, detection automatically returns to the originating
+Direct thread without a **Blocked** interstitial. A plain cover conceals the
+quarantined media during navigation; the normal navigation recovery UI remains
+available if the chat cannot load.
 
-Back loads the existing trusted Direct route, or Instagram's Direct inbox as a
-fallback. The block remains until a new trusted document binds. A committed
+The guard records the originating thread before a Reel changes the URL. The
+native host also remembers validated Direct-thread surface reports and captures
+the source of full document navigations, preserving the thread across history
+replacement. Return targets must be HTTPS Instagram Direct-thread URLs with no
+credentials or unexpected port; query and fragment are removed. The current
+thread and trusted navigation history provide additional fallbacks. If no
+originating thread is available, the return goes to Direct inbox. Containment
+remains until a new trusted document binds. A committed
 trusted authentication document also releases this state because authentication
 pages deliberately omit the injected page bridge. Suggested detection is
 replayed after document binding so a cold document cannot lose its first block
@@ -122,6 +130,17 @@ The iOS app and test target compile with `build-for-testing`. The verified
 snapshot's app source, fixtures, and runners exactly match this working patch.
 These checks were completed before the subsequent commit and deployment request; installation is verified separately by the delivery receipt.
 
+The automatic-return follow-up adds explicit negative cases for editable and
+ARIA textboxes, message and caption headers, right/bottom labels, a chat dialog
+header, and non-exact text. Positive cases include **Suggested Reels**, a
+permalink transition, and a newly selected chat. The Suggested WebKit suite now
+has 26 scenarios and checks the exact originating return path. The production
+Swift runner now has 40 geometry/return-policy checks, including replaced
+history, malformed/untrusted destinations, and Direct-inbox fallback. The 30
+combined comments/Send interaction scenarios also pass. The iOS app and updated
+native automatic-return XCTest compile with `build-for-testing`; no new native
+XCTest execution or physical swipe/keyboard acceptance result is claimed.
+
 The new native XCTest cases cover coordinate resizing, malformed viewport
 metadata, the production message bridge, and the Suggested block lifecycle.
 XCTest execution still failed before establishing the test connection. A
@@ -136,7 +155,10 @@ patch, excluding concurrent unrelated work. Its path and base commit are in
 `data/instagram-oct31-validation-base.txt`. Logs use
 `data/instagram-oct31-*`; final WebKit results use `verified-*`.
 
-The phone is unavailable and the user cannot connect it now. Installation and
-real-phone acceptance remain outstanding. Delivery must use the normal combined
+The initial patch was committed as `640d7b1` and installed over USB as combined
+app 0.3.217 (220), phone release 0.3.237 (240). The exact supervised policy
+`7d0ab7c4016d` and all eight service launches were verified. The automatic-return
+follow-up requires a subsequent delivery receipt; real-phone gesture acceptance
+remains outstanding. Delivery must use the normal combined
 `npm run agent:update:social` verified app-and-policy transaction. This follow-up
 does not change supervision, profiles, signing requirements, or watchdogs.

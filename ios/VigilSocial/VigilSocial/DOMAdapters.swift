@@ -2696,6 +2696,14 @@ enum DOMAdapters {
       let viewerOpeningUntil = 0;
       let viewerTransitionTimer = 0;
       let directPath = '';
+      const directThreadPath = value => {
+        if (!value) return '';
+        try {
+          const url = new URL(value, location.href);
+          return url.origin === location.origin && /^\/direct\/t\/[A-Za-z0-9_-]+\/?$/.test(url.pathname) ? url.pathname : '';
+        } catch (_) { return ''; }
+      };
+      let lastDirectThreadPath = directThreadPath(location.href);
       let concealmentScope = null;
       const classifications = new Map();
       const mark = (node, name, value) => {
@@ -2730,7 +2738,10 @@ enum DOMAdapters {
       let nativeScrollState = '';
       let suggestedReelsRoot = null;
       const publishSuggestedReelsBlock = () => {
-        try { window.webkit?.messageHandlers?.vigil?.postMessage({type: 'instagramSuggestedReels', documentID: String(window.__vigilDocumentID || '')}); } catch (_) {}
+        const returnPath = directThreadPath(directPath) || directThreadPath(sharedIntent?.source)
+          || directThreadPath(location.href) || lastDirectThreadPath;
+        try { window.webkit?.messageHandlers?.vigil?.postMessage({type: 'instagramSuggestedReels',
+          returnPath, documentID: String(window.__vigilDocumentID || '')}); } catch (_) {}
       };
       const nativeGestureRegion = (node, requireForeground = false) => {
         if (!(node instanceof Element) || !activeModal(node)) return null;
@@ -3508,8 +3519,10 @@ enum DOMAdapters {
         for (const label of document.querySelectorAll('h1, h2, h3, [role="heading"], [role="tab"], button, span, div')) {
           if (label.childElementCount || !/^(suggested|suggested reels)$/i.test(String(label.textContent || '').trim())
               || !activeViewer(label) || inSheet(label)) continue;
+          // Text being composed, sent, or captioned is never a Reel rail title,
+          // even when it happens to occupy the same upper-left coordinates.
+          if (label.closest('input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], article, [role="article"], [data-testid*="caption" i], [data-message-id], [role="row"]')) continue;
           const header = label.closest('header, nav, h1, h2, h3, [role="tab"], [role="heading"], [role="navigation"], [role="tablist"]');
-          if (!header && label.closest('article, [role="article"], [data-testid*="caption" i], [data-message-id], [role="row"]')) continue;
           const title = label.getBoundingClientRect();
           const viewport = window.visualViewport, left = title.left - (viewport?.offsetLeft || 0), top = title.top - (viewport?.offsetTop || 0);
           if (left < 0 || left > (viewport?.width || innerWidth) * .5 || top < 0
@@ -3519,7 +3532,7 @@ enum DOMAdapters {
           for (let panel = label.parentElement, depth = 0; panel && panel !== document.body && depth < 12; panel = panel.parentElement, depth++) {
             const main = panel.matches('main, [role="main"]');
             if (panel.matches('article, [role="article"]') || panel.querySelector('main, [role="main"]')) break;
-            if (main && (!header || panel.querySelector('textarea[placeholder*="message" i], [contenteditable="true"][aria-label*="message" i], [role="textbox"][aria-label*="message" i]'))) break;
+            if (panel.querySelector('textarea[placeholder*="message" i], [contenteditable="true"][aria-label*="message" i], [role="textbox"][aria-label*="message" i]') || main && !header) break;
             const style = getComputedStyle(panel), box = panel.getBoundingClientRect();
             if (!activeViewer(panel) || !(main || /^(fixed|absolute)$/.test(style.position) || panel.matches('[role="dialog"], [aria-modal="true"]'))
                 || Math.max(box.width, panel.clientWidth) < innerWidth * .72 || Math.max(box.height, panel.clientHeight) < innerHeight * .6) continue;
@@ -3535,6 +3548,7 @@ enum DOMAdapters {
         return false;
       };
       const reconcile = () => {
+        lastDirectThreadPath = directThreadPath(location.href) || lastDirectThreadPath;
         if (blockSuggestedReels()) return;
         normalizeRecipientSheets();
         if (!syncRoute() || !concealmentScope) return;
@@ -8675,6 +8689,7 @@ enum DOMAdapters {
           type: 'surface',
           service: 'instagram',
           route,
+          directThreadPath: route === 'directThread' ? location.pathname : null,
           refreshEligible: route === 'feed',
           blocksRefresh: route !== 'feed',
           fullBleedTop: false

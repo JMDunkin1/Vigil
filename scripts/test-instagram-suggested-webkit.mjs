@@ -17,15 +17,18 @@ assert.ok(guard && stable && start && html);
 for (const source of [guard, stable, start]) assert.doesNotThrow(() => new Function(source));
 const bootstrap = `window.__vigilDocumentID='suggested-fixture';window.fixtureLocks=[];
 Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{vigil:{postMessage:p=>fixtureLocks.push(p)}}}});`;
-const modes = ['cold', 'warm', 'anonymous', 'animated', 'pointerless', 'panned', 'main-rail', 'thread-header', 'chat', 'chat-button', 'caption', 'caption-button', 'covered', 'recipient', 'hidden'];
+const modes = ['cold', 'warm', 'anonymous', 'animated', 'pointerless', 'panned', 'main-rail', 'suggested-reels', 'permalink', 'new-chat',
+  'thread-header', 'thread-dialog-header', 'chat', 'chat-button', 'caption', 'caption-button', 'covered', 'recipient', 'hidden',
+  'editable-header', 'textbox-header', 'message-header', 'caption-header', 'wrong-position-right', 'wrong-position-bottom', 'suggested-phrase'];
 const scenarios = modes.map(mode => {
-  const blocked = ['cold', 'warm', 'anonymous', 'animated', 'pointerless', 'panned', 'main-rail'].includes(mode);
+  const blocked = ['cold', 'warm', 'anonymous', 'animated', 'pointerless', 'panned', 'main-rail', 'suggested-reels', 'permalink', 'new-chat'].includes(mode);
   return {name: `Suggested Reel boundary: ${mode}`, html, path: '/direct/t/friend/', steps: [
     {action: `fixtureActivate('${mode}')`, delay: blocked ? 0 : 250},
     ...(mode === 'warm' ? [{condition: "document.documentElement.hasAttribute('data-vigil-single-reel')"},
       {action: "document.getElementById('label').firstChild.data='Suggested'"}] : []),
     {condition: blocked ? 'fixtureSuggestedBlocked()' : "!fixtureLocks.some(p=>p.type==='instagramSuggestedReels')&&!document.querySelector('[data-vigil-instagram-suggested-reels]')"},
-    ...(blocked ? [{action: "window.__vigilDocumentID='ready-fixture';window.__vigilInstagramSharedItem.synchronizeNativeGestureGuard()",
+    ...(blocked ? [{condition: `fixtureLocks.filter(p=>p.type==='instagramSuggestedReels').at(-1)?.returnPath===${JSON.stringify(mode === 'new-chat' ? '/direct/t/another-friend/' : '/direct/t/friend/')}`},
+      {action: "window.__vigilDocumentID='ready-fixture';window.__vigilInstagramSharedItem.synchronizeNativeGestureGuard()",
       condition: "fixtureLocks.filter(p=>p.type==='instagramSuggestedReels').at(-1)?.documentID==='ready-fixture'"}] : [])
   ]};
 });

@@ -473,6 +473,13 @@ struct RootView: View {
                     .ignoresSafeArea(.container, edges: webViewSafeAreaEdges)
                     .allowsHitTesting(service != .instagram || !store.instagramSuggestedReelsBlocked)
                     .accessibilityHidden(service == .instagram && store.instagramSuggestedReelsBlocked)
+                    .overlay {
+                        if service == .instagram, store.instagramSuggestedReelsBlocked {
+                            // Cover quarantined media while returning to chat.
+                            // The ordinary navigation retry UI remains usable.
+                            surfaceColor.ignoresSafeArea().accessibilityHidden(true)
+                        }
+                    }
             }
 
             healthOverlay(
@@ -483,21 +490,6 @@ struct RootView: View {
 
             if service == .instagram {
                 YouTubeContentBlockerGate(isDark: isDark)
-            }
-            if service == .instagram, store.instagramSuggestedReelsBlocked {
-                VStack(spacing: 8) {
-                    Text("Blocked").font(.system(size: 30, weight: .regular))
-                    Button("Back", action: store.leaveInstagramSuggestedReels)
-                        .font(.system(size: 12)).frame(minWidth: 44, minHeight: 44).buttonStyle(.plain)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .foregroundStyle(Color(white: 0.76))
-                .background(Color(red: 24.0 / 255.0, green: 26.0 / 255.0, blue: 28.0 / 255.0))
-                .overlay(alignment: .bottomTrailing) {
-                    Text("V1-SOC-INSTAGRAM-REELS").font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(Color(white: 0.46)).padding(16)
-                        .accessibilityHint("Instagram Suggested Reels are blocked. Only the intentionally opened shared item may be viewed; entering its recommendation feed is unavailable.")
-                }
             }
         }
             .onChange(of: store.health[service], initial: true) { _, health in

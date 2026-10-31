@@ -411,6 +411,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var instagramInformationalAccounts: [String] = []
     @Published private(set) var instagramSuggestedReelsBlocked = false
     private var instagramSuggestedReelsDocumentID: String?
+    private var instagramSuggestedReelsReturnTarget: URL?
+    private var instagramLastDirectThreadURL: URL?
     private var instagramControlsUserScript: WKUserScript?
     private var instagramDocumentStartUserScript: WKUserScript?
     private var instagramIncomingSharedURL: URL?
@@ -942,6 +944,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func retry(_ service: SocialService) {
+        if service == .instagram, instagramSuggestedReelsBlocked {
+            returnFromInstagramSuggestedReels(returnPath: instagramSuggestedReelsReturnTarget?.absoluteString)
+            return
+        }
         if service == .snapchat {
             // Restart the first-party handoff with the existing cookie store.
             // Reloading a failed post-login document can replay a consumed
@@ -1471,6 +1477,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 instagramSuggestedReelsBlocked = true
                 setInstagramReelScrollLocked(true, in: webView)
                 suspendAllMedia(relinquishExternalPlayback: false)
+                returnFromInstagramSuggestedReels(returnPath: body["returnPath"] as? String)
             }
         case "documentReady":
             guard frame.isMainFrame,
@@ -1487,6 +1494,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             }
             if service == .instagram { synchronizeInstagramSharedItem(in: message.webView) }
         case "health":
+            if service == .instagram, instagramSuggestedReelsBlocked { return }
             let detail = body["detail"] as? String ?? ""
             let nextHealth: AdapterHealth
             switch body["state"] as? String {
@@ -1575,6 +1583,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                   let blocksRefresh = body["blocksRefresh"] as? Bool else {
                 setSurface(.unknown, for: service)
                 return
+            }
+            if service == .instagram, let thread = Self.instagramDirectThreadURL(body["directThreadPath"] as? String)
+                ?? Self.instagramDirectThreadURL(message.webView?.url?.absoluteString) {
+                instagramLastDirectThreadURL = thread
             }
             setSurface(
                 SocialSurfaceState(
@@ -2237,21 +2249,41 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         updateInstagramPanBoundary(locked: enforcedLock, in: webView)
     }
 
-    func leaveInstagramSuggestedReels() {
+    private func returnFromInstagramSuggestedReels(returnPath: String?) {
         guard instagramSuggestedReelsBlocked, let webView = webViews[.instagram] else { return }
-        var components = webView.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
-        components?.query = nil
-        components?.fragment = nil
-        let candidate = components?.url
-        let target = candidate.flatMap { $0.path.hasPrefix("/direct/") && SocialService.instagram.allowsNavigation(to: $0) ? $0 : nil }
-            ?? URL(string: "https://www.instagram.com/direct/inbox/")!
-        // Stay blocked and suspended until the new trusted document binds.
+        let target = Self.instagramSuggestedReelsReturnURL(returnPath: returnPath, currentURL: webView.url,
+            history: webView.backForwardList.backList.reversed().map(\.url), originURL: instagramLastDirectThreadURL)
+        instagramSuggestedReelsReturnTarget = target
+        health[.instagram] = .loading
+        // Leave immediately; quarantine and media suspension remain in force
+        // until the returning chat's trusted document binds.
         webView.load(URLRequest(url: target))
+    }
+
+    nonisolated static func instagramDirectThreadURL(_ value: String?) -> URL? {
+        guard let value, !value.isEmpty, value.utf8.count <= 2048,
+              let url = URL(string: value, relativeTo: URL(string: "https://www.instagram.com")!)?.absoluteURL,
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == "https",
+              ["instagram.com", "www.instagram.com"].contains(parts.host?.lowercased() ?? ""),
+              parts.port == nil || parts.port == 443, parts.user == nil, parts.password == nil,
+              parts.path.range(of: #"^/direct/t/[A-Za-z0-9_-]+/?$"#, options: .regularExpression) != nil else { return nil }
+        parts.query = nil
+        parts.fragment = nil
+        return parts.url
+    }
+
+    nonisolated static func instagramSuggestedReelsReturnURL(returnPath: String?, currentURL: URL?, history: [URL], originURL: URL? = nil) -> URL {
+        instagramDirectThreadURL(returnPath) ?? instagramDirectThreadURL(currentURL?.absoluteString)
+            ?? instagramDirectThreadURL(originURL?.absoluteString)
+            ?? history.lazy.compactMap { instagramDirectThreadURL($0.absoluteString) }.first
+            ?? URL(string: "https://www.instagram.com/direct/inbox/")!
     }
 
     private func clearInstagramSuggestedReelsBlock(in webView: WKWebView) {
         instagramSuggestedReelsBlocked = false
         instagramSuggestedReelsDocumentID = nil
+        instagramSuggestedReelsReturnTarget = nil
         setInstagramReelScrollLocked(false, in: webView)
         resumeSuspendedMedia()
     }
@@ -2319,7 +2351,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
             return
         }
-        if Self.shouldPreserveInstagramSurface(
+        if !instagramSuggestedReelsBlocked, Self.shouldPreserveInstagramSurface(
             after: nsError,
             service: service,
             hadUsableContent: servicesWithUsableContent.contains(service)
@@ -2607,6 +2639,9 @@ extension SocialWebViewStore: WKNavigationDelegate {
             // same WKWebView grow beneath an already-snapped Reel, leaving its
             // account and caption one navigation-bar height too low.
             if service == .instagram {
+                if let thread = Self.instagramDirectThreadURL(webView.url?.absoluteString) {
+                    instagramLastDirectThreadURL = thread
+                }
                 setSurface(Self.provisionalInstagramSurface(for: url), for: service)
             }
         }
@@ -2736,6 +2771,10 @@ extension SocialWebViewStore: WKNavigationDelegate {
         cancelDocumentWork(for: service)
         setSurface(.unknown, for: service)
         health[service] = .loading
+        if service == .instagram, instagramSuggestedReelsBlocked {
+            returnFromInstagramSuggestedReels(returnPath: instagramSuggestedReelsReturnTarget?.absoluteString)
+            return
+        }
         let safeURL = Self.safeRecoveryURL(webView.url, for: service)
         if let safeURL {
             webContentRecovery[service] = WebContentRecoveryState(

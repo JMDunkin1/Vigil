@@ -15757,9 +15757,17 @@ extension VigilSocialTests {
       if(mode!=='anonymous')viewer.setAttribute('role','dialog');
       viewer.innerHTML='<video id="video" muted playsinline></video><header id="rail-title"><span id="label">Suggested</span></header>';
       if(mode==='warm')viewer.querySelector('#label').textContent='Shared';
+      if(mode==='suggested-reels')viewer.querySelector('#label').textContent='Suggested Reels';
+      if(mode==='suggested-phrase')viewer.querySelector('#label').textContent='You suggested this';
+      if(mode==='wrong-position-right')viewer.querySelector('header').style.left='75%';
+      if(mode==='wrong-position-bottom')viewer.querySelector('header').style.top='65%';
+      if(mode==='editable-header')viewer.querySelector('header').contentEditable='true';
+      if(mode==='textbox-header')viewer.querySelector('header').setAttribute('role','textbox');
+      if(mode==='message-header')viewer.querySelector('header').setAttribute('data-message-id','message');
+      if(mode==='caption-header')viewer.querySelector('header').setAttribute('data-testid','reel-caption');
       if(mode==='caption-button')viewer.innerHTML='<article><video id="video"></video><button id="label" style="position:absolute;top:12px;left:12px">Suggested</button></article>';
       if(mode==='caption')viewer.innerHTML='<article><video id="video"></video><span id="label" style="position:absolute;top:12px;left:12px">Suggested</span></article>';
-      if(mode==='thread-header')viewer.insertAdjacentHTML('beforeend','<textarea placeholder="Message"></textarea>');
+      if(mode==='thread-header'||mode==='thread-dialog-header')viewer.insertAdjacentHTML('beforeend','<textarea placeholder="Message"></textarea>');
       if(mode==='hidden')viewer.hidden=true;
       if(mode==='pointerless')viewer.querySelector('video').style.pointerEvents='none';
       if(mode==='panned'){viewer.style.top='260px';viewer.style.height='844px';Object.defineProperty(window,'visualViewport',{configurable:true,value:{width:innerWidth,height:300,offsetTop:260,offsetLeft:0}});}
@@ -15771,6 +15779,8 @@ extension VigilSocialTests {
         requestAnimationFrame(()=>requestAnimationFrame(()=>viewer.style.transform='scale(1)'));}
     };
     window.fixtureActivate=mode=>{
+      if(mode==='permalink')history.pushState({},'', '/reel/shared/');
+      if(mode==='new-chat')history.pushState({},'', '/direct/t/another-friend/');
       if(mode==='chat'||mode==='chat-button'){if(mode==='chat-button')document.getElementById('chat-message').innerHTML='<button>Suggested</button>';document.getElementById('chat').insertAdjacentHTML('beforeend','<video></video>');return;}
       if(mode==='warm'){document.getElementById('preview').onclick=()=>fixtureCreate(mode);document.getElementById('preview').click();}
       else fixtureCreate(mode);
@@ -15781,7 +15791,7 @@ extension VigilSocialTests {
     """#
 
     @MainActor
-    func testInstagramSuggestedReelsReachNativeBlockAndCannotUnlockTheViewer() async throws {
+    func testInstagramSuggestedReelsAutomaticallyReturnToChatWhileQuarantined() async throws {
         let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false, websiteDataStore: .nonPersistent())
         let page = store.webView(for: .instagram)
         page.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
@@ -15792,8 +15802,16 @@ extension VigilSocialTests {
         window.isHidden = false
         defer { page.removeFromSuperview(); window.isHidden = true }
         page.loadHTMLString(Self.instagramSuggestedReelsHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
-        try await waitForJavaScriptCondition("typeof fixtureActivate==='function'", in: page)
+        try await waitForJavaScriptCondition("typeof fixtureActivate==='function'&&!!window.__vigilDocumentID", in: page)
+        let returned = expectation(description: "Suggested Reels automatically return to the originating chat")
+        let returnProbe = RoutePolicyNavigationDelegate(expectedHost: "www.instagram.com",
+            expectedPath: URL(string: "https://www.instagram.com/direct/t/friend/")!.path, expectation: returned)
+        // Observe and cancel the return request so the quarantined document
+        // remains available for the stale-unlock checks below.
+        page.navigationDelegate = returnProbe
         _ = try await page.evaluateJavaScript("fixtureActivate('cold')")
+        await fulfillment(of: [returned], timeout: 5)
+        XCTAssertEqual(returnProbe.matchedURL?.absoluteString, "https://www.instagram.com/direct/t/friend/")
         try await waitForJavaScriptCondition("document.getElementById('viewer')?.getAttribute('data-vigil-instagram-suggested-reels')==='blocked'", in: page)
         for _ in 0..<100 {
             if store.instagramSuggestedReelsBlocked { break }
@@ -15804,6 +15822,20 @@ extension VigilSocialTests {
         store.resumeSuspendedMedia()
         XCTAssertTrue(boundary.isEnabled, "A stale viewer-close report cannot unlock the Suggested surface")
         XCTAssertTrue(boundary.scrollingRegions.isEmpty)
+        store.webView(page, didFailProvisionalNavigation: nil,
+            withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        guard case .degraded = store.health[.instagram] else {
+            return XCTFail("A failed return must offer navigation recovery instead of leaving a blank covered page")
+        }
+        let retried = expectation(description: "Retry returns to the same chat, retaining containment")
+        let retryProbe = RoutePolicyNavigationDelegate(expectedHost: "www.instagram.com",
+            expectedPath: URL(string: "https://www.instagram.com/direct/t/friend/")!.path, expectation: retried)
+        page.navigationDelegate = retryProbe
+        store.retry(.instagram)
+        await fulfillment(of: [retried], timeout: 5)
+        XCTAssertEqual(retryProbe.matchedURL, returnProbe.matchedURL)
+        XCTAssertTrue(store.instagramSuggestedReelsBlocked)
+        page.navigationDelegate = store
         page.loadHTMLString(Self.instagramSuggestedReelsHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
         try await waitForJavaScriptCondition("typeof fixtureActivate==='function'", in: page)
         for _ in 0..<100 {

@@ -33,6 +33,8 @@ ${method('blocksPan')}
 enum Bridge {
 ${method('instagramGestureRegions')}
 ${viewport}
+${method('instagramDirectThreadURL')}
+${method('instagramSuggestedReelsReturnURL')}
 }
 var checks = 0
 func check(_ value: Bool, _ label: String) {
@@ -66,6 +68,18 @@ for value in [[0.0,844.0],[390.0,Double.nan],[Double.infinity,844.0],[390.0],[39
 let json = try JSONSerialization.jsonObject(with: Data("[390,844]".utf8))
 check(Bridge.instagramGestureViewport(json) == CGSize(width:390,height:844), "WK-style JSON number bridge retains viewport dimensions")
 ` : ''}
+let origin = URL(string:"https://www.instagram.com/direct/t/friend/")!
+let reel = URL(string:"https://www.instagram.com/reel/shared/")!
+let otherChat = URL(string:"https://www.instagram.com/direct/t/other/")!
+check(Bridge.instagramSuggestedReelsReturnURL(returnPath:"/direct/t/friend/?unused=1#fragment", currentURL:reel, history:[otherChat]) == origin, "Originating chat survives a Reel permalink and strips query/fragment")
+check(Bridge.instagramSuggestedReelsReturnURL(returnPath:nil, currentURL:origin, history:[otherChat]) == origin, "Cold unpinned viewer returns to the current chat")
+check(Bridge.instagramSuggestedReelsReturnURL(returnPath:nil, currentURL:reel, history:[reel,origin,otherChat]) == origin, "Document navigation uses the most recent trusted chat in history")
+check(Bridge.instagramSuggestedReelsReturnURL(returnPath:nil, currentURL:reel, history:[otherChat], originURL:origin) == origin, "Remembered originating chat survives replaced history and a new Reel document")
+for invalid in ["https://evil.example/direct/t/friend/", "//evil.example/direct/t/friend/", "http://www.instagram.com/direct/t/friend/", "https://user@www.instagram.com/direct/t/friend/", "/direct/t/friend/extra/", "/reel/shared/", "/direct/t/friend%2Fextra/", "https://www.instagram.com:1234/direct/t/friend/"] {
+  check(Bridge.instagramDirectThreadURL(invalid) == nil, "Untrusted or non-thread return target is rejected: " + invalid)
+  check(Bridge.instagramSuggestedReelsReturnURL(returnPath:invalid, currentURL:origin, history:[]) == origin, "Invalid payload cannot override the trusted current chat")
+}
+check(Bridge.instagramSuggestedReelsReturnURL(returnPath:nil,currentURL:reel,history:[]).absoluteString == "https://www.instagram.com/direct/inbox/", "Missing chat context falls back to Direct inbox")
 print("VIGIL_INSTAGRAM_NATIVE_GEOMETRY_COMPLETE: \\(checks) checks")
 `;
 const directory = await mkdtemp(join(tmpdir(), 'vigil-instagram-geometry-'));
