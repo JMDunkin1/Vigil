@@ -493,7 +493,7 @@ function googleSearchResultDestinations(anchor) {
 }
 /* eslint-enable no-unused-vars */
 // END GENERATED SEARCH RESULT HELPERS
-  const explicitTitle = value => {
+  const classifyExplicitTitle = value => {
     const text = String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '');
     if (containsContextualExplicitMedia(text)) return true;
     if (/(?:^|[^\p{L}\p{N}])(?:r[\s_.-]*34|rule[\s_.-]*34|p[\s_.-]*[o0][\s_.-]*r[\s_.-]*n|s[\s_.-]*3[\s_.-]*x|nud(?:s|3s?)?|(?:s[e3]x|nud(?:s|[e3]s?)?|p[o0]rn|r34|nsfw){2,})(?:$|[^\p{L}\p{N}]|videos?\b|photos?\b|pics?\b)/iu.test(text)) return true;
@@ -503,6 +503,23 @@ function googleSearchResultDestinations(anchor) {
     if (/(?:^|[^\p{L}\p{N}])x{3,}(?:$|[^\p{L}\p{N}])/iu.test(titleMarkers)) return true;
     return /(?:^|[^a-z0-9])(?:porn(?:ography|ographic)?|p0rn|hentai|nsfw|gonewild|onlyfans|fansly|blowjob|cumshot)(?:$|[^a-z0-9])|\b(?:nude|naked|sex|xxx)\s+(?:videos?|photos?|tapes?)\b/i.test(text)
       || (isContextualPlatform && /(?:^|[^\p{L}\p{N}])(?:sex|sexual|nude|nudes|nudity|naked|erotic|erotica|lewd|fetish|uncensored|r[\s_-]*18g?|18\s*\+|成人向け|成人向|(?:adult|mature|explicit)[\s_-]+content)(?:$|[^\p{L}\p{N}])/iu.test(text));
+  };
+  // Classification depends only on this text and the document's fixed host.
+  // Compare the current text every time so recycled cards are reclassified.
+  // Weak keys release detached cards; retain at most three short inputs per node.
+  const titleClassifications = new WeakMap();
+  const explicitTitle = (value, element, field) => {
+    const text = String(value || '');
+    if (!text.trim()) return false;
+    const cached = element && titleClassifications.get(element);
+    if (cached?.[field]?.text === text) return cached[field].result;
+    const result = classifyExplicitTitle(text);
+    if (element && text.length <= 700) {
+      const entries = cached || Object.create(null);
+      entries[field] = { text, result };
+      titleClassifications.set(element, entries);
+    }
+    return result;
   };
   const explicitStorefrontPage = () => {
     if (isReviewedExplicitPrintProductUrl(location.href)) return true;
@@ -544,6 +561,9 @@ function googleSearchResultDestinations(anchor) {
   // These platforms share label/age protections without inheriting Reddit's
   // single-post navigation rules (which would break messaging and creator pages).
   const isMixedPlatform = isContextualPlatform && !/(^|\.)reddit\.com$/i.test(location.hostname);
+  const isYouTube = /(^|\.)youtube(?:-nocookie)?\.com$/i.test(location.hostname);
+  const selectAll = (root, selector) => root.nodeType === 1 && root.matches(selector)
+    ? [root, ...root.querySelectorAll(selector)] : root.querySelectorAll(selector);
   const cards = 'article, [data-testid="tweet"], [data-testid="UserCell"], [data-testid^="feedItem"], [data-testid="post"], [data-tag="post-card"], [data-testid="post-card"], .game_cell, [id^="chat-messages-"]';
   const controls = 'button, a, input, label, select, [role="button"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"]';
   const describe = element => [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('name'), ...(element.labels || []),
@@ -566,11 +586,11 @@ function googleSearchResultDestinations(anchor) {
   const authorMarkers = '[author], [data-author], [author-name], .author, .user_name, [data-testid="User-Name"], [data-testid="postAuthor"], [data-testid="post-author"], [data-tag="creator-name"]';
   const scanMixedPlatforms = root => {
     if (!isMixedPlatform) return;
-    for (const author of root.querySelectorAll(authorMarkers)) {
+    for (const author of selectAll(root, authorMarkers)) {
       if ([author.getAttribute('author'), author.getAttribute('data-author'), author.getAttribute('author-name'),
         ...(author.matches(cards) ? [] : [author.textContent])].some(explicitAccount)) conceal(localContainer(author) || author);
     }
-    for (const anchor of root.querySelectorAll('a[href]')) {
+    for (const anchor of selectAll(root, 'a[href]')) {
       let url;
       try { url = new URL(anchor.href, location.href); } catch { continue; }
       const samePlatform = url.hostname === location.hostname;
@@ -583,11 +603,11 @@ function googleSearchResultDestinations(anchor) {
         if (explicitAccount(account)) conceal(localContainer(anchor) || anchor);
       }
     }
-    for (const card of root.querySelectorAll(cards)) {
+    for (const card of selectAll(root, cards)) {
       if (explicitTitle(describe(card)) || adultWarning(card.textContent || '')
         || card.querySelector('[data-nsfw="true"], [data-adult="true"], [data-rating="adult"], [data-x-restrict="1"], [data-x-restrict="2"]')) conceal(card);
     }
-    for (const element of root.querySelectorAll('*')) {
+    for (const element of selectAll(root, '*')) {
       if (element.matches('script, style, textarea, input, [contenteditable="true"]') || element.closest('[contenteditable="true"], script, style')) continue;
       const text = describe(element);
       const marked = element.matches('[data-nsfw="true"], [data-adult="true"], [data-rating="adult"], [data-x-restrict="1"], [data-x-restrict="2"]');
@@ -600,7 +620,7 @@ function googleSearchResultDestinations(anchor) {
         }
       }
     }
-    for (const control of root.querySelectorAll(controls)) {
+    for (const control of selectAll(root, controls)) {
       const text = describe(control);
       const group = control.closest('label, fieldset, [role="group"], [role="radiogroup"]');
       const groupText = group && describe(group);
@@ -615,6 +635,8 @@ function googleSearchResultDestinations(anchor) {
   const roots = new Set();
   const observers = new WeakMap();
   let pending = false;
+  let fullScanPending = false;
+  const dirtyScopes = new Set();
   const conceal = element => {
     element.setAttribute('data-vigil-explicit-media', 'blocked');
     if (element.style.getPropertyValue('display') !== 'none' || element.style.getPropertyPriority('display') !== 'important') element.style.setProperty('display', 'none', 'important');
@@ -652,7 +674,7 @@ function googleSearchResultDestinations(anchor) {
     }
     return label.closest('a, button, [role="link"], [role="button"]') || label;
   };
-  const scan = () => {
+  const scan = (scopes = roots) => {
     if (!document.documentElement) return;
     observe(document);
     if (explicitStorefrontPage()) {
@@ -665,19 +687,21 @@ function googleSearchResultDestinations(anchor) {
       conceal(document.querySelector('main, [role="main"]') || document.body || document.documentElement);
       return;
     }
-    for (const root of roots) {
-      if (root !== document && !root.host.isConnected) { roots.delete(root); continue; }
+    // New shadow roots join this pass immediately, including a scoped pass.
+    const scanRoots = new Set(scopes);
+    for (const root of scanRoots) {
+      if (root !== document && !(root.host || root).isConnected) { roots.delete(root); continue; }
       scanX(root);
       scanMixedPlatforms(root);
       // A search-result heading can split a label across spans while its URL
       // contains only an opaque app ID. Inspect the complete local link label.
-      for (const link of root.querySelectorAll('a[href], [role="link"]')) {
+      for (const link of selectAll(root, 'a[href], [role="link"]')) {
         if (link.closest('[contenteditable="true"]')) continue;
         const label = describe(link);
-        if (isReviewedExplicitPrintProductUrl(link.href) || (label.length <= 700 && explicitTitle(label))) conceal(mediaContainer(link));
+        if (isReviewedExplicitPrintProductUrl(link.href) || (label.length <= 700 && explicitTitle(label, link, 'link'))) conceal(mediaContainer(link));
       }
-      for (const element of root.querySelectorAll('*')) {
-        if (element.shadowRoot) observe(element.shadowRoot);
+      for (const element of selectAll(root, '*')) {
+        if (element.shadowRoot) { observe(element.shadowRoot); scanRoots.add(element.shadowRoot); }
         if (element.closest('[data-vigil-explicit-media="blocked"]')) {
           if (element.getAttribute('data-vigil-explicit-media') === 'blocked') conceal(element);
           continue;
@@ -686,17 +710,57 @@ function googleSearchResultDestinations(anchor) {
         const label = [element.getAttribute('alt'), element.getAttribute('title'), element.getAttribute('aria-label'), element.getAttribute('data-title')].filter(Boolean).join(' ');
         // Short direct text catches catalog labels even if they use plain divs.
         const directText = Array.from(element.childNodes).filter(node => node.nodeType === 3).map(node => node.textContent).join(' ').trim();
-        if (explicitTitle(label) || (directText.length <= 180 && explicitTitle(directText))) {
+        if (explicitTitle(label, element, 'label') || (directText.length <= 180 && explicitTitle(directText, element, 'direct'))) {
           const target = mediaContainer(element);
           if (target !== element || element.matches('img, video, a, button, [role="link"], [role="button"]') || element.querySelector('img, video, picture') || (isMixedPlatform && !element.matches('main, nav, body, html'))) conceal(target);
         }
       }
     }
   };
-  const schedule = () => {
+  const semanticScope = element => {
+    // Inspect every enclosing unit's combined label, including text split
+    // across a button, group, link or nested post. The outermost unit covers
+    // its inner units without rescanning the rest of the document.
+    let scope = element;
+    for (let ancestor = element; ancestor; ancestor = ancestor.parentElement) {
+      if (ancestor.matches(`${cards}, ${controls}, [role="link"], [role="dialog"], dialog, fieldset, form, [role="group"], [role="radiogroup"]`)) scope = ancestor;
+    }
+    return scope;
+  };
+  const queueScope = target => {
+    const element = target?.nodeType === 1 ? target : target?.parentElement;
+    if (!element) { fullScanPending = true; return; }
+    // A changed span can alter a split link label, preference group, or post.
+    // Inspect its enclosing semantic unit as well as the changed node itself.
+    const scope = semanticScope(element);
+    for (const queued of dirtyScopes) {
+      if (queued.contains(scope)) return;
+      if (scope.contains(queued)) dirtyScopes.delete(queued);
+    }
+    dirtyScopes.add(scope);
+    if (dirtyScopes.size > 64) { dirtyScopes.clear(); fullScanPending = true; }
+  };
+  const queueMutations = records => {
+    for (const record of records) queueScope(record.target);
+  };
+  const flushScopes = () => {
+    const scopes = fullScanPending ? undefined : new Set(dirtyScopes);
+    dirtyScopes.clear(); fullScanPending = false;
+    if (scopes?.size === 0) return;
+    // Accessible labels and <label for> can refer outside a changed subtree.
+    // Check their dependants too, preserving the full-scan decision.
+    if (scopes) for (const root of roots) {
+      for (const element of root.querySelectorAll('[aria-labelledby], input, select')) scopes.add(semanticScope(element));
+    }
+    try { scan(scopes); }
+    catch (error) { fullScanPending = true; throw error; }
+  };
+  const schedule = records => {
+    if (isYouTube) queueMutations(records);
+    else fullScanPending = true;
     if (pending) return;
     pending = true;
-    setTimeout(() => { pending = false; scan(); }, 0);
+    setTimeout(() => { pending = false; flushScopes(); }, 0);
   };
   const observe = root => {
     roots.add(root);
@@ -716,7 +780,17 @@ function googleSearchResultDestinations(anchor) {
     }
   };
   const guard = event => {
-    if (isX || isMixedPlatform) scan();
+    if (isYouTube) {
+      // Flush records synchronously: a new unsafe card must not be clickable
+      // in the gap before MutationObserver delivery or its scheduled scan.
+      for (const root of roots) queueMutations(observers.get(root).takeRecords());
+      const path = event.composedPath();
+      const target = path.find(element => element instanceof HTMLElement);
+      if (target) queueScope(target);
+      // Preserve cross-shadow context for immediate interaction checks.
+      if (target && target.getRootNode() !== document) fullScanPending = true;
+      flushScopes();
+    } else if (isX || isMixedPlatform) scan();
     for (const element of event.composedPath()) {
       if (!(element instanceof HTMLElement)) continue;
       if (element.matches('a[href], [role="link"]')) {
