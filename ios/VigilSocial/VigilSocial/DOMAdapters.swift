@@ -2686,9 +2686,11 @@ enum DOMAdapters {
         sharedStory = { id: incoming.id, at: Date.now() };
       }
       let sharedIntent = null;
+      let directPress = null;
       let modalContext = null;
       let viewerOrigin = null;
       let viewerBackground = null;
+      let viewerExistingPanels = null;
       let sheetOpeningUntil = 0;
       let sheetClosingUntil = 0;
       let sheetWasVisible = false;
@@ -2854,6 +2856,7 @@ enum DOMAdapters {
         modalContext = null;
         viewerOrigin = null;
         viewerBackground = null;
+        viewerExistingPanels = null;
         sheetOpeningUntil = sheetClosingUntil = 0;
         sheetWasVisible = false;
         clearTimeout(sheetTransitionTimer);
@@ -2910,6 +2913,7 @@ enum DOMAdapters {
           directPath = sharedIntent.source;
           viewerOrigin = sharedIntent.origin;
           viewerBackground = sharedIntent.background;
+          viewerExistingPanels = sharedIntent.existingPanels;
         }
         // Closing a comments/post portal can return the original media to its
         // article without changing the item URL. Keep observing the live page.
@@ -2936,6 +2940,7 @@ enum DOMAdapters {
             directPath = sharedIntent.source;
             viewerOrigin = sharedIntent.origin;
             viewerBackground = sharedIntent.background;
+            viewerExistingPanels = sharedIntent.existingPanels;
             viewerOpeningUntil = Date.now() + 1500;
             sharedIntent = null;
           }
@@ -2997,11 +3002,45 @@ enum DOMAdapters {
           && rect.bottom > innerHeight * 0.12
           && rect.top < innerHeight * 0.88;
       };
-      const foregroundModal = (origin = null, background = null) => {
+      const foregroundModal = (origin = null, background = null, collectExisting = false) => {
         // React can move the activated preview into its viewer. Only exclude
         // the origin while it still belongs to the captured conversation.
         if (background && !background.contains(origin)) origin = null;
         const containsConversation = node => node === background || background && node.contains(background);
+        const conversationRoots = [...document.querySelectorAll('[role="log"], [role="grid"][aria-label*="message" i], textarea, input, [contenteditable="true"], [role="textbox"]')]
+          .filter(node => node.matches('[role="log"], [role="grid"][aria-label*="message" i]')
+            || /^message(?:\.{3}|…)?$/i.test(String(node.getAttribute('aria-label') || node.getAttribute('placeholder') || '').trim()));
+        const ownsConversation = node => conversationRoots.some(root => node === root || node.contains(root));
+        const coversConversation = node => {
+          if (!background || background.isConnected && !background.contains(node)) return true;
+          const viewport = window.visualViewport;
+          const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
+          const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
+          if ([.05, .95].every(y => {
+            const front = document.elementFromPoint(left + width / 2, top + height * y);
+            return front && node.contains(front);
+          })) return true;
+          // A newly mounted full-viewport fixed portal can still be scaling
+          // into view. Its layout covers the chat; an existing or recycled
+          // message scroller does not become a viewer by having a transform.
+          const style = getComputedStyle(node);
+          let scalingIntoView = false;
+          try {
+            const matrix = new DOMMatrixReadOnly(style.transform);
+            scalingIntoView = Math.abs(matrix.a) > 0 && Math.abs(matrix.a) < .999
+              && Math.abs(matrix.d) > 0 && Math.abs(matrix.d) < .999;
+          } catch (_) {}
+          return scalingIntoView && style.position === 'fixed'
+            && Math.abs(parseFloat(style.top)) <= 1 && Math.abs(parseFloat(style.left)) <= 1
+            && node.clientWidth >= innerWidth * .95 && node.clientHeight >= innerHeight * .95;
+        };
+        const eligible = node => !ownsConversation(node) && (collectExisting
+          || !sharedIntent?.existingPanels?.has(node) && !viewerExistingPanels?.has(node) && coversConversation(node));
+        // Snapshot every existing media viewport at press time. A clicked
+        // permalink or lazy attachment must never promote that same chat
+        // scroller into a viewer, including after the actual overlay closes.
+        const existing = collectExisting ? new Set() : null;
+        const checkedPortals = new Set();
         const containsUnexpandedOrigin = node => node.contains(origin) && !(background?.contains(node)
           && (/^(fixed|absolute)$/.test(getComputedStyle(node).position) || getComputedStyle(node).transform !== 'none'));
         const viewerSize = node => {
@@ -3014,7 +3053,7 @@ enum DOMAdapters {
         };
         const dialogs = [...document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
-        )].filter(modal => activeViewer(modal) && !inSheet(modal) && !containsUnexpandedOrigin(modal) && !containsConversation(modal)
+        )].filter(modal => eligible(modal) && activeViewer(modal) && !inSheet(modal) && !containsUnexpandedOrigin(modal) && !containsConversation(modal)
           && ([...modal.querySelectorAll('video, img')].some(fullScreenMedia)
             || (viewerSize(modal).width >= innerWidth * 0.72
               && viewerSize(modal).height >= innerHeight * 0.6
@@ -3033,7 +3072,8 @@ enum DOMAdapters {
           return value;
         };
         dialogs.sort((a, b) => depth(b) - depth(a));
-        if (dialogs.length) return dialogs[0];
+        if (collectExisting) dialogs.forEach(modal => existing.add(modal));
+        else if (dialogs.length) return dialogs[0];
         // Recent Direct viewers use an anonymous fixed portal, without dialog
         // semantics. The message thread itself must remain scrollable.
         for (const media of document.querySelectorAll('video, img')) {
@@ -3041,16 +3081,20 @@ enum DOMAdapters {
           const mediaBox = media.getBoundingClientRect();
           if (!(media instanceof HTMLVideoElement) && (mediaBox.width < 180 || mediaBox.height < 140)) continue;
           for (let node = media.parentElement; node && node !== document.body; node = node.parentElement) {
+            if (checkedPortals.has(node)) continue;
+            checkedPortals.add(node);
             const box = node.getBoundingClientRect();
             const position = getComputedStyle(node).position;
             const viewportPortal = position === 'fixed' || (position === 'absolute'
               && box.top <= innerHeight * 0.2 && box.bottom >= innerHeight * 0.8
               && box.height <= innerHeight * 1.25);
-            if (viewportPortal && activeViewer(node) && !inSheet(node) && !containsUnexpandedOrigin(node) && !containsConversation(node)
-                && viewerSize(node).width >= innerWidth * 0.72 && viewerSize(node).height >= innerHeight * 0.6) return node;
+            if (viewportPortal && eligible(node) && activeViewer(node) && !inSheet(node) && !containsUnexpandedOrigin(node) && !containsConversation(node)
+                && viewerSize(node).width >= innerWidth * 0.72 && viewerSize(node).height >= innerHeight * 0.6) {
+              if (collectExisting) existing.add(node); else return node;
+            }
           }
         }
-        return null;
+        return existing;
       };
       const rememberShare = (value, origin = null) => {
         const route = mediaRoute(value);
@@ -3060,7 +3104,9 @@ enum DOMAdapters {
             && (!sharedIntent.route || sharedIntent.route.id === route.id)) {
           sharedIntent.route = route;
         } else {
-          sharedIntent = { route, origin, source: location.pathname, at: Date.now(), previousModal: foregroundModal(),
+          const existingPanels = foregroundModal(null, null, true);
+          sharedIntent = { route, origin, source: location.pathname, at: Date.now(), previousModal: existingPanels.values().next().value || null,
+            existingPanels,
             background: origin?.closest('main, [role="main"], [role="dialog"], [aria-modal="true"]')
               || document.querySelector('main, [role="main"]') };
         }
@@ -3083,9 +3129,17 @@ enum DOMAdapters {
           if (route) sharedIntent.route = route;
           return;
         }
+        const existingPanels = foregroundModal(null, null, true);
         sharedIntent = { route, origin: target, source: location.pathname, at: Date.now(),
-          previousModal: foregroundModal(),
+          previousModal: existingPanels.values().next().value || null,
+          existingPanels,
           background: target.closest('main, [role="main"], [role="dialog"], [aria-modal="true"]') };
+      };
+      const cancelDirectDrag = (x, y) => {
+        if (!pinnedID && directPress && Math.max(Math.abs(x - directPress.x), Math.abs(y - directPress.y)) > 6) {
+          sharedIntent = null;
+          directPress = null;
+        }
       };
       window.__vigilInstagramSharedItem = Object.freeze({
         isSharedStory(value = location.href) {
@@ -3760,6 +3814,7 @@ enum DOMAdapters {
         if (!viewerAcquisitionFrame) viewerAcquisitionFrame = requestAnimationFrame(acquireViewer);
       };
       window.addEventListener('touchstart', event => {
+        if (event.touches.length === 1) directPress = { x: event.touches[0].clientX, y: event.touches[0].clientY };
         rememberViewerClosing(event.target);
         rememberDirectActivation(event.target);
         rememberSheetOpening(event.target);
@@ -3769,6 +3824,7 @@ enum DOMAdapters {
           horizontal: allowsCarouselPan(event.target), contained: containPress(event) };
       }, { capture: true, passive: true });
       window.addEventListener('touchmove', event => {
+        if (event.touches.length === 1) cancelDirectDrag(event.touches[0].clientX, event.touches[0].clientY);
         if (!syncRoute() || !gesture || event.touches.length !== 1) return;
         const dx = event.touches[0].clientX - gesture.x;
         const dy = event.touches[0].clientY - gesture.y;
@@ -3785,6 +3841,7 @@ enum DOMAdapters {
         }
       }, { capture: true, passive: false });
       for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
+        directPress = null;
         if (type === 'touchcancel' && !pinnedID) sharedIntent = null;
         else if (type === 'touchend') scheduleViewerAcquisition();
         if (gesture?.blocked) cancel(event);
@@ -3792,6 +3849,7 @@ enum DOMAdapters {
         gesture = null;
       }, { capture: true, passive: false });
       window.addEventListener('pointerdown', event => {
+        directPress = { x: event.clientX, y: event.clientY };
         rememberViewerClosing(event.target);
         rememberDirectActivation(event.target);
         rememberSheetOpening(event.target);
@@ -3808,6 +3866,7 @@ enum DOMAdapters {
         } : null;
       }, true);
       window.addEventListener('pointermove', event => {
+        cancelDirectDrag(event.clientX, event.clientY);
         if (!syncRoute() || !pointerGesture) return;
         const dx = Math.abs(event.clientX - pointerGesture.x);
         const dy = Math.abs(event.clientY - pointerGesture.y);
@@ -3821,6 +3880,7 @@ enum DOMAdapters {
         }
       }, true);
       for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
+        directPress = null;
         if (type === 'pointercancel' && !pinnedID) sharedIntent = null;
         else if (type === 'pointerup') scheduleViewerAcquisition();
         touchPointers.delete(event.pointerId);

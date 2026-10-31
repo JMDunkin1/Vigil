@@ -1,0 +1,66 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#111;color:white}#thread{height:844px}header{height:100px}
+#messages{position:absolute;top:100px;left:0;width:390px;height:674px;overflow:auto}
+#messages.fixed{position:fixed}#messages.transformed{transform:translateY(0)}
+#history{height:2600px;padding-top:300px;box-sizing:border-box}.row{height:520px}
+.row img,.row video{display:block;width:240px;height:420px}
+#composer{position:fixed;bottom:0;height:60px}#viewer{position:fixed;inset:0;background:#222;z-index:4}
+#viewer article{height:844px}#viewer img,#viewer video{width:390px;height:700px}
+</style><script>window.fetch=async()=>({ok:true,json:async()=>({})});</script></head><body>
+<main id="thread" role="dialog"><header>Conversation</header><section id="messages"><div id="history">
+<div class="row" id="first"><a id="attachment" href="/p/Shared123/"><img id="photo"></a></div>
+<div class="row"><a href="/p/Other456/"><img id="other-photo"></a></div>
+<div class="row" id="message">Ordinary chat message</div></div></section>
+<div id="composer" role="textbox" contenteditable="true" aria-label="Message"></div></main>
+<script>
+const photoSource='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="240" height="420"%3E%3Crect width="240" height="420" fill="purple"/%3E%3C/svg%3E';
+document.querySelectorAll('img').forEach(image=>image.src=photoSource);
+document.getElementById('attachment').onclick=event=>event.preventDefault();
+window.fixtureBegin=(layout,media)=>{
+ const messages=document.getElementById('messages');messages.className=layout;
+ if(layout==='dialog')messages.setAttribute('role','dialog');
+ if(media==='video')document.getElementById('attachment').innerHTML='<video id="photo" muted loop playsinline src="VIGIL_TEST_VIDEO"></video>';
+ messages.scrollTop=300;window.fixtureStartScroll=messages.scrollTop;
+};
+window.fixturePointer=(type,id='photo',y=300)=>{
+ const event=new PointerEvent(type,{bubbles:true,cancelable:true,pointerType:'touch',pointerId:1,isPrimary:true,clientX:100,clientY:y});
+ document.getElementById(id).dispatchEvent(event);return event.defaultPrevented;
+};
+window.fixtureScroll=action=>{
+ fixturePointer('pointerdown',action==='text'?'message':'photo');
+ if(action==='rerender'){const old=document.getElementById('history');old.replaceWith(old.cloneNode(true));}
+ if(action==='rerender-root'){const old=document.getElementById('messages');old.replaceWith(old.cloneNode(true));}
+ if(action==='lazy'){const row=document.createElement('div');row.className='row';row.innerHTML='<a href="/p/Lazy789/"><img src="'+photoSource+'"></a>';document.getElementById('history').append(row);}
+ if(!['tap','rerender-tap','remount-chat'].includes(action)){fixturePointer('pointermove',action==='text'?'message':'photo',240);fixturePointer('pointercancel',action==='text'?'message':'photo',240);}
+ else fixturePointer('pointerup');
+ if(action==='rerender-tap'){const old=document.getElementById('messages');old.replaceWith(old.cloneNode(true));}
+ if(action==='remount-chat'){const old=document.getElementById('thread');old.replaceWith(old.cloneNode(true));}
+ document.getElementById('messages').scrollTop=440;
+ document.getElementById('messages').dispatchEvent(new Event('scroll',{bubbles:false}));
+};
+window.fixtureChatUsable=()=>{
+ const messages=document.getElementById('messages'),wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});messages.dispatchEvent(wheel);
+ const latest=fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1);
+ return !document.documentElement.hasAttribute('data-vigil-single-reel')&&!wheel.defaultPrevented&&latest?.locked!==true
+  &&messages.scrollTop===440&&getComputedStyle(messages).overflowY!=='hidden'
+  &&[...document.querySelectorAll('#messages img,#messages video')].every(media=>getComputedStyle(media).visibility==='visible')
+  &&!document.querySelector('#thread [data-vigil-single-reel-scope],#thread [data-vigil-single-reel-card],#thread [data-vigil-single-reel-scroll]');
+};
+window.fixtureOpen=kind=>{
+ const viewer=document.createElement('div');viewer.id='viewer';viewer.setAttribute('role','dialog');
+ viewer.innerHTML=kind==='reel'?'<video id="opened" muted></video>':'<article><a href="/p/Shared123/"><img id="opened" src="'+photoSource+'"></a></article>';
+ viewer.insertAdjacentHTML('beforeend','<button id="close-viewer" aria-label="Close">Close</button>');
+ document.getElementById('messages').append(viewer);
+ document.getElementById('close-viewer').onclick=()=>viewer.remove();
+};
+window.fixtureOpenFromChat=kind=>{
+ const link=document.getElementById('attachment');link.href=kind==='reel'?'/reel/Shared123/':'/p/Shared123/';
+ link.onclick=event=>{event.preventDefault();fixtureOpen(kind);};fixturePointer('pointerdown');fixturePointer('pointerup');link.click();
+};
+window.fixtureViewerContained=()=>{
+ const viewer=document.getElementById('viewer'),event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});viewer.dispatchEvent(event);
+ return document.documentElement.hasAttribute('data-vigil-single-reel')&&event.defaultPrevented
+  &&fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1)?.locked===true;
+};
+</script></body></html>
