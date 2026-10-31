@@ -50,6 +50,14 @@ jobs:
         timeout-minutes: 4
         run: node scripts/test-instagram-interactions-webkit.mjs
 
+      - name: Test Instagram native coordinate contract
+        timeout-minutes: 2
+        run: node scripts/test-instagram-native-geometry.mjs
+
+      - name: Test Instagram Suggested Reels containment
+        timeout-minutes: 3
+        run: node scripts/test-instagram-suggested-webkit.mjs
+
       - name: Test Instagram chat media playback through photo transitions
         timeout-minutes: 3
         run: node scripts/test-instagram-chat-media-webkit.mjs

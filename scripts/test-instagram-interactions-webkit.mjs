@@ -20,7 +20,7 @@ assert.ok(guard && stable && start && html);
 for (const source of [guard, stable, start]) assert.doesNotThrow(() => new Function(source));
 const bootstrap = `window.__vigilDocumentID='interaction-fixture';window.fixtureLocks=[];
   Object.defineProperty(window,'webkit',{configurable:true,value:{messageHandlers:{vigil:{postMessage:p=>fixtureLocks.push(p)}}}});`;
-const modes = ['release', 'anonymous-release', 'link-release', 'moved-preview', 'recipient-animation', 'recipient-nested', 'recipient-backdrop', 'recipient-retained', 'recipient-retired',
+const modes = ['comments-retained', 'cold-explicit-close-release', 'cold-release', 'cold-remount-release', 'inplace-cold-release', 'inplace-release', 'inplace-anonymous-release', 'recipient-editable', 'recipient-anonymous', 'recipient-unrequested', 'recipient-anonymous-media', 'recipient-anonymous-backdrop', 'recipient-offset', 'comments-offset', 'release', 'anonymous-release', 'link-release', 'moved-preview', 'recipient-animation', 'recipient-nested', 'recipient-backdrop', 'recipient-retained', 'recipient-retired',
   'recipient-reused', 'comments-reused', 'comments-press', 'send-press', 'keyboard-ancestor', 'cancelled-preview', 'ordinary-chat']
   .filter(mode => !process.argv[3] || process.argv[3] === mode);
 assert.ok(modes.length);

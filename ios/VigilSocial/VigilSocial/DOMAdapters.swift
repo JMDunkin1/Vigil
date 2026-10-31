@@ -2693,6 +2693,8 @@ enum DOMAdapters {
       let sheetClosingUntil = 0;
       let sheetWasVisible = false;
       let sheetTransitionTimer = 0;
+      let viewerOpeningUntil = 0;
+      let viewerTransitionTimer = 0;
       let directPath = '';
       let concealmentScope = null;
       const classifications = new Map();
@@ -2726,48 +2728,54 @@ enum DOMAdapters {
       const lockedScroll = new Map();
       // Cache the complete native gesture state, including scrolling sheets.
       let nativeScrollState = '';
+      let suggestedReelsRoot = null;
+      const publishSuggestedReelsBlock = () => {
+        try { window.webkit?.messageHandlers?.vigil?.postMessage({type: 'instagramSuggestedReels', documentID: String(window.__vigilDocumentID || '')}); } catch (_) {}
+      };
       const nativeGestureRegion = (node, requireForeground = false) => {
         if (!(node instanceof Element) || !activeModal(node)) return null;
-        const style = getComputedStyle(node);
-        if (style.display === 'none' || style.visibility === 'hidden') return null;
         const box = node.getBoundingClientRect(), viewport = window.visualViewport;
         const width = innerWidth, height = innerHeight;
-        // The keyboard shrinks visualViewport.height without shrinking the
-        // native WebView. Use its width to account for pinch scale on both axes.
-        const scale = width / (viewport?.width || width);
-        const left = (box.left - (viewport?.offsetLeft || 0)) * scale / width;
-        const top = (box.top - (viewport?.offsetTop || 0)) * scale / height;
+        const offsetLeft = viewport?.offsetLeft || 0, offsetTop = viewport?.offsetTop || 0;
+        const visibleWidth = viewport?.width || width, visibleHeight = viewport?.height || height;
+        const left = Math.max(box.left, offsetLeft), top = Math.max(box.top, offsetTop);
+        const right = Math.min(box.right, offsetLeft + visibleWidth), bottom = Math.min(box.bottom, offsetTop + visibleHeight);
+        if (right <= left || bottom <= top) return null;
         if (requireForeground) {
-          const x = Math.max(0, Math.min((viewport?.width || width) - 1, box.left + box.width / 2));
-          const y = Math.max(0, Math.min((viewport?.height || height) - 1, box.top + box.height / 2));
-          const foreground = document.elementFromPoint(x, y);
+          // elementFromPoint uses layout-viewport client coordinates. A
+          // keyboard-panned visual viewport need not begin at (0, 0).
+          const foreground = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
           if (!foreground || (foreground !== node && !node.contains(foreground))) return null;
         }
-        return box.width > 0 && box.height > 0 && left < 1 && top < 1
-          && left + box.width * scale / width > 0 && top + box.height * scale / height > 0
-          ? [left, top, box.width * scale / width, box.height * scale / height] : null;
+        const scale = width / visibleWidth;
+        return [(left - offsetLeft) * scale / width, (top - offsetTop) * scale / height,
+          (right - left) * scale / width, (bottom - top) * scale / height];
       };
       const reportNativeScrollLock = (locked, force = false) => {
         const sheets = locked ? [...document.querySelectorAll(
           '[data-vigil-instagram-comments-sheet="true"]'
         ), ...commentsDismissControls(),
-          ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet),
+          ...allRecipientSheets(),
           ...document.querySelectorAll('input, textarea, [contenteditable="true"], [role="slider"]')] : [];
         const scrollingRegions = [...new Set(sheets)].map(node => nativeGestureRegion(node, true)).filter(Boolean).slice(0, 24);
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
-        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions });
+        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions, viewportSize: [innerWidth, innerHeight] });
         if (!force && nativeScrollState === state) return;
         nativeScrollState = state;
         try {
           window.webkit?.messageHandlers?.vigil?.postMessage({
-            type: 'reelScrollLock', locked, scrollingRegions, carouselRegions,
+            type: 'reelScrollLock', locked, scrollingRegions, carouselRegions, viewportSize: [innerWidth, innerHeight],
             documentID: String(window.__vigilDocumentID || '')
           });
         } catch (_) {}
       };
       const style = document.createElement('style');
       style.textContent = `
+        [data-vigil-instagram-suggested-reels="blocked"] {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
         html[data-vigil-single-reel]:not(:has([data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"])),
         html[data-vigil-single-reel] body *:where(:not(
           [data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-comments-sheet="true"] *,
@@ -2839,7 +2847,14 @@ enum DOMAdapters {
         sheetWasVisible = false;
         clearTimeout(sheetTransitionTimer);
         sheetTransitionTimer = 0;
+        viewerOpeningUntil = 0;
+        clearTimeout(viewerTransitionTimer);
+        viewerTransitionTimer = 0;
         sharedIntent = null;
+        recipientRequestedUntil = 0;
+        cancelAnimationFrame(viewerAcquisitionFrame);
+        viewerAcquisitionFrame = 0;
+        viewerAcquisitionUntil = 0;
         directPath = '';
         concealmentScope?.removeAttribute('data-vigil-single-reel-scope');
         concealmentScope = null;
@@ -2910,13 +2925,24 @@ enum DOMAdapters {
             directPath = sharedIntent.source;
             viewerOrigin = sharedIntent.origin;
             viewerBackground = sharedIntent.background;
+            viewerOpeningUntil = Date.now() + 1500;
             sharedIntent = null;
           }
         }
         const sheetContinuation = !route && pinnedID && modalContext && location.pathname.startsWith('/direct/')
           && continueViewerThroughSheet();
+        const openingContinuation = !route && pinnedID && modalContext && location.pathname.startsWith('/direct/')
+          && !activeViewer(modalContext) && Date.now() < viewerOpeningUntil;
+        if (openingContinuation && !viewerTransitionTimer) {
+          // Lazy hydration can replace the just-opened portal across render
+          // frames. Preserve the existing pin, with an explicit expiry check.
+          viewerTransitionTimer = setTimeout(() => { viewerTransitionTimer = 0; reconcile(); }, Math.max(0, viewerOpeningUntil - Date.now()));
+        } else if (activeViewer(modalContext)) {
+          clearTimeout(viewerTransitionTimer);
+          viewerTransitionTimer = 0;
+        }
         if (!route && pinnedID && modalContext && (!modalContext.isConnected
-            || sheetContinuation && !activeViewer(modalContext)) && location.pathname.startsWith('/direct/')) {
+            || (sheetContinuation || openingContinuation) && !activeViewer(modalContext)) && location.pathname.startsWith('/direct/')) {
           // React may replace the portal as well as the player. Transfer only
           // to another foreground viewer, never to the retained chat dialog.
           const replacement = foregroundModal(viewerOrigin, viewerBackground);
@@ -2924,7 +2950,7 @@ enum DOMAdapters {
         }
         // A player can briefly have no media during a React remount. Its
         // visible viewer, rather than a video URL or dimensions, owns the lock.
-        const viewerStillOpen = pinnedID && modalContext && (activeViewer(modalContext) || sheetContinuation);
+        const viewerStillOpen = pinnedID && modalContext && (activeViewer(modalContext) || sheetContinuation || openingContinuation);
         if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
@@ -2964,12 +2990,23 @@ enum DOMAdapters {
         // React can move the activated preview into its viewer. Only exclude
         // the origin while it still belongs to the captured conversation.
         if (background && !background.contains(origin)) origin = null;
+        const containsConversation = node => node === background || background && node.contains(background);
+        const containsUnexpandedOrigin = node => node.contains(origin) && !(background?.contains(node)
+          && (/^(fixed|absolute)$/.test(getComputedStyle(node).position) || getComputedStyle(node).transform !== 'none'));
+        const viewerSize = node => {
+          const box = node.getBoundingClientRect(), style = getComputedStyle(node);
+          // A fresh chat's portal can animate from scale(0). Once it paints,
+          // its full layout box already identifies the viewer; don't leave the
+          // first swipes unguarded until the animation reaches 60–72% size.
+          return sharedIntent && style.transform !== 'none' && /^(fixed|absolute)$/.test(style.position)
+            ? { width: Math.max(box.width, node.clientWidth), height: Math.max(box.height, node.clientHeight) } : box;
+        };
         const dialogs = [...document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]):has(video, img), [aria-modal="true"]:not([aria-hidden="true"]):has(video, img)'
-        )].filter(modal => activeViewer(modal) && !inSheet(modal) && !modal.contains(origin) && modal !== background
+        )].filter(modal => activeViewer(modal) && !inSheet(modal) && !containsUnexpandedOrigin(modal) && !containsConversation(modal)
           && ([...modal.querySelectorAll('video, img')].some(fullScreenMedia)
-            || (modal.getBoundingClientRect().width >= innerWidth * 0.72
-              && modal.getBoundingClientRect().height >= innerHeight * 0.6
+            || (viewerSize(modal).width >= innerWidth * 0.72
+              && viewerSize(modal).height >= innerHeight * 0.6
               && [...modal.querySelectorAll('video, img')].some(media => {
                 if (!activeModal(media) || inSheet(media)) return false;
                 const box = media.getBoundingClientRect();
@@ -2998,8 +3035,8 @@ enum DOMAdapters {
             const viewportPortal = position === 'fixed' || (position === 'absolute'
               && box.top <= innerHeight * 0.2 && box.bottom >= innerHeight * 0.8
               && box.height <= innerHeight * 1.25);
-            if (viewportPortal && activeViewer(node) && !inSheet(node) && !node.contains(origin) && node !== background
-                && box.width >= innerWidth * 0.72 && box.height >= innerHeight * 0.6) return node;
+            if (viewportPortal && activeViewer(node) && !inSheet(node) && !containsUnexpandedOrigin(node) && !containsConversation(node)
+                && viewerSize(node).width >= innerWidth * 0.72 && viewerSize(node).height >= innerHeight * 0.6) return node;
           }
         }
         return null;
@@ -3048,13 +3085,14 @@ enum DOMAdapters {
         },
         isPinnedStory() { return syncRoute() && pinnedKind === 'story'; },
         synchronizeNativeGestureGuard(force = true) {
+          if (suggestedReelsRoot) { publishSuggestedReelsBlock(); reportNativeScrollLock(true, force); return; }
           // The first document-start message can precede native document-ID
           // binding. Replay the complete current state once the host is ready.
           reportNativeScrollLock(syncRoute(), force);
         },
         containmentState() {
           return { pinned: Boolean(pinnedID), kind: pinnedKind,
-            viewer: Boolean(modalContext?.isConnected), awaitingViewer: Boolean(sharedIntent) };
+            viewer: Boolean(modalContext?.isConnected), awaitingViewer: Boolean(sharedIntent), suggestedBlocked: Boolean(suggestedReelsRoot) };
         },
         blocksDestination(value) { return blocksDestination(value); }
       });
@@ -3075,9 +3113,10 @@ enum DOMAdapters {
         if (event.cancelable) event.preventDefault();
         event.stopImmediatePropagation();
       };
-      const recipientSearchSelector = 'input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"]';
-      const recipientSheet = target => {
-        const dialog = target?.closest?.('[role="dialog"], [aria-modal="true"]');
+      const recipientSearchSelector = 'input[type="search"], input[placeholder*="search" i], input[aria-label*="search" i], input[name="queryBox"], [role="searchbox"], [role="textbox"][aria-label*="search" i], [contenteditable="true"][aria-label*="search" i], [contenteditable="true"][aria-placeholder*="search" i]';
+      const knownRecipientSheets = new WeakSet();
+      let recipientRequestedUntil = 0;
+      const verifiedRecipientPanel = dialog => {
         if (!dialog || !activeModal(dialog) || (pinnedCard && dialog.contains(pinnedCard))
             || dialog === viewerBackground || dialog === sharedIntent?.background
             || modalContext && dialog.contains(modalContext)) return null;
@@ -3111,10 +3150,35 @@ enum DOMAdapters {
         });
         return searchControl ? dialog : null;
       };
+      const recipientSheet = target => {
+        const panel = target?.closest?.('[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]');
+        if (!panel || !panel.matches('[role="dialog"], [aria-modal="true"]') && !knownRecipientSheets.has(panel)) return null;
+        return verifiedRecipientPanel(panel);
+      };
+      const allRecipientSheets = () => [...document.querySelectorAll(
+        '[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]'
+      )].filter(panel => recipientSheet(panel) === panel);
       const normalizeRecipientSheets = () => {
         for (const dialog of document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]')) {
           if (recipientSheet(dialog) === dialog) dialog.dataset.vigilInstagramRecipientSheet = 'true';
           else dialog.removeAttribute('data-vigil-instagram-recipient-sheet');
+        }
+        // Send can mount an anonymous positioned panel, just as Comments can.
+        // Require a real Send/Share activation or this same previously verified
+        // root; a Search control in the retained conversation is insufficient.
+        for (const search of [...document.querySelectorAll(recipientSearchSelector)].filter(activeViewer).slice(0, 32)) {
+          if (recipientSheet(search)) continue;
+          for (let panel = search.parentElement, depth = 0; panel && panel !== document.body && depth < 12;
+            panel = panel.parentElement, depth++) {
+            if (panel.matches('main, [role="main"], article, [role="article"], nav, [role="navigation"]')) break;
+            if (Date.now() >= recipientRequestedUntil && !knownRecipientSheets.has(panel)) continue;
+            const box = panel.getBoundingClientRect(), style = getComputedStyle(panel);
+            if (box.width < 180 || box.height < 160 || !(/^(fixed|absolute)$/.test(style.position) || style.transform !== 'none')) continue;
+            if (!verifiedRecipientPanel(panel)) continue;
+            knownRecipientSheets.add(panel);
+            panel.dataset.vigilInstagramRecipientSheet = 'true';
+            break;
+          }
         }
       };
       const commentsDismissControl = target => {
@@ -3153,14 +3217,27 @@ enum DOMAdapters {
       };
       const rememberSheetOpening = target => {
         if (!pinnedID || !modalContext || !activeViewer(modalContext) || inSheet(target) || !sheetOpeningControl(target)) return;
+        const control = sheetOpeningControl(target);
+        if ([control, ...control.querySelectorAll('[aria-label], title')].some(node =>
+          /^(send|share)(?: (post|reel|video|to))?$/i.test(String(node.getAttribute('aria-label') || node.textContent || '').trim()))) {
+          recipientRequestedUntil = Date.now() + 5000;
+        }
         // A sheet may mount one render after Instagram aria-hides the viewer.
         // Retain this already-pinned item through that bounded presentation gap.
         sheetOpeningUntil = Date.now() + 1500;
         scheduleSheetTransitionCheck(sheetOpeningUntil);
       };
+      const rememberViewerClosing = target => {
+        const control = target?.closest?.('button, [role="button"], a[href]');
+        if (!pinnedID || !modalContext?.contains(control) || inSheet(target)) return;
+        if ([control, ...control.querySelectorAll('[aria-label], title')].some(node =>
+          /^(close|back|dismiss)( (reel|post|video))?$/i.test(String(node.getAttribute('aria-label') || node.textContent || '').trim()))) {
+          viewerOpeningUntil = 0;
+        }
+      };
       const continueViewerThroughSheet = () => {
         const sheets = [...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"]'),
-          ...[...document.querySelectorAll('[role="dialog"], [aria-modal="true"]')].filter(recipientSheet)];
+          ...allRecipientSheets()];
         const showing = sheets.some(sheet => sheet !== viewerBackground && !sheet.contains(viewerOrigin)
           && nativeGestureRegion(sheet, true));
         if (showing) {
@@ -3407,7 +3484,58 @@ enum DOMAdapters {
           try { return manifest.has(new URL(source, location.href).href); } catch (_) { return false; }
         });
       };
+      const blockSuggestedReels = () => {
+        if (suggestedReelsRoot) {
+          suggestedReelsRoot.querySelectorAll('video, audio').forEach(media => { if (!media.paused) media.pause(); });
+          return true;
+        }
+        if (!location.pathname.startsWith('/direct/') && mediaRoute(location.href)?.kind !== 'reel') return false;
+        const videos = [...document.querySelectorAll('video')].filter(media => {
+          if (!activeViewer(media) || inSheet(media)) return false;
+          const bounds = media.getBoundingClientRect();
+          if (Math.max(bounds.width, media.clientWidth) < innerWidth * .72 || Math.max(bounds.height, media.clientHeight) < innerHeight * .45) return false;
+          const viewport = window.visualViewport;
+          const left = Math.max(bounds.left, viewport?.offsetLeft || 0), top = Math.max(bounds.top, viewport?.offsetTop || 0);
+          const right = Math.min(bounds.right, (viewport?.offsetLeft || 0) + (viewport?.width || innerWidth));
+          const bottom = Math.min(bounds.bottom, (viewport?.offsetTop || 0) + (viewport?.height || innerHeight));
+          if (right <= left || bottom <= top) return false;
+          return [[.25,.5],[.75,.5],[.5,.25]].some(([x,y]) => {
+            const front = document.elementFromPoint(left + (right-left)*x, top + (bottom-top)*y);
+            return front && (front === media || media.contains(front) || front.contains(media));
+          });
+        });
+        if (!videos.length) return false;
+        for (const label of document.querySelectorAll('h1, h2, h3, [role="heading"], [role="tab"], button, span, div')) {
+          if (label.childElementCount || !/^(suggested|suggested reels)$/i.test(String(label.textContent || '').trim())
+              || !activeViewer(label) || inSheet(label)) continue;
+          const header = label.closest('header, nav, h1, h2, h3, [role="tab"], [role="heading"], [role="navigation"], [role="tablist"]');
+          if (!header && label.closest('article, [role="article"], [data-testid*="caption" i], [data-message-id], [role="row"]')) continue;
+          const title = label.getBoundingClientRect();
+          const viewport = window.visualViewport, left = title.left - (viewport?.offsetLeft || 0), top = title.top - (viewport?.offsetTop || 0);
+          if (left < 0 || left > (viewport?.width || innerWidth) * .5 || top < 0
+              || top + title.height > Math.min(160, (viewport?.height || innerHeight) * .22)) continue;
+          const hit = document.elementFromPoint(title.left + title.width / 2, title.top + title.height / 2);
+          if (!hit || hit !== label && !label.contains(hit) && !hit.contains(label)) continue;
+          for (let panel = label.parentElement, depth = 0; panel && panel !== document.body && depth < 12; panel = panel.parentElement, depth++) {
+            const main = panel.matches('main, [role="main"]');
+            if (panel.matches('article, [role="article"]') || panel.querySelector('main, [role="main"]')) break;
+            if (main && (!header || panel.querySelector('textarea[placeholder*="message" i], [contenteditable="true"][aria-label*="message" i], [role="textbox"][aria-label*="message" i]'))) break;
+            const style = getComputedStyle(panel), box = panel.getBoundingClientRect();
+            if (!activeViewer(panel) || !(main || /^(fixed|absolute)$/.test(style.position) || panel.matches('[role="dialog"], [aria-modal="true"]'))
+                || Math.max(box.width, panel.clientWidth) < innerWidth * .72 || Math.max(box.height, panel.clientHeight) < innerHeight * .6) continue;
+            const video = videos.find(media => panel.contains(media));
+            if (!video) continue;
+            suggestedReelsRoot = panel;
+            panel.setAttribute('data-vigil-instagram-suggested-reels', 'blocked');
+            panel.querySelectorAll('video, audio').forEach(media => media.pause());
+            publishSuggestedReelsBlock();
+            return true;
+          }
+        }
+        return false;
+      };
       const reconcile = () => {
+        if (blockSuggestedReels()) return;
         normalizeRecipientSheets();
         if (!syncRoute() || !concealmentScope) return;
         // Reel playback may change CDN/blob sources and remount its player.
@@ -3587,6 +3715,7 @@ enum DOMAdapters {
       let nativeGeometryUntil = 0;
       const refreshNativeGeometry = () => {
         nativeGeometryFrame = 0;
+        if (blockSuggestedReels()) return;
         normalizeRecipientSheets();
         syncRoute();
         if (performance.now() < nativeGeometryUntil) nativeGeometryFrame = requestAnimationFrame(refreshNativeGeometry);
@@ -3600,7 +3729,24 @@ enum DOMAdapters {
       const sheetLayoutTarget = target => target instanceof Element && (target.closest(
         '[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]')
         || target.querySelector('[data-vigil-instagram-comments-sheet="true"], [data-vigil-instagram-recipient-sheet="true"]'));
+      let viewerAcquisitionFrame = 0;
+      let viewerAcquisitionUntil = 0;
+      const acquireViewer = () => {
+        viewerAcquisitionFrame = 0;
+        if (!sharedIntent || pinnedID || Date.now() - sharedIntent.at >= 10000) return;
+        // DOM observation runs before first-paint geometry and between CSS
+        // animation frames. A pending user activation must follow those frames
+        // even when the fresh viewer generates no further DOM/media events.
+        reconcile();
+        if (!pinnedID && performance.now() < viewerAcquisitionUntil) viewerAcquisitionFrame = requestAnimationFrame(acquireViewer);
+      };
+      const scheduleViewerAcquisition = () => {
+        if (!sharedIntent || pinnedID) return;
+        viewerAcquisitionUntil = performance.now() + 1500;
+        if (!viewerAcquisitionFrame) viewerAcquisitionFrame = requestAnimationFrame(acquireViewer);
+      };
       window.addEventListener('touchstart', event => {
+        rememberViewerClosing(event.target);
         rememberDirectActivation(event.target);
         rememberSheetOpening(event.target);
         if (!syncRoute() || inSheet(event.target) || event.touches.length !== 1) { gesture = null; return; }
@@ -3626,11 +3772,13 @@ enum DOMAdapters {
       }, { capture: true, passive: false });
       for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
         if (type === 'touchcancel' && !pinnedID) sharedIntent = null;
+        else if (type === 'touchend') scheduleViewerAcquisition();
         if (gesture?.blocked) cancel(event);
         else if (gesture?.contained) event.stopImmediatePropagation();
         gesture = null;
       }, { capture: true, passive: false });
       window.addEventListener('pointerdown', event => {
+        rememberViewerClosing(event.target);
         rememberDirectActivation(event.target);
         rememberSheetOpening(event.target);
         if (event.pointerType === 'touch') touchPointers.add(event.pointerId);
@@ -3660,6 +3808,7 @@ enum DOMAdapters {
       }, true);
       for (const type of ['pointerup', 'pointercancel']) window.addEventListener(type, event => {
         if (type === 'pointercancel' && !pinnedID) sharedIntent = null;
+        else if (type === 'pointerup') scheduleViewerAcquisition();
         touchPointers.delete(event.pointerId);
         if (pointerGesture?.blocked) cancel(event);
         else if (pointerGesture?.contained) event.stopImmediatePropagation();
@@ -3682,10 +3831,12 @@ enum DOMAdapters {
               || (!allowsCarouselPan(event.target) && ['ArrowLeft', 'ArrowRight'].includes(event.key)))) cancel(event);
       }, true);
       window.addEventListener('click', event => {
+        rememberViewerClosing(event.target);
         rememberSheetOpening(event.target);
         rememberDirectActivation(event.target);
         const link = event.target?.closest?.('a[href]');
         if (!pinnedID && link) rememberShare(link.href, link);
+        scheduleViewerAcquisition();
         const next = reelAdvanceControl(event.target);
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
         else if (syncRoute() && pinnedKind === 'story' && !inSheet(event.target)
@@ -3695,7 +3846,9 @@ enum DOMAdapters {
         if (!syncRoute() || inSheet(event.target)) return;
         restoreScroll();
       }, true);
-      for (const type of ['play', 'playing', 'loadedmetadata', 'emptied', 'load']) document.addEventListener(type, reconcile, true);
+      for (const type of ['play', 'playing', 'loadedmetadata', 'emptied', 'load']) document.addEventListener(type, () => {
+        reconcile(); scheduleViewerAcquisition();
+      }, true);
       for (const name of ['pushState', 'replaceState']) {
         const original = history[name];
         history[name] = function(...args) {
@@ -3716,6 +3869,8 @@ enum DOMAdapters {
       window.visualViewport?.addEventListener('scroll', reconcile);
       for (const type of ['transitionrun', 'animationstart', 'focusin']) window.addEventListener(type, event => {
         if (pinnedID && sheetLayoutTarget(event.target)) scheduleNativeGeometry();
+        if (sharedIntent && event.target instanceof Element && event.target.querySelector('video, img')) scheduleViewerAcquisition();
+        if (location.pathname.startsWith('/direct/') && event.target instanceof Element && event.target.querySelector('video')) scheduleNativeGeometry();
       }, true);
       for (const type of ['transitionend', 'transitioncancel', 'animationend', 'animationcancel']) {
         window.addEventListener(type, event => {
@@ -3728,10 +3883,14 @@ enum DOMAdapters {
       }
       new MutationObserver(records => {
         reconcile();
+        if (sharedIntent && records.some(record => record.type === 'childList' && [...record.addedNodes].some(node =>
+          node instanceof Element && (node.matches('video, img, [role="dialog"], [aria-modal="true"]') || node.querySelector('video, img'))))) scheduleViewerAcquisition();
+        if (location.pathname.startsWith('/direct/') && records.some(record => record.type === 'childList' && [...record.addedNodes].some(node =>
+          node instanceof Element && node.querySelector('video') && /suggested/i.test(node.textContent || '')))) scheduleNativeGeometry();
         if (pinnedID && records.some(record => sheetLayoutTarget(record.target)
             && (record.type === 'childList' || ['style', 'class', 'hidden', 'aria-hidden'].includes(record.attributeName)))) scheduleNativeGeometry();
       }).observe(document.documentElement, {
-        childList: true, subtree: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'role', 'aria-modal', 'aria-label', 'placeholder', 'type', 'name', 'data-vigil-instagram-comments-sheet']
+        childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'role', 'aria-modal', 'aria-label', 'placeholder', 'type', 'name', 'data-vigil-instagram-comments-sheet']
       });
       reconcile();
     })();
@@ -8727,13 +8886,17 @@ enum DOMAdapters {
         for (const dialog of document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"]:not([aria-hidden="true"])'
         )) {
+          // Retained closed drawers must not consume the discovery budget
+          // before the newly opened foreground sheet is inspected.
+          if (!visibleInstagramElement(dialog) || dialog.closest('[aria-hidden="true"], [hidden], [inert]')) continue;
           inspected += 1;
           const sheet = instagramCommentSheetFor(dialog);
           if (sheet) activeSheets.add(sheet);
           if (inspected >= 16) break;
         }
         const composers = document.querySelectorAll(`${commentComposerSelector}, [contenteditable="true"]`);
-        for (const composer of [...composers].slice(0, 24)) {
+        for (const composer of [...composers].filter(node => visibleInstagramElement(node)
+          && !node.closest('[aria-hidden="true"], [hidden], [inert]')).slice(0, 24)) {
           if (!composer.matches(commentComposerSelector)
               && !/^(add|write) a comment[.\u2026]*$/i.test(normalizedInstagramLabel(composer))) continue;
           if ([...activeSheets].some(sheet => sheet.contains(composer))) continue;

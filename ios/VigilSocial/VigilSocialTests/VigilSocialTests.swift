@@ -509,6 +509,41 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramNewTouchesKeepCSSCoordinatesAfterNativeKeyboardResize() throws {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
+        let page = store.webView(for: .instagram)
+        page.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let boundary = try XCTUnwrap(page.gestureRecognizers?.compactMap { $0 as? InstagramSharedItemPanGuard }.first)
+        store.setInstagramReelScrollLocked(true, in: page,
+            scrollingRegions: [CGRect(x: 0, y: 300.0 / 844, width: 1, height: 60.0 / 844)],
+            viewportSize: CGSize(width: 390, height: 844))
+        XCTAssertFalse(boundary.blocksPan(from: CGPoint(x: 100, y: 320), translation: CGPoint(x: 0, y: -30)))
+        page.frame.size.height = 500
+        store.setSurface(SocialSurfaceState(route: "modal", refreshEligible: false, blocksRefresh: true), for: .instagram)
+        XCTAssertFalse(boundary.blocksPan(from: CGPoint(x: 100, y: 320), translation: CGPoint(x: 0, y: -30)),
+                       "A new touch in the same CSS-positioned input stays exempt after native height changes")
+        XCTAssertTrue(boundary.blocksPan(from: CGPoint(x: 100, y: 200), translation: CGPoint(x: 0, y: -30)),
+                      "Native height changes cannot move the input exception over an exposed Reel")
+        let inputTouch = FixtureLocatedTouch()
+        inputTouch.point = CGPoint(x: 100, y: 320)
+        XCTAssertFalse(boundary.gestureRecognizer(boundary, shouldReceive: inputTouch))
+        let backgroundTouch = FixtureLocatedTouch()
+        backgroundTouch.point = CGPoint(x: 100, y: 200)
+        XCTAssertTrue(boundary.gestureRecognizer(boundary, shouldReceive: backgroundTouch))
+        XCTAssertTrue(boundary.blocksCurrentTouch(translation: CGPoint(x: 0, y: -30)))
+        store.setInstagramReelScrollLocked(false, in: page)
+        XCTAssertNil(boundary.viewportSize)
+    }
+
+    func testInstagramGestureViewportRejectsInvalidCoordinateSpaces() {
+        XCTAssertEqual(SocialWebViewStore.instagramGestureViewport([390.0, 844.0]), CGSize(width: 390, height: 844))
+        for value in [[0.0, 844.0], [390.0, Double.nan], [Double.infinity, 844.0], [390.0], [390.0, 20000.0]] {
+            XCTAssertNil(SocialWebViewStore.instagramGestureViewport(value))
+        }
+        XCTAssertNil(SocialWebViewStore.instagramGestureViewport("390,844"))
+    }
+
+    @MainActor
     func testInstagramCommentsCanUseRootScrollingWhileBackgroundPansStayBlocked() {
         let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false)
         let webView = store.webView(for: .instagram)
@@ -15501,12 +15536,22 @@ extension VigilSocialTests {
     window.fixtureOpen=()=>{
       if(document.getElementById('viewer'))return;
       const viewer=document.createElement('div');viewer.id='viewer';
-      if(fixtureMode!=='anonymous-release')viewer.setAttribute('role','dialog');
+      if(!fixtureMode.includes('anonymous-release'))viewer.setAttribute('role','dialog');
       viewer.innerHTML='<div id="stack"><div class="card"><video id="reel"></video>'
         +'<button id="send" aria-label="Send post">Send</button><button id="comments" aria-label="Comments">Comments</button></div>'
         +'<div class="card"><video></video><button id="next" aria-label="Next reel">Next</button></div></div>';
-      document.body.append(viewer);
+      if(fixtureMode.startsWith('inplace-')){document.getElementById('preview').before(viewer);viewer.append(document.getElementById('preview'));}
+      else document.body.append(viewer);
       if(fixtureMode==='moved-preview')viewer.append(document.getElementById('preview'));
+      if(fixtureMode.includes('cold')){
+        viewer.style.transformOrigin='top left';viewer.style.transform='scale(0)';viewer.style.transition='transform 600ms linear';
+        viewer.getBoundingClientRect();fixtureColdEarly=false;const started=performance.now();
+        const observe=()=>{if(document.documentElement.hasAttribute('data-vigil-single-reel')&&viewer.getBoundingClientRect().width<innerWidth*.72)fixtureColdEarly=true;
+          if(performance.now()-started<1000)requestAnimationFrame(observe);};
+        requestAnimationFrame(()=>requestAnimationFrame(()=>{viewer.style.transform='scale(1)';requestAnimationFrame(observe);}));
+      }
+      if(fixtureMode==='cold-remount-release'){fixtureColdReturned=false;
+        setTimeout(()=>{const replacement=viewer.cloneNode(true);viewer.remove();setTimeout(()=>{document.body.append(replacement);fixtureColdReturned=true;},100);},80);}
       document.getElementById('send').onclick=()=>fixtureSheet(false);
       document.getElementById('comments').onclick=()=>fixtureSheet(true);
       if(fixtureMode.endsWith('-press')){const control=document.getElementById(fixtureMode==='comments-press'?'comments':'send');
@@ -15514,6 +15559,7 @@ extension VigilSocialTests {
     };
     document.getElementById('preview').onpointerup=()=>{if(!['ordinary-chat','cancelled-preview'].includes(fixtureMode))fixtureOpen();};
     window.fixtureSheet=comments=>{
+      if(fixtureMode==='comments-retained')for(let i=0;i<36;i++){const cached=document.createElement('div');cached.hidden=true;cached.setAttribute('role','dialog');cached.innerHTML='<textarea placeholder="Add a comment"></textarea>';document.body.prepend(cached);}
       let sheet=document.createElement('section');sheet.id='sheet';sheet.className='sheet';sheet.setAttribute('role','dialog');
       if(fixtureMode.endsWith('-reused')){
         const stack=document.getElementById('stack');document.getElementById('viewer').append(...stack.children);
@@ -15526,6 +15572,11 @@ extension VigilSocialTests {
       sheet.innerHTML+='<button id="close" aria-label="Close">Close</button><div style="height:1000px"></div>';
       if(fixtureMode.endsWith('-reused'))document.getElementById('viewer').append(sheet);else document.body.append(sheet);
       document.getElementById('close').onclick=()=>sheet.remove();
+      if(['recipient-anonymous','recipient-unrequested','recipient-anonymous-media','recipient-anonymous-backdrop'].includes(fixtureMode))sheet.removeAttribute('role');
+      if(fixtureMode==='recipient-anonymous-media'){const video=document.createElement('video');video.style.cssText='width:390px;height:180px';sheet.append(video);}
+      if(fixtureMode==='recipient-anonymous-backdrop')sheet.style.cssText='top:0;height:100vh;background:rgba(0,0,0,.4)';
+      if(fixtureMode==='recipient-editable')document.getElementById('search-box').innerHTML='<div id="query" role="searchbox" contenteditable="true" aria-label="Search recipients" style="height:36px"></div>';
+      if(fixtureMode.endsWith('-offset')){Object.defineProperty(window,'visualViewport',{configurable:true,value:{width:innerWidth,height:300,offsetTop:260,offsetLeft:0}});}
       if(fixtureMode==='recipient-nested')document.getElementById('search-box').setAttribute('role','dialog');
       if(['recipient-backdrop','recipient-retained'].includes(fixtureMode)){const backdrop=document.createElement('div');backdrop.setAttribute('role','dialog');
         backdrop.id='backdrop';backdrop.style.cssText='position:fixed;inset:0;z-index:3;background:rgba(0,0,0,.4)';
@@ -15547,7 +15598,8 @@ extension VigilSocialTests {
         fixtureFire('reel','pointerdown',200);fixtureFire('reel','pointerup',200);
       }
     };
-    window.fixtureNativeAllows=id=>{const box=document.getElementById(id).getBoundingClientRect(),x=(box.left+box.width/2)/innerWidth,y=(box.top+box.height/2)/innerHeight;
+    window.fixtureNativeAllows=id=>{const box=document.getElementById(id).getBoundingClientRect(),v=visualViewport,scale=innerWidth/(v?.width||innerWidth),
+      x=(box.left+box.width/2-(v?.offsetLeft||0))*scale/innerWidth,y=(box.top+box.height/2-(v?.offsetTop||0))*scale/innerHeight;
       const lock=fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1);
       return !!lock?.locked&&lock.scrollingRegions.some(r=>x>=r[0]&&x<=r[0]+r[2]&&y>=r[1]&&y<=r[1]+r[3]);};
     window.fixtureBackground=()=>{
@@ -15560,7 +15612,7 @@ extension VigilSocialTests {
     };
     window.fixtureBegin=()=>{
       if(fixtureMode==='link-release'){const link=document.createElement('a');link.id='preview';link.href='/reel/Shared123/';
-        link.textContent='Received Reel';link.onpointerup=fixtureOpen;document.getElementById('preview').replaceWith(link);}
+        link.textContent='Received Reel';link.onpointerup=fixtureOpen;link.onclick=e=>e.preventDefault();document.getElementById('preview').replaceWith(link);}
       fixtureFire('preview','pointerdown');
       if(fixtureMode==='cancelled-preview'){fixtureFire('preview','pointercancel');fixtureOpen();return;}
       fixtureFire('preview','pointerup');
@@ -15574,12 +15626,13 @@ extension VigilSocialTests {
         fixtureFire('reel','pointerdown',200);fixtureFire('reel','pointerup',200);
         const id=fixtureMode.startsWith('comments')?'comments':'send';
         if(fixtureMode.endsWith('-press')){fixtureFire(id,'pointerdown',730);fixtureFire(id,'pointerup',730);}
-        else document.getElementById(id).click();
+        else if(fixtureMode==='recipient-unrequested')fixtureSheet(false);else document.getElementById(id).click();
       },80);
     };
     window.fixtureReady=()=>{
       if(['ordinary-chat','cancelled-preview'].includes(fixtureMode))return true;
-      if(fixtureMode.includes('release')||fixtureMode==='moved-preview')return document.documentElement.hasAttribute('data-vigil-single-reel');
+      if(['recipient-unrequested','recipient-anonymous-media','recipient-anonymous-backdrop'].includes(fixtureMode))return !!document.getElementById('sheet');
+      if(fixtureMode.includes('release')||fixtureMode==='moved-preview')return document.documentElement.hasAttribute('data-vigil-single-reel')&&(!fixtureMode.includes('cold')||fixtureColdEarly)&&(fixtureMode!=='cold-remount-release'||fixtureColdReturned);
       const sheet=document.getElementById('sheet');
       return !!sheet&&(fixtureMode.startsWith('comments')?sheet.dataset.vigilInstagramCommentsSheet==='true'
         :sheet.dataset.vigilInstagramRecipientSheet==='true')&&(fixtureMode!=='recipient-animation'||window.fixtureAnimationDone);
@@ -15592,13 +15645,17 @@ extension VigilSocialTests {
       if(fixtureMode.includes('release')||fixtureMode==='moved-preview'){
         document.getElementById('preview').click();return fixtureBackground();
       }
+      if(['recipient-unrequested','recipient-anonymous-media','recipient-anonymous-backdrop'].includes(fixtureMode))
+        return !document.getElementById('sheet').hasAttribute('data-vigil-instagram-recipient-sheet')&&!fixtureNativeAllows('friend')&&fixtureBackground();
       if(fixtureMode==='recipient-retired'){const sheet=document.getElementById('sheet');
-        if(sheet.hasAttribute('role')){sheet.removeAttribute('role');return false;}
+        if(sheet.hasAttribute('role')){sheet.removeAttribute('role');document.getElementById('search-box').remove();return false;}
         return !sheet.hasAttribute('data-vigil-instagram-recipient-sheet')&&!fixtureNativeAllows('friend')&&fixtureBackground();}
+      if(fixtureMode==='comments-offset'){const lock=fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1),x=100/innerWidth,y=20/innerHeight;
+        return fixtureNativeAllows('handle')&&!lock.scrollingRegions.some(r=>x>=r[0]&&x<=r[0]+r[2]&&y>=r[1]&&y<=r[1]+r[3])&&fixtureBackground();}
       if(fixtureMode==='recipient-animation'&&(!fixtureAnimationSamples||fixtureAnimationMisses))return false;
       if(!fixtureNativeAllows('query')||(fixtureMode==='recipient-nested'&&!fixtureNativeAllows('friend'))
         ||(['recipient-backdrop','recipient-retained'].includes(fixtureMode)&&(fixtureNativeAllows('probe')||document.getElementById('backdrop').hasAttribute('data-vigil-instagram-recipient-sheet'))))return false;
-      const query=document.getElementById('query');query.focus();query.value='A friend';
+      const query=document.getElementById('query');query.focus();if(query.isContentEditable)query.textContent='A friend';else query.value='A friend';
       const id=fixtureMode.startsWith('comments')?'comment-list':'people';
       const list=document.getElementById(id);const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100,deltaX:100});list.dispatchEvent(wheel);
       fixtureFire(id,'pointerdown',450);const move=fixtureFire(id,'pointermove',420);fixtureFire(id,'pointerup',420);
@@ -15607,15 +15664,19 @@ extension VigilSocialTests {
       return !wheel.defaultPrevented&&!move&&document.activeElement===query&&fixtureBackground()
         &&sheet.scrollTop===100&&(!shell||shell.scrollTop===120);
     };
-    window.fixtureFinish=()=>{document.getElementById('sheet')?.remove();document.getElementById('viewer')?.remove();};
+    window.fixtureFinish=()=>{document.getElementById('sheet')?.remove();const viewer=document.getElementById('viewer');
+      if(fixtureMode==='cold-explicit-close-release'){const close=document.createElement('button');close.setAttribute('aria-label','Close');
+        close.onclick=()=>viewer.remove();viewer.append(close);fixtureClosedAt=performance.now();close.click();}
+      else viewer?.remove();};
     window.fixtureReleased=()=>!document.documentElement.hasAttribute('data-vigil-single-reel')
-      &&!fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1)?.locked;
+      &&!fixtureLocks.filter(p=>p.type==='reelScrollLock').at(-1)?.locked
+      &&(fixtureMode!=='cold-explicit-close-release'||performance.now()-fixtureClosedAt<300);
     </script></body></html>
     """#
 
     @MainActor
     func testInstagramInteractionBoundariesAcrossActivationSheetsAndKeyboard() async throws {
-        for mode in ["release", "anonymous-release", "link-release", "moved-preview", "recipient-animation", "recipient-nested", "recipient-backdrop", "recipient-retained", "recipient-retired",
+        for mode in ["comments-retained", "cold-explicit-close-release", "cold-release", "cold-remount-release", "inplace-cold-release", "inplace-release", "inplace-anonymous-release", "recipient-editable", "recipient-anonymous", "recipient-unrequested", "recipient-anonymous-media", "recipient-anonymous-backdrop", "recipient-offset", "comments-offset", "release", "anonymous-release", "link-release", "moved-preview", "recipient-animation", "recipient-nested", "recipient-backdrop", "recipient-retained", "recipient-retired",
                      "recipient-reused", "comments-reused", "comments-press", "send-press", "keyboard-ancestor", "cancelled-preview", "ordinary-chat"] {
             let controller = WKUserContentController(), bridge = FixtureScriptMessageHandler()
             controller.add(bridge, name: "vigil")
@@ -15650,5 +15711,105 @@ extension VigilSocialTests {
             try await waitForJavaScriptCondition("fixtureReleased()", in: page)
             page.navigationDelegate = nil
         }
+    }
+
+    @MainActor
+    func testInstagramProductionBridgeBindsSheetCoordinateSpace() async throws {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false, websiteDataStore: .nonPersistent())
+        let page = store.webView(for: .instagram)
+        page.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let boundary = try XCTUnwrap(page.gestureRecognizers?.compactMap { $0 as? InstagramSharedItemPanGuard }.first)
+        let window = UIWindow(frame: page.frame)
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(page)
+        window.isHidden = false
+        defer { page.removeFromSuperview(); window.isHidden = true }
+        // Use the real document identity and WK message handler, without the
+        // fixture's JavaScript message recorder or a manual native lock call.
+        page.loadHTMLString(Self.instagramInteractionBoundariesHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+        try await waitForJavaScriptCondition("typeof fixtureBegin==='function'&&!!window.__vigilDocumentID", in: page)
+        _ = try await page.evaluateJavaScript("fixtureMode='recipient-offset';fixtureBegin()")
+        try await waitForJavaScriptCondition("fixtureReady()", in: page)
+        for _ in 0..<100 {
+            if boundary.viewportSize != nil && !boundary.scrollingRegions.isEmpty { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(boundary.isEnabled)
+        XCTAssertEqual(boundary.viewportSize, CGSize(width: 390, height: 844))
+        XCTAssertFalse(boundary.blocksPan(from: CGPoint(x: 100, y: 90), translation: CGPoint(x: 0, y: -30)))
+        XCTAssertTrue(boundary.blocksPan(from: CGPoint(x: 100, y: 20), translation: CGPoint(x: 0, y: -30)))
+        page.frame.size.height = 500
+        XCTAssertFalse(boundary.blocksPan(from: CGPoint(x: 100, y: 90), translation: CGPoint(x: 0, y: -30)))
+        XCTAssertTrue(boundary.blocksPan(from: CGPoint(x: 100, y: 20), translation: CGPoint(x: 0, y: -30)))
+    }
+}
+
+extension VigilSocialTests {
+    static let instagramSuggestedReelsHTML = #"""
+    <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+    body{margin:0}#viewer{position:fixed;inset:0;background:white;z-index:2}
+    video{display:block;width:390px;height:700px}#rail-title{position:absolute;left:12px;top:12px;z-index:3}
+    #cover{position:fixed;inset:0;background:white;z-index:8}#chat-message{position:absolute;left:12px;top:12px}
+    </style><script>window.fetch=async()=>({ok:true,json:async()=>({})});</script></head><body>
+    <main id="chat"><div id="chat-message">Suggested</div><button id="preview">Received Reel</button></main><script>
+    window.fixtureCreate=mode=>{
+      const viewer=document.createElement(['main-rail','thread-header'].includes(mode)?'main':'div');viewer.id='viewer';
+      if(mode!=='anonymous')viewer.setAttribute('role','dialog');
+      viewer.innerHTML='<video id="video" muted playsinline></video><header id="rail-title"><span id="label">Suggested</span></header>';
+      if(mode==='warm')viewer.querySelector('#label').textContent='Shared';
+      if(mode==='caption-button')viewer.innerHTML='<article><video id="video"></video><button id="label" style="position:absolute;top:12px;left:12px">Suggested</button></article>';
+      if(mode==='caption')viewer.innerHTML='<article><video id="video"></video><span id="label" style="position:absolute;top:12px;left:12px">Suggested</span></article>';
+      if(mode==='thread-header')viewer.insertAdjacentHTML('beforeend','<textarea placeholder="Message"></textarea>');
+      if(mode==='hidden')viewer.hidden=true;
+      if(mode==='pointerless')viewer.querySelector('video').style.pointerEvents='none';
+      if(mode==='panned'){viewer.style.top='260px';viewer.style.height='844px';Object.defineProperty(window,'visualViewport',{configurable:true,value:{width:innerWidth,height:300,offsetTop:260,offsetLeft:0}});}
+      document.body.append(viewer);
+      if(mode==='covered'){const cover=document.createElement('section');cover.id='cover';cover.setAttribute('role','dialog');
+        cover.innerHTML='<h2>Comments</h2><textarea placeholder="Add a comment"></textarea>';document.body.append(cover);}
+      if(mode==='recipient'){viewer.querySelector('video').remove();viewer.insertAdjacentHTML('beforeend','<input placeholder="Search people"><button><img width="40" height="40">Friend</button>');}
+      if(mode==='animated'){viewer.style.transformOrigin='top left';viewer.style.transform='scale(0)';viewer.style.transition='transform 600ms linear';viewer.getBoundingClientRect();
+        requestAnimationFrame(()=>requestAnimationFrame(()=>viewer.style.transform='scale(1)'));}
+    };
+    window.fixtureActivate=mode=>{
+      if(mode==='chat'||mode==='chat-button'){if(mode==='chat-button')document.getElementById('chat-message').innerHTML='<button>Suggested</button>';document.getElementById('chat').insertAdjacentHTML('beforeend','<video></video>');return;}
+      if(mode==='warm'){document.getElementById('preview').onclick=()=>fixtureCreate(mode);document.getElementById('preview').click();}
+      else fixtureCreate(mode);
+    };
+    window.fixtureSuggestedBlocked=()=>document.getElementById('viewer')?.getAttribute('data-vigil-instagram-suggested-reels')==='blocked'
+      &&fixtureLocks.some(p=>p.type==='instagramSuggestedReels')&&document.getElementById('video').paused;
+    </script></body></html>
+    """#
+
+    @MainActor
+    func testInstagramSuggestedReelsReachNativeBlockAndCannotUnlockTheViewer() async throws {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false, websiteDataStore: .nonPersistent())
+        let page = store.webView(for: .instagram)
+        page.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let boundary = try XCTUnwrap(page.gestureRecognizers?.compactMap { $0 as? InstagramSharedItemPanGuard }.first)
+        let window = UIWindow(frame: page.frame)
+        window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(page)
+        window.isHidden = false
+        defer { page.removeFromSuperview(); window.isHidden = true }
+        page.loadHTMLString(Self.instagramSuggestedReelsHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+        try await waitForJavaScriptCondition("typeof fixtureActivate==='function'", in: page)
+        _ = try await page.evaluateJavaScript("fixtureActivate('cold')")
+        try await waitForJavaScriptCondition("document.getElementById('viewer')?.getAttribute('data-vigil-instagram-suggested-reels')==='blocked'", in: page)
+        for _ in 0..<100 {
+            if store.instagramSuggestedReelsBlocked { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertTrue(store.instagramSuggestedReelsBlocked)
+        store.setInstagramReelScrollLocked(false, in: page, scrollingRegions: [CGRect(x: 0, y: 0, width: 1, height: 1)])
+        store.resumeSuspendedMedia()
+        XCTAssertTrue(boundary.isEnabled, "A stale viewer-close report cannot unlock the Suggested surface")
+        XCTAssertTrue(boundary.scrollingRegions.isEmpty)
+        page.loadHTMLString(Self.instagramSuggestedReelsHTML, baseURL: URL(string: "https://www.instagram.com/direct/t/friend/")!)
+        try await waitForJavaScriptCondition("typeof fixtureActivate==='function'", in: page)
+        for _ in 0..<100 {
+            if !store.instagramSuggestedReelsBlocked { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertFalse(store.instagramSuggestedReelsBlocked, "Only a newly bound trusted document releases the block")
     }
 }

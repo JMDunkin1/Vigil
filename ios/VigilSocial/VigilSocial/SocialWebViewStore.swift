@@ -29,6 +29,7 @@ final class InstagramWebView: WKWebView {
 final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
     var scrollingRegions: [CGRect] = []
     var carouselRegions: [CGRect] = []
+    var viewportSize: CGSize?
     private weak var trackedTouch: UITouch?
     private var touchAllowsCarousel = false
 
@@ -54,7 +55,11 @@ final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecogn
 
     private func normalizedPoint(_ point: CGPoint) -> CGPoint? {
         guard let view, view.bounds.width > 0, view.bounds.height > 0 else { return nil }
-        return CGPoint(x: point.x / view.bounds.width, y: point.y / view.bounds.height)
+        // CSS pixels scale with width. SwiftUI can change the native height
+        // during keyboard avoidance before WebKit changes its layout viewport.
+        // Retain the reported coordinate space across that native-only resize.
+        let height = viewportSize.map { view.bounds.width * $0.height / $0.width } ?? view.bounds.height
+        return CGPoint(x: point.x / view.bounds.width, y: point.y / height)
     }
 
     func blocksPan(from point: CGPoint, translation: CGPoint) -> Bool {
@@ -404,6 +409,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var youtubeExternalPlaybackAvailable = false
 
     @Published private(set) var instagramInformationalAccounts: [String] = []
+    @Published private(set) var instagramSuggestedReelsBlocked = false
+    private var instagramSuggestedReelsDocumentID: String?
     private var instagramControlsUserScript: WKUserScript?
     private var instagramDocumentStartUserScript: WKUserScript?
     private var instagramIncomingSharedURL: URL?
@@ -1048,6 +1055,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func resumeSuspendedMedia() {
+        guard !instagramSuggestedReelsBlocked else { return }
         guard accessRestriction?() != true else { suspendAllMedia(); return }
         guard fixedService != .youtube || youtubeProtectionVerified else { suspendAllMedia(); return }
         guard mediaPlaybackIsSuspended else { return }
@@ -1448,9 +1456,22 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard service == .instagram, frame.isMainFrame,
                   let locked = body["locked"] as? Bool,
                   let webView = message.webView else { return }
+            let viewport = Self.instagramGestureViewport(body["viewportSize"])
+            let validViewport = body["viewportSize"] == nil || viewport != nil
             setInstagramReelScrollLocked(locked, in: webView,
-                scrollingRegions: Self.instagramGestureRegions(body["scrollingRegions"]),
-                carouselRegions: Self.instagramGestureRegions(body["carouselRegions"]))
+                scrollingRegions: validViewport ? Self.instagramGestureRegions(body["scrollingRegions"]) : [],
+                carouselRegions: validViewport ? Self.instagramGestureRegions(body["carouselRegions"]) : [],
+                viewportSize: viewport)
+        case "instagramSuggestedReels":
+            guard service == .instagram, frame.isMainFrame,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  let webView = message.webView, webViews[.instagram] === webView else { return }
+            if !instagramSuggestedReelsBlocked {
+                instagramSuggestedReelsDocumentID = mainDocumentIDs[service]
+                instagramSuggestedReelsBlocked = true
+                setInstagramReelScrollLocked(true, in: webView)
+                suspendAllMedia(relinquishExternalPlayback: false)
+            }
         case "documentReady":
             guard frame.isMainFrame,
                   let documentID = body["documentID"] as? String,
@@ -1460,6 +1481,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 guard currentDocumentID == documentID else { return }
             } else {
                 mainDocumentIDs[service] = documentID
+            }
+            if service == .instagram, instagramSuggestedReelsBlocked, instagramSuggestedReelsDocumentID != documentID {
+                if let webView = message.webView { clearInstagramSuggestedReelsBlock(in: webView) }
             }
             if service == .instagram { synchronizeInstagramSharedItem(in: message.webView) }
         case "health":
@@ -2179,7 +2203,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if service == .instagram {
             // The item guard owns an open Direct viewer even if the underlying
             // adapter briefly reports feed/unknown while React remounts it.
-            if instagramSharedViewerScrollLocked || surface.route == "reels" {
+            if instagramSuggestedReelsBlocked || instagramSharedViewerScrollLocked || surface.route == "reels" {
                 updateInstagramPanBoundary(locked: true, in: webView)
             } else if !["modal", "directThread"].contains(surface.route) {
                 updateInstagramPanBoundary(locked: false, in: webView)
@@ -2203,12 +2227,33 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func setInstagramReelScrollLocked(_ locked: Bool, in webView: WKWebView,
-                                      scrollingRegions: [CGRect] = [], carouselRegions: [CGRect] = []) {
+                                      scrollingRegions: [CGRect] = [], carouselRegions: [CGRect] = [], viewportSize: CGSize? = nil) {
         guard webViews[.instagram] === webView else { return }
-        instagramSharedViewerScrollLocked = locked
-        instagramSharedItemPanGuard?.scrollingRegions = locked ? scrollingRegions : []
-        instagramSharedItemPanGuard?.carouselRegions = locked ? carouselRegions : []
-        updateInstagramPanBoundary(locked: locked, in: webView)
+        let enforcedLock = locked || instagramSuggestedReelsBlocked
+        instagramSharedViewerScrollLocked = enforcedLock
+        instagramSharedItemPanGuard?.scrollingRegions = locked && !instagramSuggestedReelsBlocked ? scrollingRegions : []
+        instagramSharedItemPanGuard?.carouselRegions = locked && !instagramSuggestedReelsBlocked ? carouselRegions : []
+        instagramSharedItemPanGuard?.viewportSize = enforcedLock ? viewportSize : nil
+        updateInstagramPanBoundary(locked: enforcedLock, in: webView)
+    }
+
+    func leaveInstagramSuggestedReels() {
+        guard instagramSuggestedReelsBlocked, let webView = webViews[.instagram] else { return }
+        var components = webView.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
+        components?.query = nil
+        components?.fragment = nil
+        let candidate = components?.url
+        let target = candidate.flatMap { $0.path.hasPrefix("/direct/") && SocialService.instagram.allowsNavigation(to: $0) ? $0 : nil }
+            ?? URL(string: "https://www.instagram.com/direct/inbox/")!
+        // Stay blocked and suspended until the new trusted document binds.
+        webView.load(URLRequest(url: target))
+    }
+
+    private func clearInstagramSuggestedReelsBlock(in webView: WKWebView) {
+        instagramSuggestedReelsBlocked = false
+        instagramSuggestedReelsDocumentID = nil
+        setInstagramReelScrollLocked(false, in: webView)
+        resumeSuspendedMedia()
     }
 
     private func updateInstagramPanBoundary(locked: Bool, in webView: WKWebView) {
@@ -2216,6 +2261,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if !locked {
             instagramSharedItemPanGuard?.scrollingRegions = []
             instagramSharedItemPanGuard?.carouselRegions = []
+            instagramSharedItemPanGuard?.viewportSize = nil
         }
         // Comments can use the root WK scroll view. Keep it available when a
         // foreground exception exists; the parent pan boundary still rejects
@@ -2239,6 +2285,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 .intersection(CGRect(x: 0, y: 0, width: 1, height: 1))
             return rectangle.isNull || rectangle.isEmpty ? nil : rectangle
         }
+    }
+
+    nonisolated static func instagramGestureViewport(_ value: Any?) -> CGSize? {
+        guard let values = value as? [Double], values.count == 2,
+              values.allSatisfy({ $0.isFinite && $0 >= 1 && $0 <= 16384 }) else { return nil }
+        return CGSize(width: values[0], height: values[1])
     }
 
     static func provisionalInstagramSurface(for url: URL) -> SocialSurfaceState {
@@ -2623,6 +2675,13 @@ extension SocialWebViewStore: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation?) {
         guard let service = service(for: webView) else { return }
+        if service == .instagram, instagramSuggestedReelsBlocked, let url = webView.url,
+           service.allowsNavigation(to: url), service.usesUnmodifiedAuthenticationDocument(url) {
+            // Authentication documents intentionally omit the page bridge.
+            // A committed trusted login must remain usable if Back redirects
+            // there after the Instagram session expires.
+            clearInstagramSuggestedReelsBlock(in: webView)
+        }
         guard !service.usesUnmodifiedAuthenticationDocument(webView.url) else { return }
         bindCommittedMainDocument(for: service, in: webView)
     }
