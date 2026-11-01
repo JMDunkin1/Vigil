@@ -66,7 +66,7 @@ struct SnapchatCallScenario: Decodable {
                             try await Task.sleep(for: .milliseconds(50))
                         }
                         if !passed {
-                            let diagnostic = try await page.evaluateJavaScript("JSON.stringify({call:document.querySelector('#fixture-call')?fixtureCallGeometry():null,loopback:window.loopbackResult,error:window.loopbackError,context:window.fixtureLoopback?.context.state,audio:window.fixtureLoopback?.media&&{paused:fixtureLoopback.media.paused,muted:fixtureLoopback.media.muted,defaultMuted:fixtureLoopback.media.defaultMuted},layout:document.querySelector('[data-vigil-snap-layout]')?.outerHTML.slice(0,500),snap:document.querySelector('.ecBYF')?.getBoundingClientRect().toJSON()})")
+                            let diagnostic = try await page.evaluateJavaScript("JSON.stringify({playback:window.fixturePlaybackDiagnostic?.(),call:document.querySelector('#fixture-call')?fixtureCallGeometry():null,loopback:window.loopbackResult,error:window.loopbackError,context:window.fixtureLoopback?.context.state,audio:window.fixtureLoopback?.media&&{paused:fixtureLoopback.media.paused,muted:fixtureLoopback.media.muted,defaultMuted:fixtureLoopback.media.defaultMuted},layout:document.querySelector('[data-vigil-snap-layout]')?.outerHTML.slice(0,500),snap:document.querySelector('.ecBYF')?.getBoundingClientRect().toJSON()})")
                             print("FAIL \(scenario.name) step \(index): \(condition)\n\(String(describing: diagnostic))")
                             exit(1)
                         }

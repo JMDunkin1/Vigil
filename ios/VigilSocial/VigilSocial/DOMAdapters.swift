@@ -1395,13 +1395,18 @@ enum DOMAdapters {
           value: function vigilGuardedPlay(...argumentsList) {
             const state = stateFor(this);
             if (navigator.userActivation?.isActive) requestAudiblePlayback(this);
-            if (!state.allowed && isEligible(this)) allow(this, false);
-            if (!state.allowed) {
+            // A reused player can receive its next source and call play() in
+            // the same task, before the source observer revokes the old grant.
+            // Recheck the current fingerprint before invoking native play;
+            // otherwise the subsequent inspection pause rejects that pending
+            // promise with AbortError and Snapchat discards the whole player.
+            if (!isEligible(this)) {
               this.dataset.vigilPlaybackRequested = 'true';
               this.dispatchEvent(new CustomEvent('__vigilPlaybackInspectionRequested'));
               hold(this, true);
               return Promise.resolve();
             }
+            if (!state.allowed) allow(this, false);
             applyAudioPreference(this, audioPreferred);
             return nativePlay.apply(this, argumentsList);
           }
