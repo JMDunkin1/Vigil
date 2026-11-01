@@ -2165,9 +2165,17 @@ async function signedProvisioningFile(embeddedProfile) {
   }
 }
 
+export function phoneInspectionLaunchArguments(environment = process.env) {
+  if (environment.VIGIL_WEB_INSPECT !== "1" && environment.DEVICECTL_CHILD_VIGIL_WEB_INSPECT !== "1") return [];
+  // Pass this opt-in explicitly: forwarding the devicectl child environment
+  // alone did not expose the installed Personal Team app during diagnostics.
+  // Never forward any other host environment variables into the phone app.
+  return ["--environment-variables", JSON.stringify({ VIGIL_WEB_INSPECT: "1" })];
+}
+
 async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt = Date.now()) {
   try {
-    const launch = await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--terminate-existing", social.bundleId], toolEnvironment);
+    const launch = await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, ...phoneInspectionLaunchArguments(toolEnvironment), "--terminate-existing", social.bundleId], toolEnvironment);
     const processIdentifier = Number(launch.result?.process?.processIdentifier);
     if (!Number.isInteger(processIdentifier) || processIdentifier <= 0) {
       return { ok: false, detail: "CoreDevice did not return a launched process identifier" };
@@ -2376,7 +2384,7 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
   try {
     for (const service of COMBINED_SOCIAL_SERVICE_IDS) {
       const started = Date.now();
-      await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--payload-url", `vigilsocial://${service}`, REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
+      await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, ...phoneInspectionLaunchArguments(toolEnvironment), "--payload-url", `vigilsocial://${service}`, REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
       let verified = false;
       // A cold web session can finish its protected access probe after a minute
       // on device. Keep requiring fresh selection AND access receipts, but allow
@@ -2399,7 +2407,7 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
       if (!verified) throw new Error(`The combined ${service} view did not verify access. Check connectivity, login, and active restrictions; legacy apps were retained.`);
       launches.push({ service, verifiedAt: new Date().toISOString() });
     }
-    await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, "--payload-url", "vigilsocial://home", REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
+    await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, ...phoneInspectionLaunchArguments(toolEnvironment), "--payload-url", "vigilsocial://home", REQUIRED_SOCIAL_APPS[0].bundleId], toolEnvironment);
     return launches;
   } finally { await rm(directory, { recursive: true, force: true }); }
 }

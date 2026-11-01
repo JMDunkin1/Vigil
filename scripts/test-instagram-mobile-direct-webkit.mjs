@@ -37,6 +37,41 @@ scenarios.push(make('Comments remain scrollable through a heading remount',[
  {condition:"fixtureScrollSheet('comment-list')"},
  {action:"document.getElementById('comment-heading').remove()",delay:100,condition:"fixtureNativeAllows('comment-list')&&fixtureScrollSheet('comment-list')"}
 ]));
+for(const [tag,offscreen] of [['img',false],['video',false],['img',true]]){
+ scenarios.push(make(`Comments retain scrolling after lazy ${offscreen?'offscreen ':''}${tag}`,[
+  {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
+  {action:"document.querySelector('#card-0 .comments').click()",condition:"fixtureNativeAllows('comment-list')"},
+  {action:`fixtureCommentMedia('${tag}',${offscreen})`,delay:200,condition:"fixtureNativeAllows('comment-list')&&fixtureScrollSheet('comment-list')&&fixtureContained()"}
+ ]));
+}
+scenarios.push(make('Semantic comments keep scrolling when media loads and the heading remounts',[
+ {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
+ {action:"document.querySelector('#card-0 .comments').click();document.getElementById('comments-sheet').setAttribute('role','dialog')",condition:"fixtureNativeAllows('comment-list')"},
+ {action:"fixtureCommentMedia('video');document.getElementById('comment-heading').remove()",delay:200,condition:"fixtureNativeAllows('comment-list')&&fixtureScrollSheet('comment-list')&&fixtureContained()"}
+]));
+scenarios.push(make('Hidden cached comments recover without another Comments activation',[
+ {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
+ {action:"document.querySelector('#card-0 .comments').click()",condition:"fixtureNativeAllows('comment-list')"},
+ {action:"fixtureCommentMedia('img')",delay:5200,condition:"fixtureNativeAllows('comment-list')"},
+ {action:"document.getElementById('comments-sheet').hidden=true",delay:100,condition:"!document.getElementById('comments-sheet').hasAttribute('data-vigil-instagram-comments-sheet')"},
+ {action:"document.getElementById('comments-sheet').hidden=false",condition:"fixtureNativeAllows('comment-list')&&fixtureScrollSheet('comment-list')&&fixtureContained()"}
+]));
+scenarios.push(make('Cached comments with media recover after a covering picker closes',[
+ {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
+ {action:"document.querySelector('#card-0 .comments').click()",condition:"fixtureNativeAllows('comment-list')"},
+ {action:"fixtureCommentMedia('img');fixturePicker()",delay:5400,condition:"!document.getElementById('comments-sheet').hasAttribute('data-vigil-instagram-comments-sheet')"},
+ {action:"document.getElementById('picker-shell').remove()",condition:"fixtureNativeAllows('comment-list')&&fixtureScrollSheet('comment-list')&&fixtureContained()"}
+]));
+scenarios.push(make('A former comments root reused for media cannot retain a scroll exception',[
+ {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
+ {action:"document.querySelector('#card-0 .comments').click()",condition:"fixtureNativeAllows('comment-list')"},
+ {action:"document.getElementById('comment-input').remove();document.getElementById('comment-heading').remove();fixtureCommentMedia('video')",delay:200,condition:"!document.getElementById('comments-sheet').hasAttribute('data-vigil-instagram-comments-sheet')&&!fixtureNativeAllows('comment-list')&&fixtureContained()"}
+]));
+scenarios.push(make('An Add a comment action alone cannot retain a media drawer exception',[
+ {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
+ {action:"document.querySelector('#card-0 .comments').click()",condition:"fixtureNativeAllows('comment-list')"},
+ {action:"document.getElementById('comment-input').outerHTML='<button aria-label=\"Add a comment\">Add a comment</button>';fixtureCommentMedia('video')",delay:200,condition:"!document.getElementById('comments-sheet').hasAttribute('data-vigil-instagram-comments-sheet')&&!fixtureNativeAllows('comment-list')&&fixtureContained()"}
+]));
 scenarios.push(make('Full visual Send picker inside a forty-pixel dialog host',[
  {action:"fixtureOpen('shared')",condition:'fixtureContained()'},
  {action:"document.querySelector('#card-0 .send').click()",condition:"document.getElementById('picker').getAttribute('data-vigil-instagram-recipient-sheet')==='true'&&!document.getElementById('dialog-host').hasAttribute('data-vigil-instagram-recipient-sheet')&&fixtureNativeAllows('people')"},

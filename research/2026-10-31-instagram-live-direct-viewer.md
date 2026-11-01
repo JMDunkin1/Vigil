@@ -84,10 +84,67 @@ decoded-media, native geometry, lint, and app/test compilation checks are also
 run before delivery. Physical acceptance is reported separately from these
 fixtures and from policy/launch verification.
 
-The final snapshot passes 163 WebKit scenarios (including the eleven new live
+The initial snapshot passes 163 WebKit scenarios (including the eleven new live
 layout cases), 42 production Swift geometry/return/activation checks, lint of
-534 sources, and iOS app/test compilation. The iPhone became unreachable after
-the captures; the new build is not installed or physically accepted until a
-subsequent verified combined update succeeds. That update should use the
-documented `DEVICECTL_CHILD_VIGIL_WEB_INSPECT=1` developer launch environment so
-the unchanged protections can be inspected during the physical follow-up.
+534 sources, and iOS app/test compilation.
+
+## Physical follow-up and remaining comments failure
+
+A subsequent verified combined update installed Vigil Social 0.3.223 (226),
+phone release 0.3.243 (246), with the exact existing supervised policy and all
+eight service launches verified. The user reported that the interactions were
+working during their trial, then reproduced the intermittent comments freeze.
+This is not physical acceptance of the comments behavior.
+
+The updated app did not expose an inspectable page when launched using only
+`DEVICECTL_CHILD_VIGIL_WEB_INSPECT=1`. No frozen-drawer DOM snapshot or usable
+native geometry was captured. A debugger attempt failed without obtaining that
+evidence. The user needed to leave and was told they could unplug; subsequent
+investigation continued offline. The earlier comments capture describes a
+working drawer, not the frozen one.
+
+Offline reproduction found two concrete failures:
+
+- Inserting a 260-by-300 image or video into an already verified comment list
+  revoked the drawer marker and reduced native scrolling regions to zero.
+  Even an offscreen image could do this. Discovery treated the added comment
+  media as proof that the containing drawer was a media viewer.
+- Covering and uncovering the drawer could transfer viewer ownership from the
+  snapping rail to one of its own positioned video wrappers. The rail then
+  lost its containment scope despite retaining a nominal Reel pin.
+
+The repair retains the exact previously verified comments root while it has a
+live comment composer and owns foreground hit targets. Hidden, covered,
+disconnected, or repurposed roots lose their exception. A cached root can recover
+after the original activation expires; disconnected roots are pruned. Fresh
+drawers retain the existing strict media-free discovery. A connected viewer
+cannot transfer its rail ownership to its own descendant during a sheet
+transition. These changes do not authorize additional Reel scrolling or alter
+content-filter decisions.
+
+Eight added behavior cases cover lazy image/video content, offscreen media,
+semantic drawers and heading replacement, cached hide/reveal, covering pickers,
+and a former drawer reused for media. An Add a comment action button without a
+real editor cannot retain the media exception. The lazy-image case fails on the preceding
+implementation; the new cases pass with the repair. These are confirmed local
+regressions, not proof of the exact cause of the user's uncaptured frozen state.
+
+The normal verified phone-update launch now passes an explicit CoreDevice
+`--environment-variables` argument when `VIGIL_WEB_INSPECT=1` (or its legacy
+`DEVICECTL_CHILD_` equivalent) is supplied. Only that diagnostic flag is forwarded;
+ordinary updates do not enable inspection. The next physical update and
+comments acceptance remain pending while the phone is unplugged.
+
+The repaired snapshot passes 164 WebKit behavior cases: 19 mobile Direct,
+66 conversation, 25 interaction, 16 decoded-media, 25 Suggested, nine Send,
+and four comments cases. It also passes 42 native geometry/return/activation
+checks, phone-updater unit checks, lint of 534 source files, the TypeScript
+build, and iOS app/test compilation. Seven animation-dependent cases remain
+unverified on this snapshot: the Mac locked during the run and WebKit stopped
+delivering animation frames. The failed fixtures remained in their initial
+animation classes; their conditions were not changed to make them pass. The
+other scenarios were rerun with their original assertions. These limitations
+and the missing physical acceptance must not be reported as successful checks.
+
+The prepared combined app is 0.3.224 (227), phone release 0.3.244 (247). It has
+not replaced the installed 0.3.223 (226) until a later verified phone update.

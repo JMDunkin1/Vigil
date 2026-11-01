@@ -13,6 +13,7 @@ export interface PhoneSuiteOptions {
 }
 
 export function parseArguments(args: string[]): { command: string; options: PhoneSuiteOptions };
+export function phoneInspectionLaunchArguments(environment?: Record<string, string | undefined>): string[];
 export const COMBINED_SOCIAL_SERVICE_IDS: readonly string[];
 export function socialContainerSettings(ios: unknown): Record<string, unknown>;
 export function validateSocialMigrationLedger(bytes: Uint8Array): Record<string, unknown>;

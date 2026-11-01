@@ -16,6 +16,7 @@ import {
   isPhoneImplementationFile,
   isSocialAppImplementationFile,
   parseArguments,
+  phoneInspectionLaunchArguments,
   policyFreshnessProblems,
   preservedPolicyReceipt,
   receiptPhoneEdition,
@@ -31,6 +32,12 @@ const projectRoot = existsSync(join(process.cwd(), "scripts", "ios-phone-suite.m
   : resolve(process.cwd(), "..", "..");
 const phoneSuiteSource = await readFile(join(projectRoot, "scripts", "ios-phone-suite.mjs"), "utf8");
 const packageManifest = JSON.parse(await readFile(join(projectRoot, "package.json"), "utf8"));
+
+assert.deepEqual(phoneInspectionLaunchArguments({}), [], "ordinary updates must not enable page inspection");
+assert.deepEqual(phoneInspectionLaunchArguments({ VIGIL_WEB_INSPECT: "0", UNRELATED_SECRET: "private" }), []);
+const inspectionArguments = ["--environment-variables", '{"VIGIL_WEB_INSPECT":"1"}'];
+assert.deepEqual(phoneInspectionLaunchArguments({ VIGIL_WEB_INSPECT: "1", UNRELATED_SECRET: "private" }), inspectionArguments);
+assert.deepEqual(phoneInspectionLaunchArguments({ DEVICECTL_CHILD_VIGIL_WEB_INSPECT: "1" }), inspectionArguments);
 
 assert.equal(
   packageManifest.scripts["agent:update:phone"],

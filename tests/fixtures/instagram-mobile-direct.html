@@ -49,6 +49,11 @@ window.fixtureComments=()=>{
  sheet.innerHTML='<div id="comment-heading"><span>Comments</span></div><div id="comment-list"><div id="comment-rows">Comment rows</div></div><textarea id="comment-input" placeholder="Add a comment…"></textarea>';
  document.body.append(sheet);
 };
+window.fixtureCommentMedia=(tag,offscreen=false)=>{
+ const media=document.createElement(tag);media.style.cssText='display:block;width:260px;height:300px';
+ if(offscreen)media.style.marginTop='1600px';
+ document.getElementById('comment-rows').append(media);
+};
 window.fixturePicker=()=>{
  const shell=document.createElement('div');shell.id='picker-shell';
  shell.innerHTML='<div id="dialog-host" role="dialog"><div id="picker"><h2>Send to</h2><input id="search" placeholder="Search"><div id="people">'

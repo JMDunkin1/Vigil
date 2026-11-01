@@ -3015,7 +3015,10 @@ enum DOMAdapters {
           // React may replace the portal as well as the player. Transfer only
           // to another foreground viewer, never to the retained chat dialog.
           const replacement = foregroundModal(viewerOrigin, viewerBackground);
-          if (replacement) modalContext = replacement;
+          // A sheet can cover the rail while leaving one of its positioned
+          // video wrappers exposed. That descendant is the same viewer, not
+          // a replacement; transferring to it would stop owning the rail.
+          if (replacement && (!modalContext.isConnected || !modalContext.contains(replacement))) modalContext = replacement;
         }
         // A player can briefly have no media during a React remount. Its
         // visible viewer, rather than a video URL or dimensions, owns the lock.
@@ -9010,7 +9013,18 @@ enum DOMAdapters {
         // beyond the opening transition.
         [0, 80, 240, 600].forEach((delay) => setTimeout(restoreCommentPlayback, delay));
       };
-      const knownAnonymousCommentSheets = new WeakSet();
+      const knownCommentSheets = new Set();
+      const foregroundCommentPanel = panel => {
+        if (!visibleInstagramElement(panel) || panel.closest('[aria-hidden="true"], [hidden], [inert]')
+            || !commentPanelBounds(panel)) return false;
+        const box = panel.getBoundingClientRect();
+        const left = Math.max(0, box.left), right = Math.min(innerWidth, box.right);
+        const top = Math.max(0, box.top), bottom = Math.min(innerHeight, box.bottom);
+        return [[0.5, 0.5], [0.2, 0.1], [0.8, 0.1], [0.5, 0.85]].some(([x, y]) => {
+          const hit = document.elementFromPoint(left + (right - left) * x, top + (bottom - top) * y);
+          return hit && panel.contains(hit);
+        });
+      };
       const anonymousCommentSheetFor = composer => {
         if (!visibleInstagramElement(composer) || composer.closest('[aria-hidden="true"], [hidden], [inert]')) return null;
         const requested = commentSurfaceRequestedAt > 0 && performance.now() - commentSurfaceRequestedAt < 5000;
@@ -9018,20 +9032,18 @@ enum DOMAdapters {
         let candidate = composer.parentElement;
         for (let depth = 0; candidate && candidate !== document.body && depth < 40; depth++, candidate = candidate.parentElement) {
           if (candidate.matches(contentRoots) || largeVisibleMediaIn(candidate)) break;
-          if (!requested && !knownAnonymousCommentSheets.has(candidate)) continue;
+          if (!requested && !knownCommentSheets.has(candidate)) continue;
           const box = candidate.getBoundingClientRect();
           if (box.width < 180 || box.height < 160 || box.bottom <= 0 || box.top >= innerHeight
               || box.right <= 0 || box.left >= innerWidth
-              || !knownAnonymousCommentSheets.has(candidate) && !commentHeadingIn(candidate, true)) continue;
+              || !knownCommentSheets.has(candidate) && !commentHeadingIn(candidate, true)) continue;
           // Anonymous drawers still need an independently positioned portal.
           // A post caption/composer cannot exempt the containing media viewer.
           let portal = candidate;
           for (let level = 0; portal && portal !== document.body && level < 40; level++, portal = portal.parentElement) {
             if (portal.matches(contentRoots) || largeVisibleMediaIn(portal)) break;
             if (/^(fixed|absolute)$/.test(getComputedStyle(portal).position)) {
-              const panel = completeCommentPanel(candidate, portal);
-              if (panel) knownAnonymousCommentSheets.add(panel);
-              return panel;
+              return completeCommentPanel(candidate, portal);
             }
           }
         }
@@ -9039,6 +9051,19 @@ enum DOMAdapters {
       };
       const normalizeCommentSheets = () => {
         const activeSheets = new Set();
+        // A lazily loaded comment image/GIF is content inside an already
+        // verified drawer, not evidence that the drawer became the Reel.
+        // Retain only the exact root with a live comment composer and its own
+        // foreground area; fresh roots still require media-free discovery.
+        for (const sheet of knownCommentSheets) {
+          if (!sheet.isConnected) { knownCommentSheets.delete(sheet); continue; }
+          if (!foregroundCommentPanel(sheet)) continue;
+          const composer = [...sheet.querySelectorAll('textarea, input, [role="textbox"], [contenteditable="true"]')]
+            .slice(0, 24).find(editor => (editor.matches(commentComposerSelector)
+                || /^(add|write) a comment[.\u2026]*$/i.test(normalizedInstagramLabel(editor)))
+              && visibleInstagramElement(editor) && !editor.closest('[aria-hidden="true"], [hidden], [inert]'));
+          if (composer) activeSheets.add(sheet);
+        }
         let inspected = 0;
         for (const dialog of document.querySelectorAll(
           '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"]:not([aria-hidden="true"])'
@@ -9063,12 +9088,14 @@ enum DOMAdapters {
         // Multiple enclosing dialogs can discover the same drawer at different
         // depths. Only its complete root owns the exception, never nested boxes.
         for (const sheet of activeSheets) {
-          if ([...activeSheets].some(parent => parent !== sheet && parent.contains(sheet))) activeSheets.delete(sheet);
+          if (!foregroundCommentPanel(sheet)
+              || [...activeSheets].some(parent => parent !== sheet && parent.contains(sheet))) activeSheets.delete(sheet);
         }
         document.querySelectorAll('[data-vigil-instagram-comments-sheet]').forEach((sheet) => {
           if (!activeSheets.has(sheet)) sheet.removeAttribute('data-vigil-instagram-comments-sheet');
         });
         activeSheets.forEach((sheet) => {
+          knownCommentSheets.add(sheet);
           if (sheet.dataset.vigilInstagramCommentsSheet !== 'true') sheet.dataset.vigilInstagramCommentsSheet = 'true';
         });
         if (activeSheets.size) scheduleCommentPlaybackRestore();
@@ -9101,9 +9128,9 @@ enum DOMAdapters {
         || target.querySelector(`${commentComposerSelector}, [contenteditable="true"]`));
       new MutationObserver(records => {
         const requested = commentSurfaceRequestedAt > 0 && performance.now() - commentSurfaceRequestedAt < 5000;
-        if ((requested || document.querySelector('[data-vigil-instagram-comments-sheet="true"]'))
+        if ((requested || knownCommentSheets.size || document.querySelector('[data-vigil-instagram-comments-sheet="true"]'))
             && records.some(record => commentLayoutTarget(record.target))) scheduleCommentLayout();
-      }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['hidden', 'inert', 'class', 'style'] });
+      }).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['hidden', 'inert', 'aria-hidden', 'class', 'style'] });
       document.addEventListener('pointerdown', rememberCommentPlayback, true);
       document.addEventListener('touchstart', rememberCommentPlayback, { capture: true, passive: true });
       document.addEventListener('click', rememberCommentPlayback, true);
