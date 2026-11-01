@@ -69,7 +69,7 @@ enum DOMAdapters {
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
             + documentIdentityBootstrap
-            + (service == .instagram ? instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
+            + (service == .instagram ? instagramActivityFeedCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -2164,6 +2164,65 @@ enum DOMAdapters {
             .flatMap { String(data: $0, encoding: .utf8) } ?? "null"
         return "window.__vigilInstagramIncomingSharedURL = \(encoded);\n"
     }
+
+    // Instagram's notification renderer throws for one malformed system entry,
+    // taking down the whole page. Its template list already accepts null items.
+    // Keep the site's normal rendering, including valid destinationless types,
+    // and omit only the exact destination failure observed on the phone.
+    static let instagramActivityFeedCompatibility = #"""
+    (() => {
+      if (window !== window.top || location.protocol !== 'https:'
+          || !['instagram.com', 'www.instagram.com'].includes(location.hostname)
+          || (location.port && location.port !== '443')
+          || window.__vigilInstagramActivityFeedCompatibility) return;
+      let installed = false, skipped = 0, registered = false, timer = 0, deadline = 0;
+      window.__vigilInstagramActivityFeedCompatibility = Object.freeze({
+        get installed() { return installed; },
+        get skipped() { return skipped; }
+      });
+      const stop = () => {
+        observer.disconnect();
+        clearInterval(timer);
+        clearTimeout(deadline);
+      };
+      const install = module => {
+        const original = module?.getItemTemplateConfigForSystemEntry;
+        if (typeof original !== 'function' || installed) return;
+        const render = function(...args) {
+          try { return Reflect.apply(original, this, args); }
+          catch (error) {
+            if (/^\/notifications\/?$/.test(location.pathname)
+                && error?.message === 'Destination is null for activity feed story') {
+              skipped++;
+              return null;
+            }
+            throw error;
+          }
+        };
+        try {
+          module.getItemTemplateConfigForSystemEntry = render;
+          installed = module.getItemTemplateConfigForSystemEntry === render;
+        } catch (_) {}
+      };
+      const register = () => {
+        if (registered || typeof window.requireLazy !== 'function') return;
+        // Subscribe before the lazily loaded renderer is used. This does not
+        // fetch notifications, mutate response data, or install network hooks.
+        try {
+          window.requireLazy(['PolarisStoryTemplateConfigForSystemEntry'], install);
+          registered = true;
+          stop();
+        } catch (_) {}
+      };
+      // At document start the module loader may not exist yet. Parser mutations
+      // let us subscribe before the later notification bundle executes.
+      const observer = new MutationObserver(register);
+      observer.observe(document, { childList: true, subtree: true });
+      timer = setInterval(register, 50);
+      deadline = setTimeout(stop, 15000);
+      register();
+    })();
+    """#
 
     // Search is a deliberate reference lookup. It never authorizes Explore's
     // default grid or an immersive feed, and a popular result is still subject
