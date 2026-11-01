@@ -9,6 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { freshSigningBuild, installPhoneRenewal, publishPhoneLauncherState, renewalDecision, RENEWAL_WINDOW_MS, withPhoneUpdateLock } from "./ios-phone-renewal.mjs";
 import { validatePushEnvironment, verifyPushSigning, writePushEntitlements } from "./ios-notification-signing.mjs";
+import { ensurePhoneRuntime, phoneBuildCacheRoot, phoneUpdateIsCurrent, serviceLaunchReceiptMatches, withStablePhoneSources } from "./ios-phone-update-cache.mjs";
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -76,6 +77,7 @@ const PHONE_SOURCE_FILES = [
   "scripts/generate-ios-content-policy.mts",
   "scripts/ios-phone-suite.mjs",
   "scripts/ios-phone-renewal.mjs",
+  "scripts/ios-phone-update-cache.mjs",
   "scripts/ios-notification-signing.mjs",
   "scripts/watch-ios-usb-profile.mjs",
   "src/adultBlocklist.ts",
@@ -159,6 +161,7 @@ async function main(selectedCommand, selectedOptions) {
   }
   if (["update", "renew"].includes(selectedCommand)) {
     await withPhoneUpdateLock(ROOT, async () => {
+      let verifiedSourceFingerprint = "";
       if (selectedCommand === "renew") {
         const receipt = await readReceipt(selectedOptions.device);
         const fingerprint = await implementationFingerprint(edition);
@@ -167,8 +170,9 @@ async function main(selectedCommand, selectedOptions) {
         if (decision.status !== "due" || edition !== "personal") {
           throw new Error("Automatic renewal requires the exact verified Personal phone sources. Run npm run agent:update:social to verify changed sources first.");
         }
+        verifiedSourceFingerprint = fingerprint.hash;
       }
-      await updatePhone({ ...selectedOptions, edition });
+      await updatePhone({ ...selectedOptions, edition, verifiedSourceFingerprint });
     });
     return;
   }
@@ -1111,6 +1115,23 @@ function printStatus(report) {
 }
 
 async function updatePhone(selectedOptions) {
+  // Unattended renewal may only reinstall the exact previously verified
+  // sources. Only an explicitly requested update follows concurrent edits.
+  if (selectedOptions.verifiedSourceFingerprint) return updatePhoneTransaction(selectedOptions);
+  return withStablePhoneSources(() => updatePhoneTransaction(selectedOptions), () => {
+    console.log("Phone sources changed during the update; retrying with the incremental build cache.");
+    phoneProgress("sources", "Source changed — retrying the verified update");
+  });
+}
+
+function phoneSourcesChanged() {
+  const error = new Error("Phone sources changed during the update. Wait for edits to finish, then rerun the same command.");
+  error.code = "VIGIL_PHONE_SOURCES_CHANGED";
+  return error;
+}
+
+async function updatePhoneTransaction(selectedOptions) {
+  phoneProgress("connect", "Check iPhone and installed policy");
   const edition = selectedOptions.edition;
   if (selectedOptions.noPolicy) {
     throw new Error("Vigil requires the verified app-and-policy transaction; --no-policy cannot preserve service restrictions.");
@@ -1118,17 +1139,22 @@ async function updatePhone(selectedOptions) {
   if (selectedOptions.noPolicy && edition === "enhanced") {
     throw new Error("--no-policy is incompatible with the Enhanced edition's fail-closed iOS URL Filter; the app and its exact managed configuration must be deployed together.");
   }
+  const { device, developerDir, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
+  phoneProgress("runtime", "Prepare policy tools");
+  await buildRuntime();
   const blocklist = await requireReadyPhoneBlocklist("update the phone");
   const urlFilter = edition === "enhanced"
     ? await requireReadyIosUrlFilter(blocklist, "update the Enhanced phone edition")
     : await iosUrlFilterReadiness(blocklist);
   let release = await readRelease(edition);
   const fingerprint = await implementationFingerprint(edition);
-  if (release.sourceFingerprint !== fingerprint.hash) {
-    release = await bumpRelease("patch", false, edition);
+  if (selectedOptions.verifiedSourceFingerprint && selectedOptions.verifiedSourceFingerprint !== fingerprint.hash) {
+    throw new Error("Automatic renewal sources changed. Run vigil update phone to verify changed sources first.");
+  }
+  if (selectedOptions.force || release.sourceFingerprint !== fingerprint.hash) {
+    release = await bumpRelease("patch", selectedOptions.force, edition);
     console.log(`${editionLabel(edition)} phone inputs changed; created release ${release.version} (${release.build}).`);
   }
-  const { device, developerDir, toolEnvironment } = await preparePhoneToolchain(selectedOptions.device);
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = await readReceipt(deviceReceiptId);
   const pushNotifications = selectedOptions.pushNotifications ?? previousReceipt?.notificationPushEnvironment ?? "off";
@@ -1181,9 +1207,18 @@ async function updatePhone(selectedOptions) {
     : "no companion reinstall needed";
   console.log(`Updating ${device.name} to Vigil ${editionLabel(edition)} phone ${release.version} (${release.build}) without rebooting; ${socialUpdateLabel}.`);
   console.log(`Apple toolchain: ${developerDir}`);
-  await buildRuntime();
+  if (socialAppIds.length === 0 && !includeUrlFilter) {
+    const current = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
+    if (phoneUpdateIsCurrent(current, { pushNotifications, force: selectedOptions.force, replaceLegacy: selectedOptions.replaceLegacy })) {
+      console.log("Already current — installed app, signing, source receipts, and exact live policy verified. No rebuild or reinstall needed.");
+      phoneProgress("current", "Already current — app and live policy verified");
+      return;
+    }
+  }
+  phoneProgress("audit", "Validate all four protection levels");
   const audit = await auditFourPolicies(toolEnvironment, edition === "enhanced" ? urlFilter.service : null);
   printPolicyAudit(audit, edition);
+  phoneProgress("build", "Build and sign the changed app");
   const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter, device.udid, pushNotifications);
   if (selectedOptions.noPolicy) {
     const extensionProblems = safariExtensionUpdateProblems(previousReceipt, build.apps);
@@ -1191,6 +1226,7 @@ async function updatePhone(selectedOptions) {
       throw new Error(`Refusing the app-only update because Safari could disable the YouTube controls extension:\n- ${extensionProblems.join("\n- ")}`);
     }
   }
+  phoneProgress("policy", "Validate the matching supervised policy");
   let preparedPolicy = selectedOptions.noPolicy
     ? null
     : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition, "combined");
@@ -1207,6 +1243,9 @@ async function updatePhone(selectedOptions) {
   if (preparedPolicy && !policyAlreadyCurrent && device.connection !== "wired" && await existingSupervisorKeybagPath()) {
     throw new Error("The companion apps can update wirelessly, but this release must also replace the non-removable supervised policy. Connect the paired iPhone over USB for that protected supervisor-keybag transaction, then rerun the same command.");
   }
+  // Do not install a build whose source changed while Xcode was compiling it.
+  // Retry the normal transaction, retaining all app-and-policy checks.
+  if ((await implementationFingerprint(edition)).hash !== release.sourceFingerprint) throw phoneSourcesChanged();
   const obsoleteProfilesBeforeUpdate = profileBeforeUpdate.profiles
     .filter((profile) => OBSOLETE_CONFIGURATION_PROFILE_IDENTIFIERS.has(profile.identifier));
   let legacyProfileMigrationVerified = previousReceipt?.legacyProfileMigrationVerified === true;
@@ -1233,6 +1272,7 @@ async function updatePhone(selectedOptions) {
     await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, obsolete.bundleIdentifier], { env: toolEnvironment });
   }
   for (const app of build.apps) {
+    phoneProgress("install", "Install Vigil on iPhone");
     console.log(`Installing ${app.name}…`);
     await run("xcrun", ["devicectl", "device", "install", "app", "--device", device.identifier, app.path], { env: toolEnvironment });
   }
@@ -1241,6 +1281,7 @@ async function updatePhone(selectedOptions) {
     await restoreSocialContainerLedger(device.identifier, containerBackup, toolEnvironment);
   }
 
+  phoneProgress("launch", "Verify app launch and live policy");
   await activateSocialContainer(selectedOptions.server, async () => {
     const social = REQUIRED_SOCIAL_APPS[0];
     return verifySocialAppLaunch(device.identifier, social, toolEnvironment);
@@ -1287,6 +1328,7 @@ async function updatePhone(selectedOptions) {
     await writeFile(completion, JSON.stringify({ schemaVersion: 1, id: randomUUID(), complete: true, preferences }), { mode: 0o600 });
     await runQuiet("xcrun", ["devicectl", "device", "copy", "to", "--device", device.identifier, "--source", completion, "--destination", "Documents/vigil-social-migration.json", "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
   }
+  phoneProgress("services", "Verify protected service launches");
   const serviceLaunches = await verifyCombinedServiceLaunches(device.identifier, toolEnvironment);
   if (containerBackup) {
     for (const original of containerBackup.apps.filter((app) => app.id !== "instagram")) {
@@ -1354,12 +1396,14 @@ async function updatePhone(selectedOptions) {
     rebooted: false
   });
   const report = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
+  if (report.fingerprint.hash !== release.sourceFingerprint) throw phoneSourcesChanged();
   printStatus(report);
   if (report.problems.length) process.exitCode = 1;
   else if (edition === "personal") {
     await publishPhoneLauncherState(report.receipt, ROOT);
     await installPhoneRenewal(deviceReceiptId, selectedOptions.server, ROOT);
   }
+  if (!report.problems.length) phoneProgress("complete", `Updated — Vigil ${release.apps.instagram.version} (${release.apps.instagram.build})`);
 }
 
 function printBlocklistReadiness(readiness) {
@@ -1388,8 +1432,11 @@ export function signingCapabilitySummary(variant) {
 }
 
 async function buildRuntime() {
-  console.log("Building current Vigil runtime for policy audit…");
-  await run("npm", ["run", "build"], { cwd: ROOT });
+  const result = await ensurePhoneRuntime(ROOT, async () => {
+    console.log("Building current Vigil runtime for policy audit…");
+    await run("npm", ["run", "build"], { cwd: ROOT });
+  });
+  if (result.reused) console.log("Reusing content-verified policy tools.");
 }
 
 async function auditFourPolicies(toolEnvironment, urlFilterService) {
@@ -1481,10 +1528,10 @@ async function buildPhoneApps(
   pushNotifications = "off"
 ) {
   const selectedSocialAppIds = new Set(socialAppIds);
-  const releaseLabel = REQUIRED_SOCIAL_APPS
-    .map((app) => `${app.id}-${release.apps[app.id].version}-${release.apps[app.id].build}`)
-    .join("-");
-  const root = join(ROOT, "data", "ios-phone-build", `${edition}-${releaseLabel}`);
+  // Xcode tracks changed source/resources/settings itself. Keep DerivedData
+  // between releases, outside Documents/iCloud, instead of cleaning it on every
+  // update. App signatures, extensions, profiles and policy are still verified.
+  const root = phoneBuildCacheRoot(ROOT, edition);
   const personalTeamEntitlements = join(ROOT, "ios", "Shared", "PersonalTeam.entitlements");
   await mkdir(root, { recursive: true });
   const blocklist = await requireReadyPhoneBlocklist("build a Release phone app");
@@ -1509,7 +1556,6 @@ async function buildPhoneApps(
       "-derivedDataPath", derived,
       "-allowProvisioningUpdates",
       ...(deviceUdid ? ["-allowProvisioningDeviceRegistration"] : []),
-      "clean",
       "build",
       `VIGIL_APP_BUNDLE_IDENTIFIER=${social.bundleId}`,
       `VIGIL_SERVICE=${social.service}`,
@@ -1542,9 +1588,10 @@ async function buildPhoneApps(
       if (personalOverride >= 0) socialArguments.splice(personalOverride, 1);
       socialArguments.push(`VIGIL_HOST_ENTITLEMENTS=${pushEntitlements}`, `VIGIL_PUSH_ENVIRONMENT=${pushNotifications}`);
     }
-    const buildSocialApp = async () => {
+    const buildSocialApp = async ({ clean = false } = {}) => {
+      const argumentsForBuild = clean ? ["clean", ...socialArguments] : socialArguments;
       try {
-        await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
+        await run("xcodebuild", argumentsForBuild, { cwd: ROOT, env: environment });
       } catch (error) {
         if (reducedEntitlements || pushNotifications !== "off") throw error;
         reducedEntitlements = true;
@@ -1553,7 +1600,7 @@ async function buildPhoneApps(
           `CODE_SIGN_ENTITLEMENTS=${personalTeamEntitlements}`,
           "VIGIL_UNCLASSIFIED_MEDIA_POLICY=reveal-unclassified"
         );
-        await run("xcodebuild", socialArguments, { cwd: ROOT, env: environment });
+        await run("xcodebuild", clean ? ["clean", ...socialArguments] : socialArguments, { cwd: ROOT, env: environment });
       }
     };
     const path = join(derived, "Build", "Products", "Release-iphoneos", "VigilSocial.app");
@@ -1563,6 +1610,7 @@ async function buildPhoneApps(
       quarantine: quarantineCachedSigningProfiles,
       ...(edition === "personal" ? {} : { window: PERSONAL_TEAM_RENEWAL_WINDOW_MS })
     });
+    await runQuiet("/usr/bin/codesign", ["--verify", "--deep", "--strict", path]);
     const bundledExplicitContentPolicy = await verifyBundledExplicitContentPolicy(path, explicitContentPolicy);
     const youtubeParityScript = ["youtube", "instagram"].includes(social.id)
       ? await verifyBundledYouTubeParityScript(path)
@@ -1624,6 +1672,7 @@ async function buildPhoneApps(
       }
     });
     const filterPath = join(filterDerived, "Build", "Products", "Release-iphoneos", "VigilURLFilterHost.app");
+    await runQuiet("/usr/bin/codesign", ["--verify", "--deep", "--strict", filterPath]);
     const filterBlocklist = await verifyBundledPhoneBlocklist(
       join(filterPath, "Extensions", "VigilURLFilterControl.appex"),
       blocklist
@@ -2173,9 +2222,9 @@ export function phoneInspectionLaunchArguments(environment = process.env) {
   return ["--environment-variables", JSON.stringify({ VIGIL_WEB_INSPECT: "1" })];
 }
 
-async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt = Date.now()) {
+async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt = Date.now(), awaitingTrust = false) {
   try {
-    const launch = await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, ...phoneInspectionLaunchArguments(toolEnvironment), "--terminate-existing", social.bundleId], toolEnvironment);
+    const launch = await devicectlJson(["device", "process", "launch", "--device", deviceIdentifier, ...phoneInspectionLaunchArguments(toolEnvironment), social.bundleId], toolEnvironment);
     const processIdentifier = Number(launch.result?.process?.processIdentifier);
     if (!Number.isInteger(processIdentifier) || processIdentifier <= 0) {
       return { ok: false, detail: "CoreDevice did not return a launched process identifier" };
@@ -2203,9 +2252,21 @@ async function verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, 
     // for the user's ordinary unlock, then repeat every launch/process check.
     if (/Unable to launch[\s\S]*because the device was not, or could not be, unlocked/iu.test(detail)
         && Date.now() - unlockWaitStartedAt < 180_000) {
+      phoneProgress("phone-access", "Waiting for iPhone screen access",
+        "Keep the phone connected and follow any prompts on it. This command continues automatically when iOS permits the launch.");
       console.log("Waiting for the iPhone to be unlocked for launch verification…");
       await new Promise((resolveWait) => setTimeout(resolveWait, 3000));
-      return verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt);
+      return verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt, awaitingTrust);
+    }
+    if (process.env.VIGIL_TERMINAL_UPDATE === "1"
+        && /invalid code signature, inadequate entitlements or its profile has not been explicitly trusted/iu.test(detail)
+        && Date.now() - unlockWaitStartedAt < 180_000) {
+      if (!awaitingTrust) {
+        phoneProgress("apple-trust", "Waiting for Apple's app verification",
+          "On iPhone: Settings → General → VPN & Device Management → your developer → Verify App. If verification fails, try cellular. This command will continue automatically; no rebuild needed.");
+      }
+      await new Promise(resolveWait => setTimeout(resolveWait, 3000));
+      return verifySocialAppLaunch(deviceIdentifier, social, toolEnvironment, unlockWaitStartedAt, true);
     }
     return { ok: false, detail: detail || String(error) };
   }
@@ -2389,8 +2450,11 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
       // A cold web session can finish its protected access probe after a minute
       // on device. Keep requiring fresh selection AND access receipts, but allow
       // that startup to finish instead of rejecting a healthy signed install.
-      for (let attempt = 0; attempt < 90 && !verified; attempt += 1) {
-        await new Promise((resolveWait) => setTimeout(resolveWait, 1000));
+      const deadline = Date.now() + 90_000;
+      for (let attempt = 0; Date.now() < deadline && !verified; attempt += 1) {
+        // Probe immediately; keep the same fresh selection AND access checks.
+        // Fast warm views need no mandatory one-second delay per service.
+        if (attempt) await new Promise(resolveWait => setTimeout(resolveWait, attempt < 4 ? 200 : 1000));
         const destination = join(directory, `${service}.json`);
         try {
           await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", "Documents/vigil-social-selection.json", "--destination", destination, "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
@@ -2400,7 +2464,7 @@ async function verifyCombinedServiceLaunches(deviceIdentifier, toolEnvironment) 
             const accessPath = join(directory, `${service}-access.json`);
             await runQuiet("xcrun", ["devicectl", "device", "copy", "from", "--device", deviceIdentifier, "--source", `Documents/vigil-social-access-${service}.json`, "--destination", accessPath, "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
             const access = JSON.parse(await readFile(accessPath, "utf8"));
-            verified = access.service === service && access.accessConfirmed === true && Date.parse(access.checkedAt) >= started - 1000;
+            verified = serviceLaunchReceiptMatches(selected, access, service, started);
           }
         } catch { verified = false; /* Wait for the main scene and its protected web view. */ }
       }
@@ -2815,6 +2879,12 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function phoneProgress(stage, label, detail = "") {
+  if (process.env.VIGIL_TERMINAL_UPDATE === "1") {
+    console.log(`@@vigil-update ${JSON.stringify({ stage, label, detail })}`);
+  }
+}
+
 async function runQuiet(command, args, options = {}) {
   await execFileAsync(command, args, { cwd: options.cwd || ROOT, env: options.env || process.env, timeout: 120_000, maxBuffer: 16 * 1024 * 1024 });
 }
@@ -2850,7 +2920,7 @@ Options:
   --device ID  Select a CoreDevice UUID, UDID, or device name
   --edition NAME  Select personal or enhanced (default: persisted edition, initially personal)
   --server URL Vigil server used for live state and policy (default ${DEFAULT_SERVER})
-  --no-policy  Update apps but do not replace configuration profiles
+  --no-policy  Rejected; updates always verify the app and supervised policy together
   --allow-edition-downgrade  Explicitly permit Enhanced-to-Personal replacement
   --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat apps and retired launcher/YouTube Web Clip profiles
   --force      Force a version bump even if phone inputs are unchanged

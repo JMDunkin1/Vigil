@@ -222,6 +222,12 @@ assert.match(
   "the phone suite must fingerprint the profile generator it deploys and audits"
 );
 assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"scripts\/generate-ios-content-policy\.mts"/u);
+assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"scripts\/ios-phone-update-cache\.mjs"/u,
+  "cache and retry behavior must invalidate verified phone-source receipts when changed");
+assert.match(phoneSuiteSource, /if \(selectedOptions\.verifiedSourceFingerprint\) return updatePhoneTransaction\(selectedOptions\)/u,
+  "unattended renewal must never follow concurrent source edits through the interactive retry path");
+assert.match(phoneSuiteSource, /selectedOptions\.verifiedSourceFingerprint !== fingerprint\.hash[\s\S]*?Automatic renewal sources changed[\s\S]*?bumpRelease/u,
+  "unattended renewal must recheck exact verified sources before preparing a new release");
 assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"src\/explicitContentPolicy\.ts"/u);
 assert.match(phoneSuiteSource.slice(phoneSourceFilesStart, phoneSourceFilesEnd), /"src\/browserBypassDomains\.ts"/u,
   "changes to the browser-bypass inventory must invalidate phone policy renewal receipts");
@@ -251,8 +257,8 @@ assert.match(phoneSuiteSource, /PANIC_LOCK_PROFILE_ID[\s\S]*?title: "Panic"/u, "
 assert.match(phoneSuiteSource, /console\.log\(`\$\{editionLabel\(edition\)\} four-level policy audit:`\)/u);
 assert.equal(
   (phoneSuiteSource.match(/await phoneStatus\(selectedOptions, device, toolEnvironment, edition\)/gu) || []).length,
-  2,
-  "initial and post-update status must reuse the selected Xcode tool environment"
+  3,
+  "initial, no-op verification, and post-update status must reuse the selected Xcode tool environment"
 );
 const deviceControlCalls = phoneSuiteSource
   .split("\n")

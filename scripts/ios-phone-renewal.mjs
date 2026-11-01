@@ -27,7 +27,7 @@ export async function freshSigningBuild({ build, readProfiles, quarantine, now =
   let stale = signingProfilesNeedingRefresh(profiles, now(), window);
   if (stale.length) {
     await quarantine(stale);
-    await build();
+    await build({ clean: true });
     profiles = await readProfiles();
     stale = signingProfilesNeedingRefresh(profiles, now(), window);
   }

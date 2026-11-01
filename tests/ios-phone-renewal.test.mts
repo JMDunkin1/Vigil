@@ -14,13 +14,15 @@ assert.equal(FRESH_SIGNING_WINDOW_MS, 5 * 24 * 60 * 60 * 1000);
 
 const calls: string[] = [];
 let builds = 0;
+const cleanBuilds: boolean[] = [];
 assert.deepEqual(await freshSigningBuild({
-  build: async () => { calls.push("build"); builds += 1; },
+  build: async options => { cleanBuilds.push(options?.clean === true); calls.push("build"); builds += 1; },
   readProfiles: async () => { calls.push("inspect"); return builds === 1 ? [fresh, old] : [fresh, { ...fresh, name: "Extension" }]; },
   quarantine: async (profiles) => { calls.push("quarantine"); assert.deepEqual(profiles, [old]); },
   now: () => now
 }), [fresh, { ...fresh, name: "Extension" }]);
 assert.deepEqual(calls, ["build", "inspect", "quarantine", "build", "inspect"]);
+assert.deepEqual(cleanBuilds, [false, true], "incremental builds must still perform a clean rebuild after stale signing profiles are quarantined");
 let attempts = 0;
 await assert.rejects(freshSigningBuild({ build: async () => { attempts += 1; }, readProfiles: async () => [old], quarantine: async () => {}, now: () => now }), /Refusing to install/);
 assert.equal(attempts, 2, "stale Xcode profiles cannot cause an unbounded rebuild loop or a short-lived install");

@@ -9,7 +9,7 @@ export interface RenewalResult {
 }
 export function signingProfilesNeedingRefresh<T extends SigningProfile>(profiles: T[], now?: number, window?: number): T[];
 export function freshSigningBuild<T extends SigningProfile>(options: {
-  build: () => Promise<void>;
+  build: (options?: { clean: boolean }) => Promise<void>;
   readProfiles: () => Promise<T[]>;
   quarantine: (profiles: T[]) => Promise<void>;
   now?: () => number;

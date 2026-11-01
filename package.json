@@ -64,6 +64,8 @@
     "ios:manageengine:apply-enrollment-window": "npm run ios:manageengine:export -- --enrollment-window && node scripts/watch-ios-usb-profile.mjs --profile data/manageengine/vigil-manageengine-enrollment-window.mobileconfig",
     "seal:source": "npm run build && node dist/runtime/scripts/seal-source.mjs",
     "doctor": "npm run build && node dist/runtime/scripts/doctor.mjs",
+    "vigil": "node scripts/vigil.mjs",
+    "install:cli": "node scripts/install-vigil-cli.mjs",
     "agent": "node scripts/vigil-agent.mjs",
     "agent:relaunch": "node scripts/vigil-agent.mjs relaunch",
     "agent:update": "node scripts/vigil-agent.mjs update",
