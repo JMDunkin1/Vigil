@@ -43,6 +43,9 @@ struct NativeTextClassifierRegression {
         // Keep ordinary names, opaque tokens, established nonsexual senses,
         // and mixtures aligned with the shared automatic text corpus.
         for text in [
+            "Fable 5.5 Max pelican:\nhttps://x.com/example\nAnimated pelican:",
+            "Animated pelican https://x.com/example", "Animated pelican https://www.X.COM/example",
+            "Animated pelican x.com", "Animated pelican x.com?source=video", "Animated pelican x.com#video",
             "Sporn dog harness", "Caporn family history", "webcam480 driver", "actioncam4k", "SKU-RULE34567",
             "AbcHentai90XZ", "dbNSFWfile88123", "account_onlyfanshash_04", "Project118plus build",
             "Nissan R34 photos", "R34 Skyline tuning", "GT-R R34 videos", "Rule 34 algorithm",
@@ -64,6 +67,14 @@ struct NativeTextClassifierRegression {
             let verdict = await classifier.classify(pageText: text, wasTruncated: false)
             precondition(verdict == .safe, "An age label in ordinary page prose is not an explicit-content ban: \(text)")
             precondition(nativeAutomaticSearchForTesting(text), "An intentional age-restricted search must block: \(text)")
+        }
+        for text in [
+            "X-rated videos", "rated X videos", "XXX videos", "X videos", "XX videos",
+            "https://x.com/example nude photos", "https://x.com/nude/photos",
+            "Animated pelican https://x.com/example XXX videos", "Animated pelican xxx.com/videos"
+        ] {
+            let verdict = await classifier.classify(pageText: text, wasTruncated: false)
+            precondition(verdict == .sensitive, "Source links must retain explicit evidence: \(text)")
         }
         for text in [
             "porn", "p.o.r.n videos", "ｐｏｒｎ", "pornvideos", "hentai manga", "nsfw photos", "cam4", "onlyfans",

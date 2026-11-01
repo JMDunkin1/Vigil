@@ -3,6 +3,9 @@ import { containsContextualExplicitMedia, containsExplicitSearchAliases, contain
 import { matchSemanticExplicitUrl } from "../src/explicitUrlContext.js";
 
 const ordinary = [
+  "Fable 5.5 Max pelican:\nhttps://x.com/example\nAnimated pelican:",
+  "Animated pelican https://x.com/example", "Animated pelican https://www.X.COM/example",
+  "Animated pelican x.com", "Animated pelican x.com?source=video", "Animated pelican x.com#video",
   "Sporn dog harness", "Caporn family history", "webcam480 driver", "actioncam4k", "SKU-RULE34567",
   "AbcHentai90XZ", "dbNSFWfile88123", "account_onlyfanshash_04", "Project118plus build",
   "Nissan R34 photos", "R34 Skyline tuning", "GT-R R34 videos", "Rule 34 algorithm",
@@ -29,6 +32,11 @@ for (const phrase of explicit) assert.equal(containsExplicitSearchKeyword(phrase
 for (const phrase of ["nude photos medical", "naked photos research", "xxx videos education", "erotic videos research", "nude medical photos", "nude videos lipstick", "naked photos eye", "NАKED GIRLS"]) {
   assert.equal(containsContextualExplicitMedia(phrase), true, `a general qualifier cannot excuse clear explicit media: ${phrase}`);
 }
+for (const phrase of [
+  "X-rated videos", "rated X videos", "XXX videos", "X videos", "XX videos",
+  "https://x.com/example nude photos", "https://x.com/nude/photos",
+  "Animated pelican https://x.com/example XXX videos", "Animated pelican xxx.com/videos"
+]) assert.equal(containsContextualExplicitMedia(phrase), true, `source links retain independent explicit evidence: ${phrase}`);
 assert.equal(containsContextualExplicitMedia("nude art videos naked girls photos"), true, "an art phrase does not consume a separate explicit request");
 for (const route of [
   "/sex-pistols-gallery", "/naked-mole-rat-photos", "/chapter/XXX/images", "/book/XXX-videos",

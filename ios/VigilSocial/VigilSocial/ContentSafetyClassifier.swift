@@ -351,6 +351,7 @@ private enum BroadenedExplicitMedia {
         (try! NSRegularExpression(pattern: #"\b(naked|nudes?|topless|bottomless|adult|sex)(girls?|boys?|women|woman|men|males?|females?|models?|videos?|vids?|photos?|pics?|images?)\b"#, options: .caseInsensitive), "$1 $2")
     ]
     private static let ordinaryPatterns: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: #"(?<![\p{L}\p{N}_])x\.com(?=$|[/?#\s])"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"\bnaked[\s_-]+(?:eyes?|mole[\s_-]+rats?|neck[\s_-]+chickens?|singularit(?:y|ies)|dna|seeds?|calls?|puts?|short[\s_-]+(?:selling|positions?)|stocks?|options?|economics|wires?|cables?|roofs?|trucks?|cakes?|burrito(?:[\s_-]+bowls?)?)\b"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"\b(?:bare[\s_-]+naked[\s_-]+ladies|barenaked[\s_-]+ladies|naked[\s_-]+(?:gun|truth|lunch|brothers[\s_-]+band|king|snake|cowboy|chef))\b"#, options: .caseInsensitive),
         try! NSRegularExpression(pattern: #"\b(?:nude[\s_-]+descending[\s_-]+(?:a[\s_-]+)?staircase|(?:the[\s_-]+)?naked[\s_-]+maja|blue[\s_-]+nude[\s_-]+matisse)\b"#, options: .caseInsensitive),

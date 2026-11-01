@@ -85,6 +85,9 @@ export const EXPLICIT_VOCABULARY_REPLACEMENTS = [
 // unrelated word to a nude-person query therefore cannot excuse that query,
 // and a separate explicit phrase remains visible to the matcher.
 export const EXPLICIT_MEDIA_ORDINARY_PHRASES = [
+  // The platform host in source links is not an X rating. Consume only the
+  // literal host; explicit path labels and surrounding phrases remain evidence.
+  /(?<![\p{L}\p{N}_])x\.com(?=$|[/?#\s])/giu.source,
   /\bnaked[\s_-]+(?:eyes?|mole[\s_-]+rats?|neck[\s_-]+chickens?|singularit(?:y|ies)|dna|seeds?|calls?|puts?|short[\s_-]+(?:selling|positions?)|stocks?|options?|economics|wires?|cables?|roofs?|trucks?|cakes?|burrito(?:[\s_-]+bowls?)?)\b/giu.source,
   /\b(?:bare[\s_-]+naked[\s_-]+ladies|barenaked[\s_-]+ladies|naked[\s_-]+(?:gun|truth|lunch|brothers[\s_-]+band|king|snake|cowboy|chef))\b/giu.source,
   /\b(?:nude[\s_-]+descending[\s_-]+(?:a[\s_-]+)?staircase|(?:the[\s_-]+)?naked[\s_-]+maja|blue[\s_-]+nude[\s_-]+matisse)\b/giu.source,
