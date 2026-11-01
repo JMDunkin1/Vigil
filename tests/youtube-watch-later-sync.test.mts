@@ -127,19 +127,32 @@ test('unchanged snapshots are idempotent, cannot reset watch time, and remain va
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
 const helpers = source.slice(source.indexOf('  // Feed metadata'), source.indexOf('  function prepareCurrentVideo()'));
 const renderer = (videoId: string) => ({ playlistVideoRenderer: { videoId, title: { simpleText: `Saved ${videoId}` } } });
-function accountFixture(options: { signedIn?: boolean; malformed?: boolean; repeat?: boolean; failContinuation?: boolean; empty?: boolean } = {}) {
+function accountFixture(options: { signedIn?: boolean; malformed?: boolean; repeat?: boolean; failContinuation?: boolean; empty?: boolean; modern?: boolean; cookie?: string } = {}) {
   const requests: { url: string; options: Record<string, unknown> }[] = [];
   const initial = { contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: options.empty ? [] : [renderer(ids[0]),
     { continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: 'next' } } } }] } },
     recommendations: [{ videoRenderer: { videoId: ids[8], title: { simpleText: 'Recommendation' } } }] };
-  const config = { LOGGED_IN: options.signedIn !== false, DATASYNC_ID: 'same-account-channel', INNERTUBE_CONTEXT: { client: { clientName: 'MWEB', clientVersion: 'fixture' } } };
-  const api = runInNewContext(`${helpers}\n({readWatchLater, watchLaterPage})`, {
-    location: { hostname: 'm.youtube.com' }, topFrame: true, AbortSignal, TextEncoder,
-    crypto: { subtle: { digest: async (_: string, bytes: Uint8Array) => createHash('sha256').update(bytes).digest() } },
+  if (options.modern && !options.empty) {
+    const item = initial.contents.playlistVideoListRenderer.contents[1];
+    if (!('continuationItemRenderer' in item)) throw new Error('Missing fixture continuation');
+    const endpoint = item.continuationItemRenderer.continuationEndpoint;
+    Object.assign(endpoint, { commandExecutorCommand: { commands: [
+      { playlistVotingRefreshPopupCommand: { command: { reloadContinuationItemsCommand: { continuation: 'not-a-next-page' } } } },
+      { continuationCommand: endpoint.continuationCommand }
+    ] } });
+    delete (endpoint as { continuationCommand?: unknown }).continuationCommand;
+  }
+  const config = { LOGGED_IN: options.signedIn !== false, DATASYNC_ID: 'same-account-channel', SESSION_INDEX: '1',
+    DELEGATED_SESSION_ID: '12345', INNERTUBE_CONTEXT_CLIENT_NAME: 2,
+    INNERTUBE_CONTEXT: { client: { clientName: 'MWEB', clientVersion: 'fixture' } } };
+  const api = runInNewContext(`${helpers}\n({readWatchLater, watchLaterPage, jsonAfter, youtubePageConfiguration, watchLaterBrowseHeaders})`, {
+    location: new URL('https://m.youtube.com/playlist?list=WL'), topFrame: true, AbortSignal, TextEncoder,
+    document: { cookie: options.cookie ?? 'SAPISID=fixture-session' },
+    crypto: { subtle: { digest: async (algorithm: string, bytes: Uint8Array) => createHash(algorithm.replace('-', '').toLowerCase()).update(bytes).digest() } },
     accountFetch: async (url: string, fetchOptions: Record<string, unknown>) => {
       requests.push({ url, options: fetchOptions });
       return { ok: !(url.includes('browse') && options.failContinuation),
-        text: async () => `ytcfg.set(${JSON.stringify(config)});window['ytInitialData'] = ${JSON.stringify(options.malformed ? { contents: {} } : initial)};`,
+        text: async () => `${options.modern ? "ytcfg.set('EMERGENCY_BASE_URL', '/error_204');" : ''}ytcfg.set(${JSON.stringify(config)});${options.modern ? 'ytcfg.set("initialInnerWidth", window.innerWidth);ytcfg.set({"CSI_SERVICE_NAME":"youtube"});' : ''}window['ytInitialData'] = ${JSON.stringify(options.malformed ? { contents: {} } : initial)};`,
         json: async () => ({ onResponseReceivedActions: [{ appendContinuationItemsAction: { targetId: 'VLWL', continuationItems: [renderer(options.repeat ? ids[0] : ids[1])] } }] }) };
     }
   });
@@ -165,4 +178,33 @@ test('signed-out pages, unfamiliar structures, duplicate pages and failed contin
     await assert.rejects(accountFixture(options).api.readWatchLater());
   }
   assert.equal((await accountFixture({ empty: true }).api.readWatchLater()).cards.length, 0);
+});
+
+test('the live bootstrap format skips string-valued settings and merges every JSON configuration object', async () => {
+  const f = accountFixture({ modern: true });
+  const snapshot = await f.api.readWatchLater();
+  assert.deepEqual(Array.from(snapshot.cards, (card: { videoId: string }) => card.videoId), ids.slice(0, 2));
+  const config = f.api.youtubePageConfiguration('ytcfg.set("initialInnerWidth", 100);ytcfg.set({"LOGGED_IN":true});ytcfg.set({"DATASYNC_ID":"account"});');
+  assert.equal(config.LOGGED_IN, true);
+  assert.equal(config.DATASYNC_ID, 'account');
+  assert.equal(f.api.jsonAfter('ytcfg.set("initialWidth", window.innerWidth);ytcfg.set({"later":true});', /ytcfg\.set\(\s*/), null,
+    'a non-JSON argument must not borrow a later object');
+});
+
+test('private continuation requests use a same-origin session proof and the selected account without persisting cookies', async () => {
+  for (const cookie of ['SAPISID=fixture-session', '__Secure-3PAPISID=fixture-session', '__Secure-1PAPISID=fixture-session']) {
+    const f = accountFixture({ modern: true, cookie });
+    const snapshot = await f.api.readWatchLater();
+    const headers = f.requests[1].options.headers as Record<string, string>;
+    const [, timestamp, hash] = /^SAPISIDHASH (\d+)_(\w+)$/.exec(headers.Authorization)!;
+    assert.equal(hash, createHash('sha1').update(`${timestamp} fixture-session https://m.youtube.com`).digest('hex'));
+    assert.equal(headers['X-Goog-AuthUser'], '1');
+    assert.equal(headers['X-Goog-PageId'], '12345');
+    assert.equal(headers['X-Youtube-Client-Name'], '2');
+    assert.equal(headers['X-Youtube-Client-Version'], 'fixture');
+    assert.equal(f.requests[1].options.redirect, 'error');
+    assert.equal('Authorization' in (f.requests[0].options.headers as object || {}), false);
+    assert.equal(JSON.stringify(snapshot).includes('fixture-session'), false);
+    assert.equal(Object.keys(snapshot).sort().join(','), 'accountKey,cards');
+  }
 });

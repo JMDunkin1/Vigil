@@ -54,9 +54,12 @@ async function playerFixture({
     querySelector(): Node | null { return null; }
     click() { this.events.get('click')?.({ preventDefault() {}, stopPropagation() {} }); }
   }
-  const emit = (name: string) => { for (const callback of handlers.get(name) || []) callback({ target: media, isTrusted: true }); };
+  const emit = (name: string, target: { events: Map<string, Callback>; isConnected?: boolean } = media) => {
+    target.events.get(name)?.({ target, isTrusted: true });
+    if (target.isConnected !== false) for (const callback of handlers.get(name) || []) callback({ target, isTrusted: true });
+  };
   const media = Object.assign(new Node(), {
-    dataset: {} as Record<string, string>, webkitDisplayingFullscreen: false, pauseCount: 0, paused: true, ended: false, seeking: false, readyState: 4, currentTime: 0, playbackRate: 1, autoplay: false,
+    dataset: {} as Record<string, string>, isConnected: true, webkitDisplayingFullscreen: false, pauseCount: 0, paused: true, ended: false, seeking: false, readyState: 4, currentTime: 0, playbackRate: 1, autoplay: false,
     pause() { if (!this.paused) this.pauseCount++; this.paused = true; },
     async play() { this.paused = false; emit('play'); emit('playing'); }
   });
@@ -84,7 +87,7 @@ async function playerFixture({
     createElement() { return new Node(); },
     getElementById(id: string) { return nodes.find(node => node.id === id); },
     querySelector() { return selectedMedia; },
-    querySelectorAll(selector: string) { return selector === 'video,audio' ? [selectedMedia] : []; },
+    querySelectorAll(selector: string) { return selector === 'video,audio' || selector === 'video' ? [selectedMedia] : []; },
     addEventListener(event: string, callback: Callback) { handlers.set(event, [...handlers.get(event) || [], callback]); }
   };
   const location = Object.assign(new URL(embedHost ? `https://${embedHost}/embed/${id}` : `https://www.youtube.com${initialRoute}`), { assign(url: string) { location.href = url; } });
@@ -123,7 +126,7 @@ async function playerFixture({
         if (replies[i].at <= clock) replies.splice(i, 1)[0].resolve();
       }
       await flush();
-      if (!media.paused && moving) media.currentTime += .05 * media.playbackRate;
+      for (const player of new Set([media, selectedMedia])) if (!player.paused && moving) player.currentTime += .05 * player.playbackRate;
       if (timerCadence > 50 && clock % 250 === 0 && !media.paused) emit('timeupdate');
       for (const interval of intervals) if (interval.active && clock % Math.max(interval.ms, timerCadence) === 0) interval.callback();
       await flush();
@@ -177,8 +180,9 @@ async function playerFixture({
     await flush();
   };
   return { setAccountVideos: (videos: string[]) => { accountOtherVideos = videos; }, failAccountReads: () => { accountUnavailable = true; },
+    restoreAccountReads: () => { accountUnavailable = false; },
     focus: async () => { windowHandlers.get('focus')?.(); await flush(); },
-    finishAccountLookup: () => finishAccountLookup?.(), accountRequests, mobileTap, replaceMedia: () => { Object.assign(media, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...media, isConnected:true, paused:true, play: async () => { selectedMedia.paused = false; for (const callback of handlers.get('play') || []) callback({target:selectedMedia,isTrusted:true}); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, window, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
+    finishAccountLookup: () => finishAccountLookup?.(), accountRequests, mobileTap, replaceMedia: () => { Object.assign(selectedMedia, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...selectedMedia, events:new Map<string, Callback>(), isConnected:true, paused:true, async play() { this.paused = false; emit('play', this); if (!this.paused) emit('playing', this); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, window, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
 }
 
 test('opening a video imports Watch Later selections before Play without allocating playback time or a lease', async () => {
@@ -311,6 +315,15 @@ test('an unreadable account cannot approve a new save or erase the previous chec
   f.failAccountReads();
   assert.equal(await f.standardSave(), false);
   assert.deepEqual(f.state.youtubeLimits, before);
+});
+
+test('a later successful verification clears its own stale error automatically', async () => {
+  const f = await playerFixture({ ledgerInitiallySaved: false });
+  f.failAccountReads(); await f.focus();
+  assert.ok(f.nodes.some(node => node.textContent === 'YouTube is unavailable'));
+  f.restoreAccountReads(); await f.focus();
+  assert.ok(f.state.youtubeLimits!.watchLater);
+  assert.equal(f.nodes.some(node => node.textContent === 'YouTube is unavailable'), false);
 });
 
 
@@ -833,10 +846,54 @@ test('replacing the watch player preserves only the existing same-video authoriz
   const replacement = f.replaceMedia();
   await replacement.play(); await f.flush();
   assert.equal(replacement.paused, false);
+  assert.equal(f.media.paused, true, 'the removed player must stop producing audio');
   assert.equal(f.state.youtubeLimits!.lease!.id, leaseID);
   f.location.search = '?v=video000001';
   await replacement.play(); await f.flush();
   assert.equal(replacement.paused, true, 'a changed video cannot inherit the detached player lease');
+});
+
+test('a newly mounted watch player resumes without an initial play event while its removed predecessor stops', async () => {
+  const f = await playerFixture({ nativeReply: 'safari' });
+  await f.click('Play this video'); await f.advance(300);
+  const leaseID = f.state.youtubeLimits!.lease!.id;
+  const replacement = f.replaceMedia();
+  await f.advance(500);
+  assert.equal(f.media.paused, true, 'detached media must not continue as an orphan audio source');
+  assert.equal(replacement.paused, false, 'the visible player must inherit the existing explicit Play intent');
+  assert.equal(f.state.youtubeLimits!.lease!.id, leaseID);
+  await f.media.play(); await f.flush();
+  assert.equal(f.media.paused, true, 'a late play on the retired element must stay stopped even outside the document');
+  assert.equal(replacement.paused, false);
+});
+
+test('a player replaced after Pause or on another video cannot resume or inherit the original allowance', async () => {
+  for (const changeRoute of [false, true]) {
+    const f = await playerFixture({ nativeReply: 'safari' });
+    await f.click('Play this video'); await f.advance(300);
+    if (changeRoute) f.location.search = '?v=video000001';
+    else await f.rawTap('Pause');
+    const replacement = f.replaceMedia();
+    await f.advance(500);
+    assert.equal(replacement.paused, true);
+    assert.equal(f.media.paused, true);
+  }
+});
+
+test('replacement playback keeps cumulative metering and still waits for the content safety gate', async () => {
+  const f = await playerFixture({ nativeReply: true });
+  await f.click('Play this video'); await f.advance(300);
+  const replacement = f.replaceMedia();
+  const play = replacement.play.bind(replacement);
+  replacement.play = async () => { replacement.dataset.vigilPlaybackRequested = 'true'; };
+  await f.advance(5000, false);
+  assert.equal(f.media.paused, true);
+  assert.equal(replacement.paused, true, 'replacement adoption cannot bypass frame/text classification');
+  assert.ok(Math.abs(f.state.youtubeLimits!.usedMs - 300) < 1, `a held replacement spends no playback time: ${f.state.youtubeLimits!.usedMs}`);
+  delete replacement.dataset.vigilPlaybackRequested;
+  replacement.play = play; await replacement.play(); await f.advance(700);
+  replacement.pause(); f.emit('pause', replacement); await f.advance(5000, false);
+  assert.ok(Math.abs(f.state.youtubeLimits!.usedMs - 1000) < 1, 'time across both elements belongs to the same daily budget');
 });
 
 

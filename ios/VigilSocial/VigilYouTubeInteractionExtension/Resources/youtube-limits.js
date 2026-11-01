@@ -27,6 +27,8 @@
   let preparation = null;
   let watchLaterSync = null, watchLaterSnapshot = null, watchLaterCheckedAt = -Infinity;
   let watchLaterChanging = false;
+  let watchLaterError = '';
+  const ownedMedia = new WeakSet();
   let pressedControl = null;
   const playControlSelector = '.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]';
   const controlLabel = control => (control.getAttribute('aria-label') || control.getAttribute('title') || '').trim();
@@ -51,6 +53,17 @@
     } catch { return ''; }
   };
   const currentID = () => idFrom(location.href);
+  const currentVideo = () => {
+    const candidates = Array.from(document.querySelectorAll('video')).filter(video => video.isConnected !== false
+      && !video.closest?.('ytd-video-preview,ytm-video-preview,ytd-moving-thumbnail-renderer'));
+    const score = video => {
+      const rect = video.getBoundingClientRect?.();
+      const visible = rect && rect.width > 0 && rect.height > 0;
+      const player = video.closest?.('ytm-player,ytd-player,#movie_player,#player-container-id');
+      return (visible ? 1e9 : 0) + (player ? 1e6 : 0) + (visible ? Math.min(1e5, rect.width * rect.height) : 0);
+    };
+    return candidates.sort((left, right) => score(right) - score(left))[0] || null;
+  };
   const extensionRequest = (runtime, body) => new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Vigil could not check your allowance. Reload this page to retry.')), 6500);
     Promise.resolve().then(() => runtime.sendMessage({ type: 'VIGIL_YOUTUBE', youtube: body }))
@@ -125,6 +138,44 @@
     if (media.dataset) delete media.dataset.vigilResumeWhenSafe;
     media.pause();
   };
+  const observeMediaOwnership = media => {
+    if (ownedMedia.has(media)) return;
+    ownedMedia.add(media);
+    // Removed elements no longer bubble Play to the document. YouTube can
+    // still complete an old play() promise or restart its detached decoder.
+    media.addEventListener('play', () => {
+      if (media.isConnected === false) pauseMedia(media);
+    }, true);
+  };
+  function adoptReplacementPlayer(replacement = null, resume = true) {
+    if (!playing) return false;
+    const previous = playing;
+    const detached = previous.isConnected === false;
+    // The short playback clock needs no layout scan for a connected owner.
+    // Check a hidden connected predecessor only when another player starts.
+    if (!detached && !replacement) return false;
+    const rect = detached ? null : previous.getBoundingClientRect?.();
+    if (!detached && !(rect && (rect.width === 0 || rect.height === 0))) return false;
+    replacement ||= currentVideo();
+    if (replacement === previous) return false;
+    sample();
+    observeMediaOwnership(previous);
+    if (!replacement || !lease || busy || settlingPlayback || !wantsPlayback || intent !== currentID()
+        || lease.videoId !== currentID() || performance.now() >= deadline) {
+      if (detached) pauseMedia(previous);
+      return false;
+    }
+    // Keep the same bounded authorization and settled time. The replacement's
+    // play() still passes through the native frame/text safety gate.
+    playing = replacement; resumeMedia = replacement;
+    ++playAttempt; pendingPlay = null; retryInterruptedPlay = false;
+    lastTick = performance.now(); lastPosition = replacement.currentTime;
+    previousRate = replacement.playbackRate || 1; waiting = replacement.readyState < 3;
+    observeMediaOwnership(replacement);
+    pauseMedia(previous);
+    if (resume || replacement.paused) playAuthorized(replacement);
+    return true;
+  }
   async function stop(ended = false) {
     settlingPlayback = true;
     ++playAttempt; pendingPlay = null;
@@ -152,7 +203,7 @@
     if (busy || lease || !intent || !playerFrame) return;
     const id = currentID();
     if (intent !== id || !id || /^\/shorts\//.test(location.pathname)) return;
-    let media = document.querySelector('video');
+    let media = currentVideo();
     if (!media) return;
     busy = true;
     updateHeldPlayer();
@@ -174,9 +225,10 @@
       deadline = sent + (lease.expiresAt - response.serverTime) - 100;
       if (currentID() !== id || performance.now() >= deadline || intent !== id || !wantsPlayback) { await stop(); return; }
       // Authorization may outlive a YouTube player replacement during startup.
-      media = document.querySelector('video');
+      media = currentVideo();
       if (!media) { await stop(); return; }
       playing = media; resumeMedia = media; played = 0; lastTick = performance.now(); lastPosition = media.currentTime; previousRate = media.playbackRate || 1; waiting = media.readyState < 3;
+      observeMediaOwnership(media);
       // play() may remain pending throughout buffering. Do not hold the
       // authorization lock while WebKit waits for media data: renewals must
       // continue before the current bounded lease expires.
@@ -212,7 +264,7 @@
   function pauseAuthorized() {
     sample(); wantsPlayback = false; retryInterruptedPlay = false; waiting = false;
     ++playAttempt; pendingPlay = null;
-    pauseMedia(playing || document.querySelector('video'));
+    pauseMedia(playing || currentVideo());
   }
   function positionAllowance() {
     if (!panel) return;
@@ -334,8 +386,10 @@
       }
       return null;
     }
-    const start = source.indexOf('{', offset);
-    if (start < 0) return null;
+    // Only parse the immediate argument/value. Searching for a later brace
+    // can mistake the next bootstrap object for a string-valued setting.
+    const start = offset;
+    if (source[start] !== '{') return null;
     let depth = 0, quoted = false, escaped = false;
     for (let i = start; i < source.length; i++) {
       const c = source[i];
@@ -345,6 +399,48 @@
       else if (c === '}' && --depth === 0) { try { return JSON.parse(source.slice(start, i + 1)); } catch { return null; } }
     }
     return null;
+  }
+  function youtubePageConfiguration(source) {
+    const configuration = Object.create(null);
+    // YouTube first calls set('EMERGENCY_BASE_URL', ...), then publishes its
+    // JSON bootstrap, and may add more JSON settings in later script tags.
+    for (const match of source.matchAll(/ytcfg\.set\(\s*(?=\{)/g)) {
+      const value = jsonAfter(source.slice(match.index), /^ytcfg\.set\(\s*/);
+      if (value && typeof value === 'object' && !Array.isArray(value)) Object.assign(configuration, value);
+    }
+    return configuration;
+  }
+  function watchLaterContinuationTokens(endpoint) {
+    if (!endpoint || typeof endpoint !== 'object') return [];
+    if (typeof endpoint.continuationCommand?.token === 'string') return [endpoint.continuationCommand.token];
+    const commands = endpoint.commandExecutorCommand?.commands;
+    return Array.isArray(commands) ? commands.flatMap(watchLaterContinuationTokens) : [];
+  }
+  async function watchLaterBrowseHeaders(config) {
+    const headers = { 'Content-Type': 'application/json' };
+    const context = config.INNERTUBE_CONTEXT?.client;
+    const clientName = config.INNERTUBE_CONTEXT_CLIENT_NAME;
+    if (clientName !== undefined) headers['X-Youtube-Client-Name'] = String(clientName);
+    if (context?.clientVersion) headers['X-Youtube-Client-Version'] = context.clientVersion;
+    if (/^\d+$/.test(String(config.SESSION_INDEX ?? '0'))) headers['X-Goog-AuthUser'] = String(config.SESSION_INDEX ?? '0');
+    if (typeof config.DELEGATED_SESSION_ID === 'string' && /^\d+$/.test(config.DELEGATED_SESSION_ID)) {
+      headers['X-Goog-PageId'] = config.DELEGATED_SESSION_ID;
+    }
+    // Private playlist continuations require the same session proof used by
+    // YouTube's web client. Keep it inside this origin; never persist, bridge,
+    // or log the cookie or proof, and never follow a credentialed redirect.
+    const cookies = new Map(String(document.cookie || '').split(';').map(value => {
+      const index = value.indexOf('=');
+      return [value.slice(0, index).trim(), value.slice(index + 1)];
+    }));
+    const session = cookies.get('SAPISID') || cookies.get('__Secure-3PAPISID') || cookies.get('__Secure-1PAPISID');
+    if (session) {
+      const timestamp = Math.floor(Date.now() / 1000);
+      const proof = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(`${timestamp} ${session} ${location.origin}`));
+      const hash = [...new Uint8Array(proof)].map(value => value.toString(16).padStart(2, '0')).join('');
+      headers.Authorization = `SAPISIDHASH ${timestamp}_${hash}`;
+    }
+    return headers;
   }
   function domCards() {
     const cards = [];
@@ -386,9 +482,9 @@
         if (!/^[\w-]{11}$/.test(video.videoId || '')) throw new Error('Could not read a Watch Later entry. Please try again.');
         cards.push({ videoId: video.videoId, title: textOf(video.title).trim().slice(0, 200) || video.videoId });
       } else if (item.continuationItemRenderer) {
-        const token = item.continuationItemRenderer.continuationEndpoint?.continuationCommand?.token;
-        if (!token) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
-        tokens.push(token);
+        const next = watchLaterContinuationTokens(item.continuationItemRenderer.continuationEndpoint);
+        if (next.length !== 1 || !next[0]) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
+        tokens.push(next[0]);
       } else if (!item.messageRenderer) {
         throw new Error('Could not read a Watch Later entry. Please try again.');
       }
@@ -410,7 +506,7 @@
     if (!response.ok) throw new Error('Could not check Watch Later. Please try again.');
     const html = await response.text();
     const initial = jsonAfter(html, /(?:var\s+)?(?:window\s*\[\s*["']ytInitialData["']\s*\]|ytInitialData)\s*=\s*/);
-    const config = jsonAfter(html, /ytcfg\.set\(\s*/);
+    const config = youtubePageConfiguration(html);
     if (!initial || config?.LOGGED_IN !== true || typeof config.DATASYNC_ID !== 'string' || !config.DATASYNC_ID.trim()) {
       throw new Error('Sign in to the same YouTube account to check your shared Watch Later.');
     }
@@ -428,7 +524,7 @@
       if (tokens.has(page.token) || !config.INNERTUBE_CONTEXT) break;
       tokens.add(page.token);
       const next = await accountFetch('/youtubei/v1/browse', {
-        ...options, method: 'POST', signal: AbortSignal.timeout(10000), headers: { 'Content-Type': 'application/json' },
+        ...options, method: 'POST', signal: AbortSignal.timeout(10000), headers: await watchLaterBrowseHeaders(config),
         body: JSON.stringify({ context: config.INNERTUBE_CONTEXT, continuation: page.token })
       });
       if (!next.ok) throw new Error('Could not check Watch Later. Please try again.');
@@ -460,13 +556,17 @@
             revision: before.watchLater?.revision || 0, day: before.day });
           watchLaterSnapshot = { ...snapshot, day: reply.day };
           watchLaterCheckedAt = performance.now();
+          if (watchLaterError && message?.textContent === watchLaterError) show('');
+          watchLaterError = '';
           return watchLaterSnapshot;
         } catch (error) {
           if (attempt || error.message !== 'Watch Later changed while checking. Please try again.') throw error;
         }
       }
     })();
-    try { return await watchLaterSync; } finally { watchLaterSync = null; }
+    try { return await watchLaterSync; }
+    catch (error) { watchLaterError = error.message; throw error; }
+    finally { watchLaterSync = null; }
   }
   async function watchLaterMembership(videoId, force = false) {
     const snapshot = await reconcileWatchLater(force);
@@ -868,6 +968,7 @@
       style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}';
       document.documentElement.append(style);
     }
+    adoptReplacementPlayer();
     for (const media of document.querySelectorAll('video,audio')) {
       if (media.autoplay) media.autoplay = false;
       if (media.hasAttribute?.('autoplay')) media.removeAttribute('autoplay');
@@ -876,19 +977,14 @@
 
   }
   document.addEventListener('webkitbeginfullscreen', event => {
-    if (!event.isTrusted || event.target !== document.querySelector('video') || !currentID()) return;
+    if (!event.isTrusted || event.target !== currentVideo() || !currentID()) return;
     // Native full-screen Play has no DOM click. Entering the player arms the
     // same gated Play path, even before this video has played inline once.
     resumeMedia = event.target;
     intent = currentID();
   }, true);
   document.addEventListener('play', event => {
-    if (lease && playing?.isConnected === false && event.target === document.querySelector('video')
-        && lease.videoId === currentID() && wantsPlayback && performance.now() < deadline) {
-      sample(); playing = event.target; resumeMedia = playing;
-      ++playAttempt; pendingPlay = null; retryInterruptedPlay = false;
-      lastTick = performance.now(); lastPosition = playing.currentTime;
-    }
+    if (event.target !== playing && event.target === currentVideo()) adoptReplacementPlayer(event.target, false);
     if (event.target !== playing || !lease || !wantsPlayback || currentID() !== lease.videoId || performance.now() >= deadline) {
       // A queued play event can arrive after Pause has already stopped media.
       // Only an actual native fullscreen start represents a new Play request.
@@ -1053,6 +1149,7 @@
         void stop().then(() => request({ action: 'switch', videoId: currentID() })).catch(error => show(error.message));
       }
     }
+    adoptReplacementPlayer();
     if (retryInterruptedPlay && wantsPlayback && playing?.readyState >= 3 && !playing.seeking) playAuthorized(playing);
     sample();
     if (lease && playing?.paused && !waiting) {
