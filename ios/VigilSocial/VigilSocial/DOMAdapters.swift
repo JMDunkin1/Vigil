@@ -70,6 +70,8 @@ enum DOMAdapters {
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
             + documentIdentityBootstrap
+            + (service == .instagram && ProcessInfo.processInfo.environment["VIGIL_WEB_INSPECT"] == "1"
+                ? "window.__vigilInstagramDiagnostics = true;" : "")
             + (service == .instagram ? instagramActivityFeedCompatibility + instagramOutgoingUnreadCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
@@ -2943,13 +2945,28 @@ enum DOMAdapters {
           .map(control => nativeGestureRegion(control, true)).filter(Boolean).slice(0, 24) : [];
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
-        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions, activationRegions, viewportSize: [innerWidth, innerHeight] });
+        const diagnostics = window.__vigilInstagramDiagnostics === true ? {
+          pinned: Boolean(pinnedID), kind: pinnedKind, layoutCaptured: postLayoutCaptured,
+          cardConnected: Boolean(pinnedCard?.isConnected), cardExact: Boolean(pinnedCard && exactPostCard(pinnedCard)),
+          cardMarker: pinnedCard?.getAttribute('data-vigil-single-reel-card') || '',
+          carousel: postCarousel ? { rejected: postCarousel.rejected, trackConnected: postCarousel.track.isConnected,
+            images: postCarousel.manifest?.image.size || 0, videos: postCarousel.manifest?.video.size || 0 } : null,
+          media: [...(pinnedCard?.querySelectorAll('img,video') || [])].slice(0, 16).map(media => {
+            const remembered = mediaSources.get(media), box = media.getBoundingClientRect();
+            return { tag: media.tagName, size: [Math.round(box.width), Math.round(box.height)], content: contentMedia(media),
+              inTrack: Boolean(postCarousel?.track.contains(media)), remembered: Boolean(remembered),
+              rejected: remembered?.rejected === true, cardMatches: cardFor(media) === pinnedCard,
+              rememberedCardMatches: remembered?.card === pinnedCard, sourceMatches: remembered?.source === mediaSource(media) };
+          })
+        } : undefined;
+        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions, activationRegions, viewportSize: [innerWidth, innerHeight],
+          ...(diagnostics ? { diagnostics } : {}) });
         if (!force && nativeScrollState === state) return;
         nativeScrollState = state;
         try {
           window.webkit?.messageHandlers?.vigil?.postMessage({
             type: 'reelScrollLock', locked, scrollingRegions, carouselRegions, activationRegions, viewportSize: [innerWidth, innerHeight],
-            documentID: String(window.__vigilDocumentID || '')
+            documentID: String(window.__vigilDocumentID || ''), ...(diagnostics ? { diagnostics } : {})
           });
         } catch (_) {}
       };
@@ -3686,22 +3703,90 @@ enum DOMAdapters {
         const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
         return routes.length > 0 && routes.every(matchesPinnedItem);
       };
-      const loadedCarouselManifest = card => {
-        // Read only the loaded Sidecar props for this exact shortcode. React's
+      const loadedRelayCarouselManifest = (reference, value) => {
+        // Current Polaris passes fragment references instead of the legacy
+        // Sidecar model. Read only already-loaded records; never fetch a new
+        // query or treat the DOM's current image sources as membership proof.
+        try {
+          const environment = window.require('PolarisRelayEnvironment');
+          const { getSelector } = window.require('relay-runtime/store/RelayModernSelector');
+          const fragment = window.require('PolarisCarouselMedia_media.graphql');
+          const itemFragment = window.require('PolarisMediaItemFragment_media.graphql');
+          if (typeof environment?.lookup !== 'function' || typeof getSelector !== 'function'
+              || fragment?.kind !== 'Fragment' || fragment.name !== 'PolarisCarouselMedia_media'
+              || !Array.isArray(fragment.selections) || itemFragment?.kind !== 'Fragment'
+              || itemFragment.name !== 'PolarisMediaItemFragment_media') return null;
+          const read = (fragment, reference) => {
+            const selector = getSelector(fragment, reference);
+            return selector?.kind === 'SingularReaderSelector' ? environment.lookup(selector)?.data : null;
+          };
+          // Independently check the stored parent identity as well as the
+          // selected article's reference. This adds a local read, not a query.
+          const parent = read({ ...fragment, selections: [...fragment.selections,
+            { alias: null, args: null, kind: 'ScalarField', name: 'code', storageKey: null }] }, reference);
+          const children = value(parent, 'carousel_media');
+          if (value(parent, 'code') !== pinnedID || !Array.isArray(children)
+              || children.length < 2 || children.length > 100) return null;
+          const manifest = { image: new Set(), video: new Set() };
+          const add = (set, source) => {
+            if (typeof source !== 'string' || !source.trim()) return;
+            try { const url = new URL(source, location.href); if (url.protocol === 'https:') set.add(url.href); } catch (_) {}
+          };
+          for (const child of children) {
+            // Polaris exposes pk in the carousel and aliases it as id in the
+            // media fragment. Bind both reads to their shared Relay record.
+            const id = value(child, '__id');
+            if (typeof id !== 'string' || !id) continue;
+            const item = read(itemFragment, child);
+            if (value(item, '__id') !== id) continue;
+            add(manifest.image, value(item, 'display_uri'));
+            const candidates = value(value(item, 'image_versions2'), 'candidates');
+            for (const image of Array.isArray(candidates) ? candidates.slice(0, 50) : []) add(manifest.image, value(image, 'url'));
+            if (!value(value(item, '__fragments'), 'PolarisPostMediaVideoPlayer')) continue;
+            try {
+              const videoFragment = window.require('PolarisPostMediaVideoPlayer.graphql');
+              if (videoFragment?.kind !== 'Fragment' || videoFragment.name !== 'PolarisPostMediaVideoPlayer') continue;
+              const video = read(videoFragment, item);
+              if (value(video, '__id') !== id) continue;
+              const playerFragment = window.require('PolarisMediaVideoPlayerFragment_media.graphql');
+              if (playerFragment?.kind !== 'Fragment' || playerFragment.name !== 'PolarisMediaVideoPlayerFragment_media') continue;
+              const player = read(playerFragment, video);
+              if (value(player, '__id') !== id) continue;
+              const versions = value(player, 'video_versions');
+              for (const version of Array.isArray(versions) ? versions.slice(0, 50) : []) add(manifest.video, value(version, 'url'));
+            } catch (_) { /* Unavailable video evidence cannot revoke proven photos. */ }
+          }
+          return manifest.image.size || manifest.video.size ? manifest : null;
+        } catch (_) { return null; }
+      };
+      const loadedCarouselManifest = (card, track) => {
+        // Read only loaded carousel records for this exact shortcode. React's
         // virtual list unmounts offscreen li nodes; DOM position alone must not
         // authorize newly mounted media or recommendation sources.
         const seen = new WeakSet(), pending = [];
         const value = (object, key) => object && typeof object === 'object'
           ? Object.getOwnPropertyDescriptor(object, key)?.value : undefined;
-        for (const node of [card, ...card.querySelectorAll('*')].slice(0, 128)) {
+        // Seed the track's own ancestry first. Large headers/like lists must
+        // not push the carousel's reference beyond the bounded DOM scan.
+        const ancestors = [];
+        for (let node = track; node && card.contains(node); node = node.parentElement) {
+          ancestors.push(node);
+          if (node === card) break;
+        }
+        for (const node of [...new Set([...ancestors, card, ...card.querySelectorAll('*')])].slice(0, 128)) {
           for (const key of Object.getOwnPropertyNames(node).filter(key => key.startsWith('__reactProps$'))) {
             pending.push({ object: value(node, key), depth: 0 });
           }
         }
         for (let inspected = 0; pending.length && inspected < 800; inspected += 1) {
-          const { object, depth } = pending.pop();
+          const { object, depth } = pending.shift();
           if (!object || typeof object !== 'object' || seen.has(object) || depth > 10) continue;
           seen.add(object);
+          if (value(object, 'code') === pinnedID
+              && value(value(object, '__fragments'), 'PolarisCarouselMedia_media')) {
+            const manifest = loadedRelayCarouselManifest(object, value);
+            if (manifest) return manifest;
+          }
           const children = value(object, 'sidecarChildren');
           if (value(object, 'code') === pinnedID && value(object, 'isSidecar') === true
               && Array.isArray(children) && children.length >= 2 && children.length <= 100) {
@@ -3724,8 +3809,10 @@ enum DOMAdapters {
             return manifest;
           }
           const next = Array.isArray(object) ? object.slice(0, 100)
-            : ['props', 'children', 'post'].map(key => value(object, key));
-          next.forEach(object => pending.push({ object, depth: depth + 1 }));
+            : ['props', 'children', 'post', 'mediaFragmentKey', 'queryReference'].map(key => value(object, key));
+          next.forEach(object => {
+            if (object && typeof object === 'object' && !seen.has(object)) pending.push({ object, depth: depth + 1 });
+          });
         }
         return null;
       };
@@ -3757,7 +3844,7 @@ enum DOMAdapters {
           // substantial horizontal groups can authorize additional videos.
           if (boxes.some((box, index) => box.width < 180 || box.height < 140
               || (index > 0 && box.left < boxes[index - 1].right - 1))) continue;
-          return { track, viewport, manifest: loadedCarouselManifest(card),
+          return { track, viewport, manifest: loadedCarouselManifest(card, track),
             rejected: false, slides: slides.map(node => ({ node,
             media: [...(node.matches('video, img') ? [node] : node.querySelectorAll('video, img'))]
               .filter(contentMedia).map(media => ({ node: media,
@@ -3767,6 +3854,7 @@ enum DOMAdapters {
         }
         return null;
       };
+      let carouselManifestRefreshed = false;
       const carouselMediaAllowed = (media, source) => {
         if (!postCarousel || postCarousel.rejected || !pinnedCard?.contains(postCarousel.track)) return false;
         if (!exactPostCard(pinnedCard)) { postCarousel.rejected = true; return false; }
@@ -3784,14 +3872,23 @@ enum DOMAdapters {
         // for either layout; the slot must still belong directly to this track.
         let slot = media;
         while (slot && slot.parentElement !== postCarousel.track) slot = slot.parentElement;
-        const manifest = postCarousel.manifest?.[video ? 'video' : 'image'];
-        if (!manifest || slot?.parentElement !== postCarousel.track) return false;
+        if (slot?.parentElement !== postCarousel.track) return false;
         const srcset = media.getAttribute('srcset');
         const sources = srcset ? srcset.split(',').map(entry => entry.trim().split(/\s+/)[0])
           : [media.getAttribute('src') || media.querySelector('source')?.src || ''];
-        return sources.length > 0 && sources.every(source => {
-          try { return manifest.has(new URL(source, location.href).href); } catch (_) { return false; }
+        const listed = () => sources.length > 0 && sources.every(source => {
+          try { return postCarousel.manifest?.[video ? 'video' : 'image']?.has(new URL(source, location.href).href) === true; }
+          catch (_) { return false; }
         });
+        if (listed()) return true;
+        // Lazy media fragments can arrive after the original track was bound.
+        // Refresh at most once per reconciliation, still requiring this exact
+        // post's loaded source list and a direct slot in the original track.
+        if (!carouselManifestRefreshed) {
+          carouselManifestRefreshed = true;
+          postCarousel.manifest = loadedCarouselManifest(pinnedCard, postCarousel.track) || postCarousel.manifest;
+        }
+        return listed();
       };
       const blockSuggestedReels = () => {
         if (suggestedReelsRoot) {
@@ -3857,6 +3954,7 @@ enum DOMAdapters {
         if (blockSuggestedReels()) return;
         normalizeRecipientSheets();
         if (!syncRoute() || !concealmentScope) return;
+        carouselManifestRefreshed = false;
         // Reel playback may change CDN/blob sources and remount its player.
         // Contain input without granting permission to a particular video URL.
         if (pinnedKind === 'reel') return;

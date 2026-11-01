@@ -1,0 +1,67 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+body{margin:0}article{width:390px}#viewport{position:relative;display:flex;overflow-x:hidden;width:390px;height:500px}
+#track{position:relative;display:flex;flex-direction:row;width:1px;height:500px;margin:0;padding:0}
+li{position:absolute;width:390px;height:500px;list-style:none}img,video{width:390px;height:500px}
+</style></head><body><main><article id="selected"><a href="/creator/p/Dump123/">Post</a>
+<div id="viewport" role="presentation"><div><ul id="track">
+<li><img src="https://example.com/first.jpg"></li>
+<li style="transform:translateX(390px)"><img src="https://example.com/second.jpg"></li>
+</ul></div></div></article><article id="other"><a href="/p/Other123/">Other post</a>
+<img src="https://example.com/other.jpg"></article></main><script>
+window.fixtureMode='exact';window.fixtureReady=true;window.fixtureReads=0;
+const fragment=name=>({kind:'Fragment',name,selections:[]});
+const ref=(id,name,extra={})=>({__id:id,__fragments:{[name]:{}},...extra});
+const parent=ref('parent','PolarisCarouselMedia_media',{code:'Dump123'});
+const children=['first','second','third','fourth','fifth'].map(id=>ref(id,'PolarisMediaItemFragment_media',{pk:'pk-'+id}));
+const item=id=>({id:'opaque-'+id,display_uri:'https://example.com/'+id+'.jpg',
+  image_versions2:{candidates:[{url:'https://example.com/'+id+'-large.jpg'}]},
+  __id:id,__fragments:{PolarisPostMediaVideoPlayer:{}}});
+document.getElementById('viewport')['__reactProps$fixture']={children:[{props:{mediaFragmentKey:parent}}]};
+if(fixtureMode==='legacy')document.getElementById('viewport')['__reactProps$fixture']={children:{props:{post:{
+ code:'Dump123',isSidecar:true,sidecarChildren:children.map(child=>({id:child.pk,isVideo:false,
+  src:'https://example.com/'+child.__id+'.jpg',displayResources:[{src:'https://example.com/'+child.__id+'-large.jpg'}]}))
+}}}};
+if(['padded','distant'].includes(fixtureMode))for(let i=0;i<(fixtureMode==='distant'?140:64);i++){
+ const node=document.createElement('div');node['__reactProps$fixture']={children:{props:{children:{props:{}}}}};
+ document.getElementById('viewport').before(node);
+}
+window.require=name=>{
+  if(fixtureMode==='missing-module')throw Error('Module unavailable');
+  if(fixtureMode==='photo-only'&&name==='PolarisPostMediaVideoPlayer.graphql')throw Error('Video module unavailable');
+  if(name==='relay-runtime/store/RelayModernSelector')return {getSelector:(fragment,reference)=>
+    reference.__fragments?.[fragment.name]?{kind:'SingularReaderSelector',fragment,dataID:reference.__id}:null};
+  if(name.endsWith('.graphql'))return fragment(name.slice(0,-8));
+  if(name==='PolarisRelayEnvironment')return {lookup:selector=>{
+    fixtureReads++;
+    if(selector.fragment.name==='PolarisCarouselMedia_media')return {data:{code:fixtureMode==='wrong-parent'?'Other123':'Dump123',
+      carousel_media:fixtureReady?children:null}};
+    if(selector.fragment.name==='PolarisMediaItemFragment_media')return {data:item(fixtureMode==='wrong-child'?'unrelated':selector.dataID)};
+    if(selector.fragment.name==='PolarisPostMediaVideoPlayer')return {data:{__id:selector.dataID,pk:selector.dataID,
+      __fragments:{PolarisMediaVideoPlayerFragment_media:{}}}};
+    if(selector.fragment.name==='PolarisMediaVideoPlayerFragment_media')return {data:{
+      __id:fixtureMode==='wrong-video-record'?'unrelated':selector.dataID,pk:selector.dataID,
+      video_versions:selector.dataID==='fifth'?[{url:'https://example.com/fifth.mp4'}]:[]}};
+    throw Error('Unexpected lookup');
+  }};
+  throw Error('Unexpected module');
+};
+window.fixtureLater=(kind='image')=>{
+ const track=document.getElementById('track');track.firstElementChild.remove();
+ const slot=document.createElement('li');slot.style.transform='translateX(780px)';
+ const media=document.createElement(kind==='video'?'video':'img');media.id='later';
+ if(kind==='video')media.src='https://example.com/fifth.mp4';
+ else {media.src='https://example.com/third.jpg';media.srcset='https://example.com/third.jpg 390w, https://example.com/third-large.jpg 780w';}
+ slot.append(media);
+ if(fixtureMode==='wrong-track'){const other=document.createElement('ul');track.after(other);other.append(slot);}
+ else track.append(slot);
+};
+window.fixtureAllowed=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='allowed'
+ && getComputedStyle(document.getElementById('later')).visibility==='visible';
+window.fixtureBlocked=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='blocked';
+window.fixtureContained=()=>{
+ const image=document.getElementById('later'),wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+ image.dispatchEvent(wheel);history.pushState({},'', '/p/Other123/');
+ return wheel.defaultPrevented&&location.pathname==='/creator/p/Dump123/'
+  && getComputedStyle(document.querySelector('#other img')).visibility==='hidden';
+};
+</script></body></html>

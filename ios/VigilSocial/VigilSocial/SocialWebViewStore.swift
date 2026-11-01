@@ -472,6 +472,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var externalPlaybackCreditDeadline: Task<Void, Never>?
     private var lastConfirmedServiceAccess: TimeInterval?
     private var serviceNavigationDiagnostic = ""
+    private var instagramLastDiagnosticData: Data?
     private(set) var serviceAccessIsSettling = true
     private(set) var serviceAccessDetail = "The protected page is still opening."
     private var playbackIsBackgrounded = false
@@ -1471,6 +1472,20 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             guard service == .instagram, frame.isMainFrame,
                   let locked = body["locked"] as? Bool,
                   let webView = message.webView else { return }
+            if ProcessInfo.processInfo.environment["VIGIL_WEB_INSPECT"] == "1",
+               Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+               let diagnostics = body["diagnostics"] as? [String: Any],
+               JSONSerialization.isValidJSONObject(diagnostics),
+               let diagnosticData = try? JSONSerialization.data(withJSONObject: diagnostics, options: [.sortedKeys]),
+               diagnosticData.count <= 16_384, diagnosticData != instagramLastDiagnosticData,
+               let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+                instagramLastDiagnosticData = diagnosticData
+                let receipt: [String: Any] = ["capturedAt": ISO8601DateFormatter().string(from: Date()),
+                    "path": webView.url?.path ?? "", "diagnostics": diagnostics]
+                if let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.sortedKeys]) {
+                    try? data.write(to: directory.appendingPathComponent("vigil-instagram-diagnostics.json"), options: .atomic)
+                }
+            }
             let viewport = Self.instagramGestureViewport(body["viewportSize"])
             let validViewport = body["viewportSize"] == nil || viewport != nil
             setInstagramReelScrollLocked(locked, in: webView,
