@@ -3061,11 +3061,22 @@ final class VigilSocialTests: XCTestCase {
         Self.retainedCompanionValidationFixtures.append((window, webView))
         webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
         try await waitForJavaScriptCondition("window.__vigilSnapchatCameraInstalled && document.querySelector('[data-vigil-snap-layout=feed]') !== null", in: webView)
+        // The real lightbox footer was missing from this fixture. Its flex-grow
+        // consumed half the phone despite the outer lightbox filling the screen.
+        _ = try await webView.evaluateJavaScript(#"""
+            const footerStyle = document.createElement('style');
+            footerStyle.textContent = `.P5ZpW{flex:1 0 auto;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:36px;width:310px;align-self:center;padding:8px 8px 0;background:var(--sigMain)}.P5ZpW>.oEzkH{position:relative;flex:content;display:flex;align-items:center;justify-content:space-around;min-height:36px;width:100%;gap:3px}.IHkYr{display:flex;margin-bottom:6px}`;
+            document.head.appendChild(footerStyle);
+            """#)
         for width in [320, 390, 430] {
             webView.frame.size = CGSize(width: width, height: 780)
             try await waitForJavaScriptCondition("innerWidth === \(width)", in: webView)
             for split in ["rows", "columns"] {
-                _ = try await webView.evaluateJavaScript("fixtureOpenSnap('\(split)')")
+                _ = try await webView.evaluateJavaScript("""
+                    fixtureOpenSnap('\(split)');
+                    document.querySelector('.ecBYF').insertAdjacentHTML('beforeend',
+                      '<div class="P5ZpW"><div class="IHkYr"><button>❤️</button><button>👍</button></div><div class="oEzkH"><div role="textbox" contenteditable="true" aria-label="Reply to Snap">Reply to Snap</div><button>Save</button></div></div>');
+                    """)
                 try await waitForJavaScriptCondition("document.querySelector('[data-vigil-snap-media=viewer]') !== null", in: webView)
                 let viewer = try await webView.callAsyncJavaScript("""
                     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -3073,11 +3084,13 @@ final class VigilSocialTests: XCTestCase {
                     const reply = document.getElementById('fixture-reply-snap');
                     const r = reply.getBoundingClientRect();
                     const target = document.elementFromPoint(r.left+r.width/2,r.top+r.height/2);
-                    return [player.width >= innerWidth-1, player.height >= 700,
+                    const footer = document.querySelector('.P5ZpW').getBoundingClientRect();
+                    return [player.width >= innerWidth-1, player.height >= innerHeight-1,
                       getComputedStyle(document.querySelector('.ChLAv')).display === 'none',
-                      reply.contains(target), document.documentElement.scrollWidth <= innerWidth];
+                      reply.contains(target), document.documentElement.scrollWidth <= innerWidth,
+                      footer.height <= 132 && footer.bottom <= innerHeight+1];
                     """, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
-                XCTAssertEqual(viewer, Array(repeating: true, count: 5), "\(width)px, \(split)")
+                XCTAssertEqual(viewer, Array(repeating: true, count: 6), "\(width)px, \(split)")
             }
         }
         let privacy = try await webView.evaluateJavaScript("""
@@ -3379,7 +3392,7 @@ final class VigilSocialTests: XCTestCase {
       const grid=document.querySelector('._XMCw');
       grid.style.cssText=split==='rows'?'grid-template-areas:"secondary" "main";grid-template-columns:minmax(0,1fr);grid-template-rows:minmax(0,1fr) minmax(0,1fr);gap:8px':'grid-template-areas:"main secondary";grid-template-columns:minmax(0,500px) minmax(60%,1fr);grid-template-rows:minmax(0,1fr);gap:8px';
       document.querySelector('.ChLAv').style.gridArea='main';
-      grid.insertAdjacentHTML('beforeend',`<div class="S4e9r Mn1n9"><div class="ecBYF"><div class="fixture-snap-toolbar"><button id="fixture-close-snap" onclick="fixtureCloseSnap()">Back</button><span>Alex</span><button id="fixture-reply-snap" onclick="fixtureOpenReplyCamera()">Reply</button></div><div class="RdKti" aria-label="media content"><div class="QQxLo Z8KwB"><button class="hRnph" aria-label="previous" onclick="window.fixturePrevious=true">❮</button></div><div class="vDdE2 hJysT" style="aspect-ratio:${width}/${height}"><div class="b2f4R IbYNR zsqlD" style="aspect-ratio:9/16"><img id="fixture-snap-image" class="dCE9D" style="width:180px;height:320px" alt="Fictional snap" src="${fixtureMediaImage(width,height)}"></div></div><div class="QQxLo fOsry"><button class="hRnph" aria-label="next" onclick="window.fixtureNext=true">❯</button></div></div><div class="ejVI4" style="display:none">Click to view media</div><div class="eNF_J" style="display:none">Screenshot privacy screen</div></div></div>`);
+      grid.insertAdjacentHTML('beforeend',`<div class="S4e9r Mn1n9"><div class="ecBYF"><div class="fixture-snap-toolbar eox9R"><button id="fixture-close-snap" onclick="fixtureCloseSnap()">Back</button><span>Alex</span><button id="fixture-reply-snap" onclick="fixtureOpenReplyCamera()">Reply</button></div><div class="RdKti" aria-label="media content"><div class="QQxLo Z8KwB"><button class="hRnph" aria-label="previous" onclick="window.fixturePrevious=true">❮</button></div><div class="vDdE2 hJysT" style="aspect-ratio:${width}/${height}"><div class="b2f4R IbYNR zsqlD" style="aspect-ratio:9/16"><img id="fixture-snap-image" class="dCE9D" style="width:180px;height:320px" alt="Fictional snap" src="${fixtureMediaImage(width,height)}"></div></div><div class="QQxLo fOsry"><button class="hRnph" aria-label="next" onclick="window.fixtureNext=true">❯</button></div></div><div class="ejVI4" style="display:none">Click to view media</div><div class="eNF_J" style="display:none">Screenshot privacy screen</div></div></div>`);
     }
     function fixtureCloseSnap(){document.querySelector('._XMCw > .S4e9r')?.remove();document.querySelector('._XMCw').style.cssText='';document.querySelector('.ChLAv').style.gridArea='1/1'}
     function fixtureOpenReplyCamera(){

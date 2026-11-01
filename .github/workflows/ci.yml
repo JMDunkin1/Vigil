@@ -70,6 +70,10 @@ jobs:
         timeout-minutes: 3
         run: node scripts/test-snapchat-video-webkit.mjs
 
+      - name: Test Snapchat full viewer, reply footer, and unread row activation
+        timeout-minutes: 3
+        run: node scripts/test-snapchat-viewer-webkit.mjs
+
       - name: Test Instagram shared post browser regressions
         timeout-minutes: 3
         shell: bash

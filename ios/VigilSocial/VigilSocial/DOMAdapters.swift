@@ -6992,7 +6992,7 @@ enum DOMAdapters {
     """#
 
     // Snapchat's desktop breakpoint hides the chat names and search below 850px.
-    // Adapt only verified chat/media shells (clients 9a9dc856 and a4b70008);
+    // Adapt only verified chat/media shells (including client 02365173525f5f81a3c6);
     // unknown layouts retain Snapchat's original UI. Never copy messages,
     // replace React nodes, alter its
     // privacy screens, or couple this presentation layer to policy enforcement.
@@ -7239,6 +7239,60 @@ enum DOMAdapters {
             position: relative; inset: 0; margin: 0; gap: 0; background: #000;
           }
           [data-vigil-snap-media="viewer"] .RdKti { position: relative; flex: 1; min-height: 0; }
+          /* Snap's real footer is flex:1 0 auto, with another flex:content
+             reply row. Leaving it in the column splits even a full-height
+             lightbox in half. Media owns the viewport; the original header,
+             reactions and reply composer are compact overlays, not flex tracks.
+             Keep all nodes and privacy screens in their original hierarchy. */
+          [data-vigil-snap-media="viewer"] .ecBYF > .RdKti {
+            position: absolute !important; inset: 0 !important;
+            width: 100% !important; height: 100% !important; flex: none !important;
+          }
+          [data-vigil-snap-media="viewer"] .ecBYF > .eox9R {
+            position: absolute; inset: 0 0 auto; z-index: 2;
+            width: 100%; min-height: 56px; padding: 8px; box-sizing: border-box;
+            background: linear-gradient(#0009, transparent); pointer-events: none;
+          }
+          [data-vigil-snap-media="viewer"] .eox9R :is(.ROW7N, .PXgWb, .Hb2_Z) { pointer-events: auto; }
+          [data-vigil-snap-media="viewer"] .eox9R .ROW7N { max-width: 100%; min-width: 0; }
+          [data-vigil-snap-media="viewer"] .eox9R :is(.Tdvkt, .jWIsM) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          [data-vigil-snap-media="viewer"] .eox9R button { min-width: 44px; min-height: 44px; pointer-events: auto; }
+          [data-vigil-snap-media="viewer"] .ecBYF > .P5ZpW {
+            position: absolute; inset: auto 0 0; z-index: 2;
+            flex: none !important; justify-content: flex-end;
+            width: 100%; height: auto; min-height: 0; max-height: 40%;
+            box-sizing: border-box; padding: 8px 12px; gap: 6px;
+            border-radius: 0; background: linear-gradient(transparent, #000c);
+          }
+          [data-vigil-snap-media="viewer"] .P5ZpW > .IHkYr {
+            flex: none; width: 100%; min-width: 0; margin: 0;
+          }
+          [data-vigil-snap-media="viewer"] .P5ZpW > .IHkYr > ul {
+            display: flex; flex-wrap: nowrap; max-width: 100%; min-width: 0;
+            overflow-x: auto; overscroll-behavior: contain; scrollbar-width: none;
+          }
+          [data-vigil-snap-media="viewer"] .P5ZpW > .IHkYr > ul > li { flex-shrink: 0; }
+          [data-vigil-snap-media="viewer"] .P5ZpW > .oEzkH {
+            flex: none !important; min-height: 44px; min-width: 0; width: 100%; gap: 6px;
+          }
+          [data-vigil-snap-media="viewer"] .P5ZpW :is(.hgQNs, .sT7ta) {
+            min-width: 0; min-height: 0; padding: 0; background: transparent;
+          }
+          [data-vigil-snap-media="viewer"] .P5ZpW [contenteditable="true"] {
+            max-height: 72px; overflow-y: auto;
+          }
+          [data-vigil-snap-media="viewer"] .P5ZpW button { min-width: 44px; min-height: 44px; touch-action: manipulation; }
+          [data-vigil-snap-media="viewer"] .ecBYF:has(> .eox9R) .QQxLo { top: 64px; }
+          [data-vigil-snap-media="viewer"] .ecBYF:has(> .eox9R) .hx3W7 { inset-block-start: 64px; }
+          [data-vigil-snap-media="viewer"] .ecBYF :is(.X2xfe, .XtAfH, .nhZSs) {
+            inset-block-end: calc(var(--vigil-snap-footer-height, 0px) + 12px);
+          }
+          [data-vigil-snap-media="viewer"] .ecBYF > .vigil-snap-export {
+            bottom: calc(var(--vigil-snap-footer-height, 0px) + 60px);
+          }
+          /* The live privacy screens have no z-index. Keep them above every
+             overlay, including the screenshot screen mounted beside ecBYF. */
+          [data-vigil-snap-media="viewer"] .S4e9r:has(.ecBYF) :is(.ejVI4, .eNF_J) { z-index: 3; }
           [data-vigil-snap-media="viewer"] .vDdE2 {
             width: 100% !important; height: 100% !important;
             margin: 0 !important; padding: 0 !important; aspect-ratio: auto !important;
@@ -7370,6 +7424,8 @@ enum DOMAdapters {
       let scheduled = false;
       let lastChromeColor = '';
       let lastRenderState = '';
+      let observedViewerFooter = null;
+      const viewerFooterObserver = new ResizeObserver(() => schedule());
       const renderVisible = element => {
         if (!element) return false;
         const style = getComputedStyle(element);
@@ -7613,6 +7669,8 @@ enum DOMAdapters {
         const shell = feed?.parentElement;
         const main = shell?.querySelector(':scope > .Vbjsg, :scope > .c1qK9');
         if (!shell?.matches('.Fpg8t, .svUon') || !main) {
+          viewerFooterObserver.disconnect();
+          observedViewerFooter = null;
           document.documentElement.removeAttribute('data-vigil-snap-mobile');
           currentShell?.removeAttribute('data-vigil-snap-layout');
           currentShell?.removeAttribute('data-vigil-snap-media');
@@ -7755,6 +7813,18 @@ enum DOMAdapters {
             if (surface.style.getPropertyValue(name) !== value) surface.style.setProperty(name, value);
           }
         }
+        const footer = viewer?.querySelector(':scope > .P5ZpW') || null;
+        if (footer !== observedViewerFooter) {
+          viewerFooterObserver.disconnect();
+          observedViewerFooter = footer;
+          if (footer) viewerFooterObserver.observe(footer);
+        }
+        if (viewer) {
+          const height = `${Math.ceil(footer?.getBoundingClientRect().height || 0)}px`;
+          if (viewer.style.getPropertyValue('--vigil-snap-footer-height') !== height) {
+            viewer.style.setProperty('--vigil-snap-footer-height', height);
+          }
+        }
         // Snapchat positions its menu once using desktop pointer coordinates.
         // Clamp the rendered panel after enlargement and keyboard/viewport
         // changes without rewriting React's inline coordinates or click actions.
@@ -7806,6 +7876,28 @@ enum DOMAdapters {
       window.visualViewport?.addEventListener('resize', schedule);
       window.visualViewport?.addEventListener('scroll', schedule);
       matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', schedule);
+      // The verified feed row navigates to Chat; its enabled View child invokes
+      // Snap's existing unread playlist directly (including Snap + Chat rows).
+      // Forward the user's row activation to that genuine action without
+      // mounting/marking a chat read, fetching messages, or touching React state.
+      const openUnreadSnap = event => {
+        if (event.defaultPrevented || !matchMedia('(max-width: 600px)').matches
+            || currentShell?.getAttribute('data-vigil-snap-layout') !== 'feed'
+            || event.type === 'click' && (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey)
+            || event.type === 'keydown' && (event.key !== 'Enter' || event.repeat)) return;
+        const row = event.target.closest?.('.BL7do .O4POs');
+        if (!row || row.closest('[data-vigil-snap-layout]') !== currentShell
+            || event.target.closest('.LNwMF, .w15C2, input, textarea, a, button, [contenteditable]')) return;
+        const view = row.querySelector(':scope > .w15C2 .HEkDJ.VKjn5');
+        if (!view || !renderVisible(view) || getComputedStyle(view).pointerEvents === 'none'
+            || view.closest('[hidden], [inert], [aria-disabled="true"], [data-vigil-hidden-feature]')) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        // Dispatch a normal click so the policy capture listeners still run.
+        view.click();
+      };
+      document.addEventListener('click', openUnreadSnap, true);
+      document.addEventListener('keydown', openUnreadSnap, true);
       document.addEventListener('click', event => {
         if (event.target.closest?.('.bkCIM > .uSkZ8:first-child')?.parentElement?.parentElement !== currentShell) return;
         preferredPanel = 'camera';
