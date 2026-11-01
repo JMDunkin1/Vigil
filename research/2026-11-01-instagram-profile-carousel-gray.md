@@ -58,3 +58,12 @@ Ignored mode-600 captures and logs are under `data/instagram-profile-*`.
 Continue investigating the retained guard state and verify the actual post's
 visibility before claiming the gray-out is fixed. Use only the supported
 combined updater; preserve policy, supervision and watchdog protections.
+
+## Requested Git delivery and update
+
+All work was committed and pushed to main as `6eb8308`. The subsequent
+combined update installed Vigil Social 0.3.238 (241), suite 0.3.259 (262).
+Its first service check timed out while Snapchat's protected document was
+loading. Retrying the normal transaction passed, including the exact live
+supervised policy `7d0ab7c4016d` and all service launches. No check was bypassed.
+Physical gray-out acceptance remains separate from this successful deployment.
