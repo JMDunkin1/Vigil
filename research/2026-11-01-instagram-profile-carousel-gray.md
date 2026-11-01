@@ -112,3 +112,14 @@ Validation of this repair:
 The iPhone was unavailable in CoreDevice when validation completed. Use the
 normal combined verified updater for delivery; do not describe successful
 fixtures as a completed phone update or physical acceptance.
+
+The repair was committed and pushed as `92e5225`. The subsequent normal update
+stopped before building or installing because the paired iPhone was unreachable.
+A detached, one-time local retry worker is waiting in this checkout; its ignored
+status file is `data/instagram-carousel-delivery-status.json`. It invokes only
+`npm run agent:update:social`, requires the validated phone input fingerprint,
+and stops after successful app/signing/live-policy/service verification or a
+non-transient failure. It expires after seven days and requires this Mac to
+remain running. On success it records and pushes only generated phone release
+metadata. No additional reproduction, inspection, policy exception, or restore
+is part of this pending delivery. Installation is not yet verified.
