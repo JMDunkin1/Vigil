@@ -26,6 +26,7 @@ final class GuardGeometry {
   var viewportSize: CGSize? = CGSize(width:390,height:844)
   var scrollingRegions: [CGRect] = [CGRect(x:0,y:300.0/844,width:1,height:60.0/844)]
   var carouselRegions: [CGRect] = []
+  var activationRegions: [CGRect] = []
   var isEnabled = true
 ${method('normalizedPoint')}
 ${method('blocksPan')}
@@ -50,6 +51,10 @@ check(guardGeometry.blocksPan(from:CGPoint(x:100,y:200),translation:CGPoint(x:0,
 guardGeometry.view?.bounds.size.width = 195
 check(!guardGeometry.blocksPan(from:CGPoint(x:50,y:160),translation:CGPoint(x:0,y:-30)), "Both axes use width-derived CSS scale")
 check(guardGeometry.blocksPan(from:CGPoint(x:50,y:100),translation:CGPoint(x:0,y:-30)), "Width changes retain background containment")
+guardGeometry.activationRegions = [CGRect(x:0,y:180.0/844,width:1,height:40.0/844)]
+check(!guardGeometry.blocksPan(from:CGPoint(x:50,y:100),translation:CGPoint(x:0,y:-3)), "A foreground action control retains its press through tap jitter")
+check(guardGeometry.blocksPan(from:CGPoint(x:50,y:80),translation:CGPoint(x:0,y:-30)), "Control activation exceptions remain confined to the control")
+guardGeometry.activationRegions = []
 guardGeometry.scrollingRegions = []
 guardGeometry.carouselRegions = [CGRect(x:0,y:300.0/844,width:1,height:60.0/844)]
 check(!guardGeometry.blocksPan(from:CGPoint(x:50,y:160),translation:CGPoint(x:-30,y:0)), "Selected post carousel keeps horizontal panning")

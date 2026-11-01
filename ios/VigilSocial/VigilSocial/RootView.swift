@@ -83,6 +83,10 @@ struct SocialContainerView: View {
                 .background(Color(uiColor: .systemBackground).ignoresSafeArea())
             }
         }
+        // WebKit handles the keyboard's visual viewport. Resizing its native
+        // canvas as well fires a second layout resize in Instagram, which can
+        // remount the recipient search input and immediately dismiss focus.
+        .ignoresSafeArea(.keyboard, edges: container.selectedService == .instagram ? .bottom : [])
         .task {
             while !container.migrationReady && !Task.isCancelled {
                 container.refreshMigrationReadiness()

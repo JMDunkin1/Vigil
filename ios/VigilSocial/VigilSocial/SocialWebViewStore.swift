@@ -28,6 +28,7 @@ final class InstagramWebView: WKWebView {
 @MainActor
 final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecognizerDelegate {
     var scrollingRegions: [CGRect] = []
+    var activationRegions: [CGRect] = []
     var carouselRegions: [CGRect] = []
     var viewportSize: CGSize?
     private weak var trackedTouch: UITouch?
@@ -65,6 +66,7 @@ final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecogn
     func blocksPan(from point: CGPoint, translation: CGPoint) -> Bool {
         guard isEnabled, let normalized = normalizedPoint(point) else { return false }
         if scrollingRegions.contains(where: { $0.contains(normalized) }) { return false }
+        if activationRegions.contains(where: { $0.contains(normalized) }) { return false }
         if abs(translation.x) > abs(translation.y),
            carouselRegions.contains(where: { $0.contains(normalized) }) { return false }
         return true
@@ -75,7 +77,8 @@ final class InstagramSharedItemPanGuard: UIPanGestureRecognizer, UIGestureRecogn
         // Yield the whole recipient/comments touch immediately. Waiting for
         // the pan threshold lets a keyboard-driven layout move its exception
         // away from the touch and turn a search tap into a cancelling pan.
-        if scrollingRegions.contains(where: { $0.contains(point) }) { return false }
+        if scrollingRegions.contains(where: { $0.contains(point) })
+            || activationRegions.contains(where: { $0.contains(point) }) { return false }
         // An additional finger must not replace the first touch's boundary.
         if trackedTouch == nil {
             trackedTouch = touch
@@ -1467,6 +1470,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             setInstagramReelScrollLocked(locked, in: webView,
                 scrollingRegions: validViewport ? Self.instagramGestureRegions(body["scrollingRegions"]) : [],
                 carouselRegions: validViewport ? Self.instagramGestureRegions(body["carouselRegions"]) : [],
+                activationRegions: validViewport ? Self.instagramGestureRegions(body["activationRegions"]) : [],
                 viewportSize: viewport)
         case "instagramSuggestedReels":
             guard service == .instagram, frame.isMainFrame,
@@ -2239,12 +2243,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func setInstagramReelScrollLocked(_ locked: Bool, in webView: WKWebView,
-                                      scrollingRegions: [CGRect] = [], carouselRegions: [CGRect] = [], viewportSize: CGSize? = nil) {
+                                      scrollingRegions: [CGRect] = [], carouselRegions: [CGRect] = [],
+                                      activationRegions: [CGRect] = [], viewportSize: CGSize? = nil) {
         guard webViews[.instagram] === webView else { return }
         let enforcedLock = locked || instagramSuggestedReelsBlocked
         instagramSharedViewerScrollLocked = enforcedLock
         instagramSharedItemPanGuard?.scrollingRegions = locked && !instagramSuggestedReelsBlocked ? scrollingRegions : []
         instagramSharedItemPanGuard?.carouselRegions = locked && !instagramSuggestedReelsBlocked ? carouselRegions : []
+        instagramSharedItemPanGuard?.activationRegions = locked && !instagramSuggestedReelsBlocked ? activationRegions : []
         instagramSharedItemPanGuard?.viewportSize = enforcedLock ? viewportSize : nil
         updateInstagramPanBoundary(locked: enforcedLock, in: webView)
     }
@@ -2293,12 +2299,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if !locked {
             instagramSharedItemPanGuard?.scrollingRegions = []
             instagramSharedItemPanGuard?.carouselRegions = []
+            instagramSharedItemPanGuard?.activationRegions = []
             instagramSharedItemPanGuard?.viewportSize = nil
         }
         // Comments can use the root WK scroll view. Keep it available when a
         // foreground exception exists; the parent pan boundary still rejects
         // every swipe that starts in the Reel behind that exception.
         let allowsForegroundScrolling = instagramSharedItemPanGuard.map {
+            // Button presses must not re-enable the underlying Reel scroller.
             !$0.scrollingRegions.isEmpty || !$0.carouselRegions.isEmpty
         } ?? false
         webView.scrollView.isScrollEnabled = !locked || allowsForegroundScrolling

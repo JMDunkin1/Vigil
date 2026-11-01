@@ -2771,14 +2771,17 @@ enum DOMAdapters {
           ...allRecipientSheets(),
           ...document.querySelectorAll('input, textarea, [contenteditable="true"], [role="slider"]')] : [];
         const scrollingRegions = [...new Set(sheets)].map(node => nativeGestureRegion(node, true)).filter(Boolean).slice(0, 24);
+        const activationRegions = locked ? [...document.querySelectorAll('button, [role="button"], a[href]')]
+          .filter(control => sheetOpeningControl(control) || viewerClosingControl(control))
+          .map(control => nativeGestureRegion(control, true)).filter(Boolean).slice(0, 24) : [];
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
-        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions, viewportSize: [innerWidth, innerHeight] });
+        const state = JSON.stringify({ locked, scrollingRegions, carouselRegions, activationRegions, viewportSize: [innerWidth, innerHeight] });
         if (!force && nativeScrollState === state) return;
         nativeScrollState = state;
         try {
           window.webkit?.messageHandlers?.vigil?.postMessage({
-            type: 'reelScrollLock', locked, scrollingRegions, carouselRegions, viewportSize: [innerWidth, innerHeight],
+            type: 'reelScrollLock', locked, scrollingRegions, carouselRegions, activationRegions, viewportSize: [innerWidth, innerHeight],
             documentID: String(window.__vigilDocumentID || '')
           });
         } catch (_) {}
@@ -2904,6 +2907,39 @@ enum DOMAdapters {
         return box.width > 0 && box.height > 0 && box.right > 0 && box.bottom > 0
           && box.left < innerWidth && box.top < innerHeight;
       };
+      const snapRailRoots = new WeakSet();
+      const foregroundSnapRail = (onlyRoot = null) => {
+        // The live mobile Direct viewer is a deeply nested, static flex rail:
+        // y-mandatory snapping, viewport-sized snap cards and a transparent
+        // interaction layer beside each video. It has no dialog semantics.
+        for (const video of (onlyRoot || document).querySelectorAll('video')) {
+          if (!activeViewer(video) || inSheet(video)) continue;
+          const box = video.getBoundingClientRect(), viewport = window.visualViewport;
+          const x = viewport?.offsetLeft || 0, y = viewport?.offsetTop || 0;
+          const width = viewport?.width || innerWidth, height = viewport?.height || innerHeight;
+          const left = Math.max(box.left, x), top = Math.max(box.top, y);
+          const right = Math.min(box.right, x + width), bottom = Math.min(box.bottom, y + height);
+          if (box.width < innerWidth * .72 || box.height < innerHeight * .45 || right <= left || bottom <= top) continue;
+          let card = null;
+          for (let node = video.parentElement; node && node !== document.body; node = node.parentElement) {
+            const style = getComputedStyle(node), bounds = node.getBoundingClientRect();
+            if (!card && /(?:start|center|end)/.test(style.scrollSnapAlign)
+                && bounds.width >= innerWidth * .72 && bounds.height >= innerHeight * .45) card = node;
+            if (!card || !/^(?:y|both)(?:\s|$)/.test(style.scrollSnapType) || !/auto|scroll/.test(style.overflowY)
+                || onlyRoot && node !== onlyRoot || !activeViewer(node)
+                || bounds.width < innerWidth * .72 || bounds.height < innerHeight * .6
+                || node.querySelector('[role="log"], [role="grid"][aria-label*="message" i]')) continue;
+            const foreground = [[.5,.1],[.25,.5],[.75,.5]].some(([px, py]) => {
+              const hit = document.elementFromPoint(left + (right - left) * px, top + (bottom - top) * py);
+              return hit && card.contains(hit) && !inSheet(hit);
+            });
+            if (foreground) return { root: node, card, video };
+          }
+        }
+        return null;
+      };
+      const activeSharedViewer = node => activeViewer(node)
+        && (!snapRailRoots.has(node) || Boolean(foregroundSnapRail(node)));
       const syncRoute = () => {
         if (pinnedID && directPath && location.pathname.startsWith('/direct/')
             && location.pathname !== directPath) reset();
@@ -2917,10 +2953,27 @@ enum DOMAdapters {
         }
         // Closing a comments/post portal can return the original media to its
         // article without changing the item URL. Keep observing the live page.
-        if (route && modalContext && !activeViewer(modalContext)) modalContext = null;
+        if (route && modalContext && !activeSharedViewer(modalContext)) modalContext = null;
         if (route && !modalContext) {
           const modal = foregroundModal(sharedIntent?.origin || viewerOrigin, sharedIntent?.background || viewerBackground);
           modalContext = modal;
+        }
+        if (!route && !pinnedID && location.pathname.startsWith('/direct/')) {
+          const rail = foregroundSnapRail();
+          if (rail) {
+            modalContext = rail.root;
+            snapRailRoots.add(rail.root);
+            pinnedID = sharedIntent?.route?.id || 'direct-modal';
+            pinnedKind = 'reel';
+            pinnedURL = location.href;
+            directPath = sharedIntent?.source || location.pathname;
+            viewerOrigin = sharedIntent?.origin || null;
+            viewerBackground = sharedIntent?.background || null;
+            viewerExistingPanels = sharedIntent?.existingPanels || foregroundModal(null, null, true);
+            viewerOpeningUntil = Date.now() + 1500;
+            lockedScroll.set(rail.root, rail.root.scrollTop);
+            sharedIntent = null;
+          }
         }
         const sharedStoryRoute = route?.kind === 'story' && ((pinnedKind === 'story' && pinnedID === route.id)
           || (sharedStory?.id === route.id && Number.isFinite(sharedStory.at)
@@ -2948,17 +3001,17 @@ enum DOMAdapters {
         const sheetContinuation = !route && pinnedID && modalContext && location.pathname.startsWith('/direct/')
           && continueViewerThroughSheet();
         const openingContinuation = !route && pinnedID && modalContext && location.pathname.startsWith('/direct/')
-          && !activeViewer(modalContext) && Date.now() < viewerOpeningUntil;
+          && !activeSharedViewer(modalContext) && Date.now() < viewerOpeningUntil;
         if (openingContinuation && !viewerTransitionTimer) {
           // Lazy hydration can replace the just-opened portal across render
           // frames. Preserve the existing pin, with an explicit expiry check.
           viewerTransitionTimer = setTimeout(() => { viewerTransitionTimer = 0; reconcile(); }, Math.max(0, viewerOpeningUntil - Date.now()));
-        } else if (activeViewer(modalContext)) {
+        } else if (activeSharedViewer(modalContext)) {
           clearTimeout(viewerTransitionTimer);
           viewerTransitionTimer = 0;
         }
         if (!route && pinnedID && modalContext && (!modalContext.isConnected
-            || (sheetContinuation || openingContinuation) && !activeViewer(modalContext)) && location.pathname.startsWith('/direct/')) {
+            || (sheetContinuation || openingContinuation) && !activeSharedViewer(modalContext)) && location.pathname.startsWith('/direct/')) {
           // React may replace the portal as well as the player. Transfer only
           // to another foreground viewer, never to the retained chat dialog.
           const replacement = foregroundModal(viewerOrigin, viewerBackground);
@@ -2966,7 +3019,7 @@ enum DOMAdapters {
         }
         // A player can briefly have no media during a React remount. Its
         // visible viewer, rather than a video URL or dimensions, owns the lock.
-        const viewerStillOpen = pinnedID && modalContext && (activeViewer(modalContext) || sheetContinuation || openingContinuation);
+        const viewerStillOpen = pinnedID && modalContext && (activeSharedViewer(modalContext) || sheetContinuation || openingContinuation);
         if (!route && viewerStillOpen && location.pathname.startsWith('/direct/')) {
           document.documentElement.dataset.vigilSingleReel = pinnedID;
           document.documentElement.dataset.vigilSingleReelKind = pinnedKind;
@@ -3003,12 +3056,23 @@ enum DOMAdapters {
           && rect.top < innerHeight * 0.88;
       };
       const foregroundModal = (origin = null, background = null, collectExisting = false) => {
+        if (!collectExisting) {
+          const rail = foregroundSnapRail();
+          if (rail) {
+            snapRailRoots.add(rail.root);
+            if (pinnedID && pinnedKind === 'reel' && !lockedScroll.has(rail.root)) lockedScroll.set(rail.root, rail.root.scrollTop);
+            return rail.root;
+          }
+        }
         // React can move the activated preview into its viewer. Only exclude
         // the origin while it still belongs to the captured conversation.
         if (background && !background.contains(origin)) origin = null;
         const containsConversation = node => node === background || background && node.contains(background);
         const conversationRoots = [...document.querySelectorAll('[role="log"], [role="grid"][aria-label*="message" i], textarea, input, [contenteditable="true"], [role="textbox"]')]
           .filter(node => node.matches('[role="log"], [role="grid"][aria-label*="message" i]')
+            || node.matches('[role="textbox"][contenteditable="true"]')
+              && !node.matches(recipientSearchSelector)
+              && !/comment/i.test(node.getAttribute('aria-label') || node.getAttribute('aria-placeholder') || node.getAttribute('data-placeholder') || '')
             || /^message(?:\.{3}|…)?$/i.test(String(node.getAttribute('aria-label') || node.getAttribute('placeholder') || '').trim()));
         const ownsConversation = node => conversationRoots.some(root => node === root || node.contains(root));
         const coversConversation = node => {
@@ -3157,7 +3221,8 @@ enum DOMAdapters {
         },
         containmentState() {
           return { pinned: Boolean(pinnedID), kind: pinnedKind,
-            viewer: Boolean(modalContext?.isConnected), awaitingViewer: Boolean(sharedIntent), suggestedBlocked: Boolean(suggestedReelsRoot) };
+            viewer: Boolean(modalContext?.isConnected), awaitingViewer: Boolean(sharedIntent), suggestedBlocked: Boolean(suggestedReelsRoot),
+            nativeGestureState: nativeScrollState ? JSON.parse(nativeScrollState) : null };
         },
         blocksDestination(value) { return blocksDestination(value); }
       });
@@ -3186,6 +3251,7 @@ enum DOMAdapters {
             || dialog === viewerBackground || dialog === sharedIntent?.background
             || modalContext && dialog.contains(modalContext)) return null;
         const bounds = dialog.getBoundingClientRect();
+        if (bounds.width < 180 || bounds.height < 160) return null;
         if (bounds.top <= 1 && bounds.left <= 1 && bounds.right >= innerWidth - 1 && bounds.bottom >= innerHeight - 1) {
           const color = getComputedStyle(dialog).backgroundColor;
           if (!/^rgb\([^/]*\)$/.test(color) && !/(?:,|\/)\s*(?:1(?:\.0+)?|100%)\s*\)$/.test(color)) return null;
@@ -3216,16 +3282,21 @@ enum DOMAdapters {
         return searchControl ? dialog : null;
       };
       const recipientSheet = target => {
-        const panel = target?.closest?.('[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]');
-        if (!panel || !panel.matches('[role="dialog"], [aria-modal="true"]') && !knownRecipientSheets.has(panel)) return null;
-        return verifiedRecipientPanel(panel);
+        const selector = '[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]';
+        for (let panel = target?.closest?.(selector); panel; panel = panel.parentElement?.closest(selector)) {
+          if ((panel.matches('[role="dialog"], [aria-modal="true"]') || knownRecipientSheets.has(panel))
+              && verifiedRecipientPanel(panel)) return panel;
+        }
+        return null;
       };
       const allRecipientSheets = () => [...document.querySelectorAll(
         '[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]'
       )].filter(panel => recipientSheet(panel) === panel);
       const normalizeRecipientSheets = () => {
         for (const dialog of document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-vigil-instagram-recipient-sheet]')) {
-          if (recipientSheet(dialog) === dialog) dialog.dataset.vigilInstagramRecipientSheet = 'true';
+          if (recipientSheet(dialog) === dialog) {
+            if (dialog.dataset.vigilInstagramRecipientSheet !== 'true') dialog.dataset.vigilInstagramRecipientSheet = 'true';
+          }
           else dialog.removeAttribute('data-vigil-instagram-recipient-sheet');
         }
         // Send can mount an anonymous positioned panel, just as Comments can.
@@ -3233,15 +3304,16 @@ enum DOMAdapters {
         // root; a Search control in the retained conversation is insufficient.
         for (const search of [...document.querySelectorAll(recipientSearchSelector)].filter(activeViewer).slice(0, 32)) {
           if (recipientSheet(search)) continue;
-          for (let panel = search.parentElement, depth = 0; panel && panel !== document.body && depth < 12;
+          for (let panel = search.parentElement, depth = 0; panel && panel !== document.body && depth < 40;
             panel = panel.parentElement, depth++) {
             if (panel.matches('main, [role="main"], article, [role="article"], nav, [role="navigation"]')) break;
             if (Date.now() >= recipientRequestedUntil && !knownRecipientSheets.has(panel)) continue;
             const box = panel.getBoundingClientRect(), style = getComputedStyle(panel);
-            if (box.width < 180 || box.height < 160 || !(/^(fixed|absolute)$/.test(style.position) || style.transform !== 'none')) continue;
+            const choices = panel.querySelector('input[type="radio"], input[type="checkbox"], [role="radio"], [role="checkbox"]');
+            if (box.width < 180 || box.height < 160 || !(choices || /^(fixed|absolute)$/.test(style.position) || style.transform !== 'none')) continue;
             if (!verifiedRecipientPanel(panel)) continue;
             knownRecipientSheets.add(panel);
-            panel.dataset.vigilInstagramRecipientSheet = 'true';
+            if (panel.dataset.vigilInstagramRecipientSheet !== 'true') panel.dataset.vigilInstagramRecipientSheet = 'true';
             break;
           }
         }
@@ -3281,7 +3353,7 @@ enum DOMAdapters {
         return labels.some(label => /^(?:(?:send|share)(?: (?:post|reel|video|to))?|comments?|view(?: all)?(?: \d+)? comments?)$/i.test(label)) ? control : null;
       };
       const rememberSheetOpening = target => {
-        if (!pinnedID || !modalContext || !activeViewer(modalContext) || inSheet(target) || !sheetOpeningControl(target)) return;
+        if (!pinnedID || !modalContext || !activeSharedViewer(modalContext) || inSheet(target) || !sheetOpeningControl(target)) return;
         const control = sheetOpeningControl(target);
         if ([control, ...control.querySelectorAll('[aria-label], title')].some(node =>
           /^(send|share)(?: (post|reel|video|to))?$/i.test(String(node.getAttribute('aria-label') || node.textContent || '').trim()))) {
@@ -3292,13 +3364,15 @@ enum DOMAdapters {
         sheetOpeningUntil = Date.now() + 1500;
         scheduleSheetTransitionCheck(sheetOpeningUntil);
       };
-      const rememberViewerClosing = target => {
+      const viewerClosingControl = target => {
         const control = target?.closest?.('button, [role="button"], a[href]');
-        if (!pinnedID || !modalContext?.contains(control) || inSheet(target)) return;
-        if ([control, ...control.querySelectorAll('[aria-label], title')].some(node =>
-          /^(close|back|dismiss)( (reel|post|video))?$/i.test(String(node.getAttribute('aria-label') || node.textContent || '').trim()))) {
-          viewerOpeningUntil = 0;
-        }
+        if (!pinnedID || !modalContext || !control || inSheet(target)) return null;
+        return [control, ...control.querySelectorAll('[aria-label], title')].some(node =>
+          /^(close|back|dismiss)( (reel|post|video))?$/i.test(String(node.getAttribute('aria-label') || node.textContent || '').trim())) ? control : null;
+      };
+      const rememberViewerClosing = target => {
+        // The live viewer's Back control is a sibling of its scrolling rail.
+        if (viewerClosingControl(target)) viewerOpeningUntil = 0;
       };
       const continueViewerThroughSheet = () => {
         const sheets = [...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"]'),
@@ -3555,6 +3629,27 @@ enum DOMAdapters {
           return true;
         }
         if (!location.pathname.startsWith('/direct/') && mediaRoute(location.href)?.kind !== 'reel') return false;
+        const quarantine = panel => {
+          suggestedReelsRoot = panel;
+          panel.setAttribute('data-vigil-instagram-suggested-reels', 'blocked');
+          panel.querySelectorAll('video, audio').forEach(media => media.pause());
+          publishSuggestedReelsBlock();
+          return true;
+        };
+        const foregroundTitle = label => {
+          if (label.childElementCount || !/^(suggested|suggested reels)$/i.test(String(label.textContent || '').trim())
+              || !activeViewer(label) || inSheet(label)
+              || label.closest('input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], article, [role="article"], [data-testid*="caption" i], [data-message-id], [role="row"]')) return false;
+          const box = label.getBoundingClientRect(), viewport = window.visualViewport;
+          const left = box.left - (viewport?.offsetLeft || 0), top = box.top - (viewport?.offsetTop || 0);
+          if (left < 0 || left > (viewport?.width || innerWidth) * .5 || top < 0
+              || top + box.height > Math.min(160, (viewport?.height || innerHeight) * .22)) return false;
+          const hit = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+          return Boolean(hit && (hit === label || label.contains(hit) || hit.contains(label)));
+        };
+        const rail = foregroundSnapRail();
+        if (rail && [...rail.card.querySelectorAll('h1, h2, h3, [role="heading"], [role="tab"], button, span, div')]
+            .some(foregroundTitle)) return quarantine(rail.root);
         const videos = [...document.querySelectorAll('video')].filter(media => {
           if (!activeViewer(media) || inSheet(media)) return false;
           const bounds = media.getBoundingClientRect();
@@ -3571,18 +3666,8 @@ enum DOMAdapters {
         });
         if (!videos.length) return false;
         for (const label of document.querySelectorAll('h1, h2, h3, [role="heading"], [role="tab"], button, span, div')) {
-          if (label.childElementCount || !/^(suggested|suggested reels)$/i.test(String(label.textContent || '').trim())
-              || !activeViewer(label) || inSheet(label)) continue;
-          // Text being composed, sent, or captioned is never a Reel rail title,
-          // even when it happens to occupy the same upper-left coordinates.
-          if (label.closest('input, textarea, [contenteditable]:not([contenteditable="false"]), [role="textbox"], article, [role="article"], [data-testid*="caption" i], [data-message-id], [role="row"]')) continue;
+          if (!foregroundTitle(label)) continue;
           const header = label.closest('header, nav, h1, h2, h3, [role="tab"], [role="heading"], [role="navigation"], [role="tablist"]');
-          const title = label.getBoundingClientRect();
-          const viewport = window.visualViewport, left = title.left - (viewport?.offsetLeft || 0), top = title.top - (viewport?.offsetTop || 0);
-          if (left < 0 || left > (viewport?.width || innerWidth) * .5 || top < 0
-              || top + title.height > Math.min(160, (viewport?.height || innerHeight) * .22)) continue;
-          const hit = document.elementFromPoint(title.left + title.width / 2, title.top + title.height / 2);
-          if (!hit || hit !== label && !label.contains(hit) && !hit.contains(label)) continue;
           for (let panel = label.parentElement, depth = 0; panel && panel !== document.body && depth < 12; panel = panel.parentElement, depth++) {
             const main = panel.matches('main, [role="main"]');
             if (panel.matches('article, [role="article"]') || panel.querySelector('main, [role="main"]')) break;
@@ -3592,11 +3677,7 @@ enum DOMAdapters {
                 || Math.max(box.width, panel.clientWidth) < innerWidth * .72 || Math.max(box.height, panel.clientHeight) < innerHeight * .6) continue;
             const video = videos.find(media => panel.contains(media));
             if (!video) continue;
-            suggestedReelsRoot = panel;
-            panel.setAttribute('data-vigil-instagram-suggested-reels', 'blocked');
-            panel.querySelectorAll('video, audio').forEach(media => media.pause());
-            publishSuggestedReelsBlock();
-            return true;
+            return quarantine(panel);
           }
         }
         return false;
@@ -8831,7 +8912,7 @@ enum DOMAdapters {
         let panel = commentPanelBounds(candidate) ? candidate : null;
         if (candidate === boundary) return panel;
         for (let parent = candidate.parentElement, depth = 0;
-          parent && parent !== document.body && depth < 12; parent = parent.parentElement, depth++) {
+          parent && parent !== document.body && depth < 40; parent = parent.parentElement, depth++) {
           if (parent.matches('article, [role="article"], main, [role="main"], nav, [role="navigation"]')
               || largeVisibleMediaIn(parent)) break;
           const style = getComputedStyle(parent);
@@ -8845,7 +8926,7 @@ enum DOMAdapters {
         if (!heading) return null;
         let candidate = heading.parentElement;
         let depth = 0;
-        while (candidate && depth < 12) {
+        while (candidate && depth < 40) {
           if (largeMedia && candidate.contains(largeMedia)) break;
           if ((!composer || candidate.contains(composer)) && commentPanelBounds(candidate)) {
             return completeCommentPanel(candidate, dialog);
@@ -8935,16 +9016,17 @@ enum DOMAdapters {
         const requested = commentSurfaceRequestedAt > 0 && performance.now() - commentSurfaceRequestedAt < 5000;
         const contentRoots = 'article, [role="article"], main, [role="main"], nav, [role="navigation"]';
         let candidate = composer.parentElement;
-        for (let depth = 0; candidate && candidate !== document.body && depth < 12; depth++, candidate = candidate.parentElement) {
+        for (let depth = 0; candidate && candidate !== document.body && depth < 40; depth++, candidate = candidate.parentElement) {
           if (candidate.matches(contentRoots) || largeVisibleMediaIn(candidate)) break;
           if (!requested && !knownAnonymousCommentSheets.has(candidate)) continue;
           const box = candidate.getBoundingClientRect();
           if (box.width < 180 || box.height < 160 || box.bottom <= 0 || box.top >= innerHeight
-              || box.right <= 0 || box.left >= innerWidth || !commentHeadingIn(candidate, true)) continue;
+              || box.right <= 0 || box.left >= innerWidth
+              || !knownAnonymousCommentSheets.has(candidate) && !commentHeadingIn(candidate, true)) continue;
           // Anonymous drawers still need an independently positioned portal.
           // A post caption/composer cannot exempt the containing media viewer.
           let portal = candidate;
-          for (let level = 0; portal && portal !== document.body && level < 12; level++, portal = portal.parentElement) {
+          for (let level = 0; portal && portal !== document.body && level < 40; level++, portal = portal.parentElement) {
             if (portal.matches(contentRoots) || largeVisibleMediaIn(portal)) break;
             if (/^(fixed|absolute)$/.test(getComputedStyle(portal).position)) {
               const panel = completeCommentPanel(candidate, portal);
@@ -8987,7 +9069,7 @@ enum DOMAdapters {
           if (!activeSheets.has(sheet)) sheet.removeAttribute('data-vigil-instagram-comments-sheet');
         });
         activeSheets.forEach((sheet) => {
-          sheet.dataset.vigilInstagramCommentsSheet = 'true';
+          if (sheet.dataset.vigilInstagramCommentsSheet !== 'true') sheet.dataset.vigilInstagramCommentsSheet = 'true';
         });
         if (activeSheets.size) scheduleCommentPlaybackRestore();
       };

@@ -15745,6 +15745,19 @@ extension VigilSocialTests {
 }
 
 extension VigilSocialTests {
+    @MainActor
+    func testInstagramActionRegionsDoNotEnableBackgroundScrolling() throws {
+        let store = SocialWebViewStore(fixedService: .instagram, loadInitialPages: false, websiteDataStore: .nonPersistent())
+        let page = store.webView(for: .instagram)
+        let boundary = try XCTUnwrap(page.gestureRecognizers?.compactMap { $0 as? InstagramSharedItemPanGuard }.first)
+        store.setInstagramReelScrollLocked(true, in: page, activationRegions: [CGRect(x: 0, y: 0, width: 0.1, height: 0.1)])
+        XCTAssertFalse(page.scrollView.isScrollEnabled, "Action presses must not enable Reel scrolling")
+        XCTAssertFalse(boundary.activationRegions.isEmpty)
+        store.setInstagramReelScrollLocked(false, in: page)
+        XCTAssertTrue(page.scrollView.isScrollEnabled)
+        XCTAssertTrue(boundary.activationRegions.isEmpty)
+    }
+
     static let instagramSuggestedReelsHTML = #"""
     <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     body{margin:0}#viewer{position:fixed;inset:0;background:white;z-index:2}

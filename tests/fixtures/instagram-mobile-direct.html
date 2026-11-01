@@ -1,0 +1,69 @@
+<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+body{margin:0;background:#111;color:white}#persistent{position:fixed;inset:0}#chat{height:100%;overflow:auto}
+#preview img{width:200px;height:356px}#composer{position:fixed;bottom:0;height:40px}#surface{position:absolute;inset:0}
+.layer{height:100%;display:flex;flex-direction:column}#viewer{height:100%;position:relative;background:#222}
+#rail{height:calc(100% - 70px);flex:none;overflow-y:scroll;overflow-x:hidden;scroll-snap-type:y mandatory}
+#track{position:relative;height:100%}.snap{height:100%;scroll-snap-align:center;position:relative;flex:none}
+.content{position:relative;height:100%;width:100%}video{display:block;width:100%;height:100%}
+.video-wrapper{position:absolute;inset:0}.interaction{position:absolute;inset:0;z-index:1}
+.badge{position:absolute;top:35px;left:36px;z-index:2}.badge span{display:block;font-size:12px}
+.actions{position:absolute;right:8px;bottom:100px;z-index:3}.caption{position:absolute;bottom:30px;z-index:3}
+#viewer-back{position:absolute;top:12px;left:8px;width:36px;height:32px;z-index:4}
+#comments-sheet{position:fixed;top:156px;left:0;width:100%;height:100vh;background:#eee;color:black;z-index:6;overflow:hidden}
+#comment-list{height:calc(100% - 120px);overflow:auto}#comment-rows{height:2600px}#comment-input{position:absolute;bottom:30px;left:50px;width:75%}
+#picker-shell{position:fixed;inset:0;display:grid;place-items:center;z-index:7}
+#dialog-host{position:relative;display:flex;width:40px;height:75vh;overflow:hidden}
+#picker{position:fixed;inset:0;background:#eee;color:black;overflow:hidden}
+#search{position:absolute;left:48px;top:64px;width:260px;height:38px}#people{position:absolute;top:120px;left:0;width:100%;height:calc(100% - 120px);overflow:auto}
+.person{height:70px}.person input{margin-left:85%}
+</style><script>window.fetch=async()=>({ok:true,json:async()=>({})});</script></head><body>
+<div id="persistent"><div id="chat"><div id="preview" role="button"><img></div><div style="height:1800px">Messages</div><div id="composer" contenteditable="true" role="textbox"></div></div><div id="surface"></div></div>
+<script>
+document.querySelector('#preview img').src='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" width="200" height="356"%3E%3Crect width="200" height="356" fill="purple"/%3E%3C/svg%3E';
+window.fixtureMount=mode=>{
+ let root=document.getElementById('surface');for(let i=0;i<8;i++){const n=document.createElement('div');n.className='layer';root.append(n);root=n;}
+ root.innerHTML='<div id="viewer" class="layer"><div id="rail"><div id="track"></div></div><div style="height:70px">Viewer controls</div></div>';
+ const track=document.getElementById('track');
+ for(let i=0;i<4;i++){
+  const card=document.createElement('div');card.className='snap';card.id='card-'+i;
+  let content=card;for(let j=0;j<6;j++){const n=document.createElement('div');n.className='content';content.append(n);content=n;}
+  content.innerHTML='<div class="video-wrapper"><video muted playsinline></video></div><div class="interaction"></div>'
+   +'<div class="badge"><span class="label">'+(mode==='suggested'?'Suggested':'Shared')+'</span></div>'
+   +'<div class="actions"><button class="comments"><svg aria-label="Comment"></svg>Comment</button><button class="send"><svg aria-label="Send post"></svg>Send</button></div>'
+   +'<div class="caption">Caption</div>';
+  content.querySelector('.comments').onclick=fixtureComments;content.querySelector('.send').onclick=fixturePicker;track.append(card);
+ }
+ if(mode==='nonzero')document.getElementById('rail').scrollTop=document.getElementById('rail').clientHeight*2;
+ if(mode==='caption')document.querySelector('#card-0 .caption').textContent='Suggested';
+ if(mode==='editable'){const label=document.querySelector('#card-0 .label');label.textContent='Suggested';label.contentEditable='true';}
+ const back=document.createElement('button');back.id='viewer-back';back.setAttribute('aria-label','Back');back.textContent='Back';back.onclick=()=>document.getElementById('viewer').remove();document.getElementById('viewer').append(back);
+ document.querySelector('#card-0 .send').id='send-current';document.querySelector('#card-0 .comments').id='comments-current';
+};
+window.fixtureOpen=mode=>{
+ const preview=document.getElementById('preview');preview.onclick=()=>fixtureMount(mode);
+ if(mode==='untracked')fixtureMount(mode);else preview.click();
+};
+window.fixtureComments=()=>{
+ const sheet=document.createElement('div');sheet.id='comments-sheet';
+ sheet.innerHTML='<div id="comment-heading"><span>Comments</span></div><div id="comment-list"><div id="comment-rows">Comment rows</div></div><textarea id="comment-input" placeholder="Add a comment…"></textarea>';
+ document.body.append(sheet);
+};
+window.fixturePicker=()=>{
+ const shell=document.createElement('div');shell.id='picker-shell';
+ shell.innerHTML='<div id="dialog-host" role="dialog"><div id="picker"><h2>Send to</h2><input id="search" placeholder="Search"><div id="people">'
+  +Array.from({length:20},()=>'<div class="person"><input type="radio" aria-label="Radio selection"></div>').join('')+'</div></div></div>';
+ document.body.append(shell);
+};
+window.fixtureNativeAllows=(id,activation=false)=>{
+ const box=document.getElementById(id).getBoundingClientRect(),state=window.__vigilInstagramSharedItem.containmentState().nativeGestureState;
+ const x=(box.left+Math.min(box.width,100)/2)/innerWidth,y=(box.top+Math.min(box.height,80)/2)/innerHeight;
+ return state?.locked&&(activation?state.activationRegions:state.scrollingRegions).some(r=>x>=r[0]&&x<=r[0]+r[2]&&y>=r[1]&&y<=r[1]+r[3]);
+};
+window.fixtureContained=()=>{
+ const rail=document.getElementById('rail'),state=window.__vigilInstagramSharedItem.containmentState();
+ const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});rail.dispatchEvent(wheel);
+ return state.pinned&&state.kind==='reel'&&rail.getAttribute('data-vigil-single-reel-scope')==='reel'&&wheel.defaultPrevented;
+};
+window.fixtureScrollSheet=id=>{const n=document.getElementById(id),event=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});n.dispatchEvent(event);n.scrollTop=120;return !event.defaultPrevented&&n.scrollTop===120;};
+</script></body></html>
