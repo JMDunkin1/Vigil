@@ -64,7 +64,8 @@ enum DOMAdapters {
                 )
             : service == .instagram ? instagramStableDocumentStartStyle : ""
         return authenticationDocumentGuard(for: service, body:
-            (service == .snapchat ? snapchatDesktopIdentityBootstrap + snapchatCameraBootstrap + snapchatCallBootstrap : "")
+            (service == .snapchat ? earlyMediaGate(audioEnabled: audioEnabled)
+                + snapchatDesktopIdentityBootstrap + snapchatCameraBootstrap + snapchatCallBootstrap : "")
             + (service == .linkedin ? linkedin : "")
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
@@ -1543,7 +1544,7 @@ enum DOMAdapters {
         case .linkedin:
             #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilLinkedInInstalled)"#
         case .snapchat:
-            #"Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilSnapchatInstalled)"#
+            #"Boolean(window.__vigilEarlyMediaGate && window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilSnapchatInstalled)"#
         case .facebook, .x, .tiktok, .reddit:
             "Boolean(window.__vigilCommonInstalled && window.__vigilPolicyProbeInstalled && window.__vigilExpandedMediaChildLockInstalled && \(service == .reddit ? "window.__vigilRedditChildLockInstalled && " : "")window.\(service.focusedRoutePolicy!.installationFlag))"
         }
@@ -1719,7 +1720,11 @@ enum DOMAdapters {
     }
 
     static func frameSafetyScript(audioEnabled: Bool) -> String {
-        common(audioEnabled: audioEnabled)
+        // Document-start compatibility can fail before installing the gate.
+        // Common inspection must capture a real gate before it can pause an
+        // unclassified video; otherwise that pause rejects Snapchat's native
+        // play promise and the site immediately removes the received Snap.
+        earlyMediaGate(audioEnabled: audioEnabled) + common(audioEnabled: audioEnabled)
     }
 
     static func installedFrameSafetyScript(

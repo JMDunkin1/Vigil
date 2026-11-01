@@ -75,7 +75,10 @@ const fixture = `
       Uint8Array.from(atob('${video.toString('base64')}'), value => value.charCodeAt(0))
     ], { type: 'video/mp4' }));
     document.querySelector('.b2f4R').appendChild(media);
-    media.play().catch(error => fixtureFailures.push(error.name));
+    media.play().catch(error => {
+      fixtureFailures.push(error.name);
+      document.querySelector('.ecBYF')?.remove();
+    });
   };
   window.fixtureSwitch = mode => {
     fixtureMode = mode; fixtureCandidates.length = 0;
@@ -137,9 +140,41 @@ scenarios.push({ name: 'A blocked page cannot replay a previously approved sourc
 
 const directory = await mkdtemp(join(tmpdir(), 'vigil-snapchat-video-webkit-'));
 try {
+  // Compile the actual Swift factories so recovery tests cannot accidentally
+  // supply a gate that the app's document-end installation never installs.
+  const [classifier, store] = await Promise.all([
+    readFile(join(root, 'ios/VigilSocial/VigilSocial/ContentSafetyClassifier.swift'), 'utf8'),
+    readFile(join(root, 'ios/VigilSocial/VigilSocial/SocialWebViewStore.swift'), 'utf8')
+  ]);
+  const policyTypes = classifier.slice(classifier.indexOf('enum ContentSafetyVerdict'),
+    classifier.indexOf('protocol MediaSafetyClassifying'));
+  const accountType = store.slice(store.indexOf('enum InstagramInformationalAccounts {'),
+    store.indexOf('@MainActor\nfinal class SocialWebViewStore'));
+  assert.ok(policyTypes.includes('enum UnclassifiedMediaPolicy') && accountType.includes('normalizedUsername'));
+  await Promise.all([
+    writeFile(join(directory, 'DOMAdapters.swift'), source),
+    writeFile(join(directory, 'Types.swift'), 'import Foundation\n' + policyTypes + accountType),
+    writeFile(join(directory, 'Export.swift'), `import Foundation
+      @main struct Export {
+        static func main() throws {
+          let scripts = [
+            "frameSafety": DOMAdapters.installedFrameSafetyScript(for: .snapchat, audioEnabled: true),
+            "documentStart": DOMAdapters.documentStartScript(for: .snapchat,
+                unclassifiedMediaPolicy: .conceal, audioEnabled: true),
+            "probe": DOMAdapters.mainFrameInstallationProbe(for: .snapchat)
+          ]
+          FileHandle.standardOutput.write(try JSONEncoder().encode(scripts))
+        }
+      }`)
+  ]);
+  const exporter = join(directory, 'export-adapters');
+  await exec('xcrun', ['swiftc', join(directory, 'DOMAdapters.swift'),
+    join(root, 'ios/VigilSocial/VigilSocial/SocialService.swift'), join(directory, 'Types.swift'),
+    join(directory, 'Export.swift'), '-o', exporter], { timeout: 60000 });
+  const exported = JSON.parse((await exec(exporter, [], { maxBuffer: 4 * 1024 * 1024 })).stdout);
   await Promise.all([
     writeFile(join(directory, 'prelude.js'), fixture + safety + expand(body('earlyMediaGate'))),
-    writeFile(join(directory, 'adapter.js'), expand(body('common')) + script('snapchatMobileLayout')),
+    writeFile(join(directory, 'adapter.js'), exported.frameSafety + script('snapchatMobileLayout')),
     writeFile(join(directory, 'scenarios.json'), JSON.stringify(scenarios))
   ]);
   const binary = join(directory, 'snapchat-video-test');
@@ -148,6 +183,29 @@ try {
   process.stdout.write(result.stdout);
   if (result.stderr) process.stderr.write(result.stderr);
   assert.equal(result.stdout.split(/\r?\n/u).filter(line => line.startsWith('PASS ')).length, scenarios.length);
+  const recoveryScenarios = [{ name: 'A missing document-start gate recovers before the first received Snap', html,
+    steps: [initial, { condition: '!!window.__vigilEarlyMediaGate && fixtureFailures.length === 0' }] }];
+  for (const mode of ['unknown', 'sensitive']) recoveryScenarios.push({
+    name: `Document-end recovery holds the first ${mode} received video`, html, steps: [
+      { action: `fixtureMode='${mode}';fixtureStart()`,
+        condition: `fixtureVideo()?.dataset.vigilVideoFrameVerdict === '${mode}'` },
+      { condition: 'fixtureVideo().paused && fixtureVideo().muted && fixtureNativeStarts === 0 && fixtureFailures.length === 0' }
+    ]
+  });
+  await Promise.all([
+    writeFile(join(directory, 'prelude.js'), fixture + safety),
+    writeFile(join(directory, 'scenarios.json'), JSON.stringify(recoveryScenarios))
+  ]);
+  const recovery = await exec(binary, [directory], { timeout: 60000, maxBuffer: 2 * 1024 * 1024 });
+  process.stdout.write(recovery.stdout);
+  if (recovery.stderr) process.stderr.write(recovery.stderr);
+  assert.equal(recovery.stdout.split(/\r?\n/u).filter(line => line.startsWith('PASS ')).length, recoveryScenarios.length);
+  const probe = new Function('window', `return ${exported.probe};`);
+  const partial = { __vigilCommonInstalled: true, __vigilPolicyProbeInstalled: true, __vigilSnapchatInstalled: true };
+  assert.equal(probe(partial), false, 'A common adapter without its playback gate is incomplete');
+  assert.equal(probe({ ...partial, __vigilEarlyMediaGate: {} }), true);
+  assert.ok(exported.documentStart.indexOf('window.__vigilEarlyMediaGate')
+    < exported.documentStart.indexOf('const desktopUserAgent'), 'Install the Snapchat gate before compatibility code');
   console.log('VIGIL_SNAPCHAT_VIDEO_WEBKIT_COMPLETE');
   console.log(`WebKit evidence retained at ${directory}`);
 } catch (error) {

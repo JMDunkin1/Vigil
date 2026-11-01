@@ -47,3 +47,39 @@ whitespace checks, and the unsigned combined iPhone Release build pass. The
 physical phone became unavailable before installation; no phone update was
 performed by this chat. Physical playback acceptance is separate from these
 fixture results and must be confirmed after the verified combined update.
+
+## Physical follow-up: missing document-start gate
+
+The user reproduced “Failed to load the media” after a later verified combined
+deployment. A paired developer capture on the actual Snapchat `/web` document
+found `__vigilCommonInstalled=true` and `__vigilEarlyMediaGate` absent. Opening
+the received Snap called `play()` on a blob video with `readyState=0`, no decoded
+dimensions, and `playsInline=false`. Three milliseconds later its promise
+rejected with `AbortError: The operation was aborted.` and the viewer closed.
+No network failure or decoder MediaError was observed in this capture.
+
+The previous regression fixtures always installed the document-start gate, so
+they could not expose this installation gap. The common adapter can pause an
+unclassified native playback request, but without the early wrapper that pause
+rejects Snapchat's own promise. The capture does not establish why the earlier
+document-start installation was missing.
+
+Snapchat now installs the early gate before its compatibility bootstraps. The
+document-end safety factory and native recovery factory also install the same
+idempotent gate before common inspection captures it. Snapchat's installation
+probe requires the gate, so common/service flags alone cannot pass health
+verification. Existing fingerprint-bound media decisions, audio preferences,
+authentication exclusions, and supervised restrictions remain in force.
+
+The WebKit harness now compiles the production Swift factories and runs their
+actual document-end output. Three additional cases omit the initial gate:
+ordinary received video recovers without an error, and unknown or sensitive
+first videos stay paused and muted. All eight cases pass. The preceding code
+fails the missing-gate case with `AbortError`. Live diagnostic wrappers were
+removed at the end of capture; no further phone interaction or installation is
+part of these offline checks.
+
+The eight video scenarios, four existing call/WebRTC scenarios, seven focused
+runtime suites, source lint, and unsigned combined iPhone Release build pass.
+This follow-up still requires the verified phone update and a physical replay;
+the user needed to use the phone after the capture, so installation is deferred.
