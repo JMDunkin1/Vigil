@@ -1,6 +1,8 @@
 import AVFoundation
 import Combine
+import CryptoKit
 import Foundation
+import ImageIO
 import MediaPlayer
 import Photos
 import UIKit
@@ -457,6 +459,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var serviceAccessReceipt = SocialServiceAccessReceipt()
     private var snapchatRenderSnapshots: [[String: Any]] = []
     private var snapchatExportInProgress = false
+    private var snapchatStickerInProgress = false
+    private var snapchatStickerLibrary: SnapchatStickerLibrary?
     private(set) var linkedInApplePopup: LinkedInApplePopupController?
     var openSocialLink: ((URL) -> Void)?
     var accessRestriction: (() -> Bool)?
@@ -493,6 +497,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         textClassifier: (any PageTextSafetyClassifying)? = nil,
         unclassifiedMediaPolicy: UnclassifiedMediaPolicy? = nil,
         websiteDataStore: WKWebsiteDataStore? = nil,
+        snapchatStickerLibrary: SnapchatStickerLibrary? = nil,
         mediaClassificationDeadlineNanoseconds: UInt64 = 5_000_000_000
     ) {
         let configured = fixedService
@@ -505,6 +510,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         self.bundle = bundle
         self.loadInitialPages = loadInitialPages
         self.websiteDataStore = websiteDataStore
+        self.snapchatStickerLibrary = snapchatStickerLibrary
         self.mediaClassifier = mediaClassifier
         self.textClassifier = textClassifier
         self.unclassifiedMediaPolicy = unclassifiedMediaPolicy ?? UnclassifiedMediaPolicy(bundle: bundle)
@@ -1565,6 +1571,21 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 guard let webView else { self.snapchatExportInProgress = false; return }
                 await self.saveSnapchatMedia(data, mimeType: mimeType, requestID: requestID,
                                             documentID: documentID, in: webView)
+            }
+        case "snapchatSticker":
+            guard service == .snapchat, frame.isMainFrame,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  let webView = message.webView, SnapchatMediaPolicy.isTrustedDocument(webView.url),
+                  let documentID = body["documentID"] as? String,
+                  let requestID = body["requestID"] as? String, UUID(uuidString: requestID) != nil,
+                  let action = body["action"] as? String, ["save", "list", "use", "remove"].contains(action),
+                  !snapchatStickerInProgress else { return }
+            snapchatStickerInProgress = true
+            Task { [weak self, weak webView] in
+                guard let self else { return }
+                guard let webView else { self.snapchatStickerInProgress = false; return }
+                await self.handleSnapchatSticker(body, action: action, requestID: requestID,
+                                                documentID: documentID, in: webView)
             }
         case "chromeColor":
             guard service == .snapchat, frame.isMainFrame,
@@ -2799,6 +2820,89 @@ extension SocialWebViewStore: WKNavigationDelegate {
     }
 }
 
+// A phone-local collection, isolated by the same website-data-store identity as
+// the Snapchat account. It never calls Snapchat's private Favorites APIs.
+@MainActor
+final class SnapchatStickerLibrary {
+    static let maximumBytes = 4 * 1024 * 1024
+    static let maximumCount = 64
+    private let directory: URL
+
+    init(directory: URL) { self.directory = directory }
+
+    enum Failure: LocalizedError {
+        case invalidImage, full
+        var errorDescription: String? {
+            switch self {
+            case .invalidImage: "Sticker unavailable"
+            case .full: "Saved stickers is full. Remove a sticker first"
+            }
+        }
+    }
+
+    static func validImage(_ data: Data) -> Bool {
+        guard !data.isEmpty, data.count <= maximumBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              CGImageSourceGetType(source) as String? == UTType.png.identifier,
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int else { return false }
+        return (1...2048).contains(width) && (1...2048).contains(height)
+    }
+
+    private func file(_ id: String) throws -> URL {
+        guard id.range(of: #"^[a-f0-9]{64}$"#, options: .regularExpression) != nil else { throw Failure.invalidImage }
+        return directory.appendingPathComponent(id).appendingPathExtension("png")
+    }
+
+    private func files() throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        return try FileManager.default.contentsOfDirectory(at: directory,
+            includingPropertiesForKeys: [.creationDateKey, .fileSizeKey], options: [.skipsHiddenFiles])
+            .filter { $0.pathExtension == "png" && (try? file($0.deletingPathExtension().lastPathComponent)) != nil }
+            .sorted { ((try? $0.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast)
+                > ((try? $1.resourceValues(forKeys: [.creationDateKey]).creationDate) ?? .distantPast) }
+    }
+
+    func save(_ data: Data) throws -> String {
+        guard Self.validImage(data) else { throw Failure.invalidImage }
+        let id = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        let target = try file(id)
+        if FileManager.default.fileExists(atPath: target.path) { return id }
+        let existing = try files()
+        let size = existing.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+        guard existing.count < Self.maximumCount, size + data.count <= 32 * 1024 * 1024 else { throw Failure.full }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try data.write(to: target, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        return id
+    }
+
+    func data(for id: String) throws -> Data {
+        let data = try Data(contentsOf: file(id))
+        guard Self.validImage(data), SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == id else {
+            throw Failure.invalidImage
+        }
+        return data
+    }
+
+    func remove(_ id: String) throws { try FileManager.default.removeItem(at: file(id)) }
+
+    func entries() throws -> [[String: String]] {
+        try files().prefix(Self.maximumCount).compactMap { url in
+            let id = url.deletingPathExtension().lastPathComponent
+            guard let data = try? data(for: id),
+                  let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 128
+                  ] as CFDictionary), let png = UIImage(cgImage: thumbnail).pngData() else { return nil }
+            return ["id": id, "thumbnail": "data:image/png;base64," + png.base64EncodedString()]
+        }
+    }
+}
+
 enum SnapchatMediaPolicy {
     static let maximumMediaBytes = 32 * 1024 * 1024
     static let maximumEncodedBytes = ((maximumMediaBytes + 2) / 3) * 4
@@ -2849,6 +2953,65 @@ enum SnapchatMediaPolicy {
 }
 
 extension SocialWebViewStore {
+    private func handleSnapchatSticker(_ body: [String: Any], action: String, requestID: String,
+                                       documentID: String, in webView: WKWebView) async {
+        func stillAllowed() async -> Bool {
+            guard playbackServiceIsVisible, !playbackIsBackgrounded, accessRestriction?() != true,
+                  SnapchatMediaPolicy.isTrustedDocument(webView.url),
+                  Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: mainDocumentIDs[.snapchat]) else { return false }
+            if !hasRecentConfirmedAccess, !(await confirmServiceAccess()) { return false }
+            guard playbackServiceIsVisible, !playbackIsBackgrounded, accessRestriction?() != true,
+                  Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: mainDocumentIDs[.snapchat]) else { return false }
+            return (try? await webView.callAsyncJavaScript(
+                "return window.__vigilValidateSnapchatSticker?.(id) === true;",
+                arguments: ["id": requestID], in: nil, contentWorld: .page)) as? Bool == true
+        }
+        func complete(_ result: [String: Any]) async {
+            snapchatStickerInProgress = false
+            guard Self.isCurrentMainDocumentMessage(documentID, currentDocumentID: mainDocumentIDs[.snapchat]) else { return }
+            _ = try? await webView.callAsyncJavaScript(
+                "window.__vigilCompleteSnapchatSticker?.(id, result);",
+                arguments: ["id": requestID, "result": result], in: nil, contentWorld: .page)
+        }
+        guard await stillAllowed() else { await complete(["error": "Sticker unavailable or blocked"]); return }
+        if snapchatStickerLibrary == nil {
+            let store = webView.configuration.websiteDataStore
+            let scope = store.identifier?.uuidString ?? (store.isPersistent ? "default" : UUID().uuidString)
+            let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            snapchatStickerLibrary = SnapchatStickerLibrary(directory: root.appendingPathComponent("SnapchatStickers").appendingPathComponent(scope))
+        }
+        guard let library = snapchatStickerLibrary else { await complete(["error": "Sticker unavailable"]); return }
+        do {
+            switch action {
+            case "save", "use":
+                let data: Data
+                if action == "save" {
+                    guard let encoded = body["base64"] as? String,
+                          encoded.utf8.count <= ((SnapchatStickerLibrary.maximumBytes + 2) / 3) * 4,
+                          let decoded = Data(base64Encoded: encoded), SnapchatStickerLibrary.validImage(decoded) else {
+                        throw SnapchatStickerLibrary.Failure.invalidImage
+                    }
+                    data = decoded
+                } else {
+                    guard let id = body["stickerID"] as? String else { throw SnapchatStickerLibrary.Failure.invalidImage }
+                    data = try library.data(for: id)
+                }
+                let verdict = await resolvedMediaClassifier().classify(imageData: data)
+                guard unclassifiedMediaPolicy.resolve(verdict) == .safe, await stillAllowed() else {
+                    await complete(["error": "Sticker unavailable or blocked"]); return
+                }
+                if action == "save" { await complete(["id": try library.save(data)]) }
+                else { await complete(["base64": data.base64EncodedString()]) }
+            case "list": await complete(["entries": try library.entries()])
+            case "remove":
+                guard let id = body["stickerID"] as? String else { throw SnapchatStickerLibrary.Failure.invalidImage }
+                try library.remove(id)
+                await complete(["removed": true])
+            default: throw SnapchatStickerLibrary.Failure.invalidImage
+            }
+        } catch { await complete(["error": (error as? SnapchatStickerLibrary.Failure)?.errorDescription ?? "Could not load stickers. Try again"]) }
+    }
+
     private func saveSnapchatMedia(_ data: Data, mimeType: String, requestID: String,
                                    documentID: String, in webView: WKWebView) async {
         func complete(_ success: Bool, _ detail: String = "Could not save. Try again") async {

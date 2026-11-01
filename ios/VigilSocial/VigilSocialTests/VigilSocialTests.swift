@@ -2481,6 +2481,129 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testSnapchatStickerLibraryPersistsTransparentImagesAndEnforcesBounds() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = SnapchatStickerLibrary(directory: directory)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1; format.opaque = false
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24), format: format).pngData { context in
+            UIColor.red.setFill(); context.fill(CGRect(x: 8, y: 8, width: 8, height: 8))
+        }
+        let id = try library.save(png)
+        XCTAssertEqual(try library.save(png), id, "Duplicate saves must not fill the drawer")
+        let reopened = SnapchatStickerLibrary(directory: directory)
+        XCTAssertEqual(try reopened.data(for: id), png, "Persist original PNG bytes and transparency across launches")
+        XCTAssertEqual(try reopened.entries().map { $0["id"] }, [id])
+        XCTAssertEqual(try SnapchatStickerLibrary(directory: directory.appendingPathComponent("other-account")).entries().count, 0)
+        XCTAssertThrowsError(try library.data(for: "../../outside"))
+        XCTAssertThrowsError(try library.remove("../outside"))
+        XCTAssertThrowsError(try library.save(Data("not an image".utf8)))
+        XCTAssertThrowsError(try library.save(Data(repeating: 0, count: SnapchatStickerLibrary.maximumBytes + 1)))
+        let oversized = UIGraphicsImageRenderer(size: CGSize(width: 2049, height: 1), format: format).pngData { _ in }
+        XCTAssertFalse(SnapchatStickerLibrary.validImage(oversized))
+        try reopened.remove(id)
+        XCTAssertEqual(try library.entries().count, 0)
+        for index in 0..<SnapchatStickerLibrary.maximumCount {
+            let unique = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2), format: format).pngData { context in
+                UIColor(red: CGFloat(index) / 255, green: 0, blue: 0, alpha: 1).setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+            }
+            _ = try library.save(unique)
+        }
+        XCTAssertThrowsError(try library.save(png), "Never silently evict saved stickers")
+    }
+
+    @MainActor
+    func testSnapchatStickersSaveReloadStageThroughComposerAndKeepPrivacyGates() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let library = SnapchatStickerLibrary(directory: directory)
+        let store = SocialWebViewStore(fixedService: .snapchat, loadInitialPages: false,
+            mediaClassifier: StubMediaClassifier(verdict: .safe), unclassifiedMediaPolicy: .conceal,
+            websiteDataStore: .nonPersistent(), snapchatStickerLibrary: library)
+        let webView = store.webView(for: .snapchat)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 780)
+        let window = UIWindow(frame: webView.bounds)
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let host = UIViewController(); window.rootViewController = host
+        host.view.addSubview(webView); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        Self.retainedCompanionValidationFixtures.append((window, webView))
+        webView.loadHTMLString(Self.snapchatMobileShellFixture, baseURL: SocialService.snapchat.homeURL)
+        try await waitForJavaScriptCondition("window.__vigilSnapchatStickersInstalled === true", in: webView)
+        _ = try await webView.callAsyncJavaScript("globalThis.fetch=async url=>({status:200,url}); return true;",
+            arguments: [:], in: nil, contentWorld: .defaultClient)
+        let allowed = await store.confirmServiceAccess(); XCTAssertTrue(allowed)
+        await store.handleSceneActivity(true, isServiceVisible: true)
+        await store.prepareForegroundInteraction()
+        _ = try await webView.evaluateJavaScript("""
+            openChat('Alex');
+            const canvas=document.createElement('canvas');canvas.width=96;canvas.height=96;
+            canvas.getContext('2d').fillStyle='#ff0000';canvas.getContext('2d').fillRect(32,32,32,32);
+            window.fixtureStickerPNG=canvas.toDataURL('image/png');
+            document.querySelector('.messages').innerHTML='<div class="KB4Aq"><div class="p8r1z"><img id="fixture-sticker" class="qHVR1" width="72" height="72"></div></div>';
+            document.getElementById('fixture-sticker').src=fixtureStickerPNG;
+            // Real Snapchat's onPaste uses preventDefault, accepts image files
+            // and stages its preview. This fixture records that public boundary.
+            document.querySelector('[contenteditable]').addEventListener('paste', event=>{
+              event.preventDefault();window.fixturePasted=[...event.clipboardData.files].map(file=>({name:file.name,type:file.type,size:file.size}));
+            });
+            void 0;
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-sticker-save') && document.getElementById('fixture-sticker').dataset.vigilMediaVerdict==='safe' && document.documentElement.dataset.vigilPageVerdict==='safe'", in: webView)
+        webView.becomeFirstResponder()
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-sticker-save').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-sticker-save').textContent==='Sticker saved'", in: webView)
+        let entries = try library.entries(); XCTAssertEqual(entries.count, 1)
+        let id = try XCTUnwrap(entries.first?["id"])
+        let originalValue = try await webView.evaluateJavaScript("fixtureStickerPNG.split(',')[1]") as? String
+        let original = try XCTUnwrap(originalValue)
+        XCTAssertEqual(try library.data(for: id), Data(base64Encoded: original))
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-sticker-toggle').click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-sticker-item img')?.dataset.vigilMediaVerdict==='safe' && document.documentElement.dataset.vigilPageVerdict==='safe'", in: webView)
+        let drawerSnapshot = XCTAttachment(image: try await webView.takeSnapshot(configuration: nil))
+        drawerSnapshot.name = "Snapchat saved stickers drawer"; drawerSnapshot.lifetime = .keepAlways; add(drawerSnapshot)
+        _ = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-sticker-item button').click()")
+        try await waitForJavaScriptCondition("window.fixturePasted?.length===1", in: webView)
+        let type = try await webView.evaluateJavaScript("fixturePasted[0].type") as? String
+        XCTAssertEqual(type, "image/png")
+        let sent = try await webView.evaluateJavaScript("window.fixtureSent===undefined") as? Bool
+        XCTAssertEqual(sent, true, "Reusing a sticker must not send a message")
+        for protection in ["sensitive", "unknown", "blur", "shield", "screenshot", "restricted"] {
+            _ = try await webView.evaluateJavaScript("""
+                {
+                const image=document.getElementById('fixture-sticker');image.dataset.vigilMediaVerdict='safe';image.style.filter='none';
+                document.querySelectorAll('.fixture-sticker-shield').forEach(node=>node.remove());
+                document.documentElement.dataset.vigilPageVerdict='safe';
+                if ('\(protection)'==='sensitive'||'\(protection)'==='unknown')image.dataset.vigilMediaVerdict='\(protection)';
+                if ('\(protection)'==='blur')image.style.filter='blur(10px)';
+                if ('\(protection)'==='restricted')document.documentElement.dataset.vigilPageVerdict='sensitive';
+                if ('\(protection)'==='shield'||'\(protection)'==='screenshot'){
+                  const shield=document.createElement('div');shield.className='fixture-sticker-shield '+('\(protection)'==='shield'?'ejVI4':'eNF_J');
+                  shield.style.cssText='position:absolute;inset:0;background:gray';document.querySelector('.aXEpU').append(shield);
+                }
+                document.querySelector('.vigil-snap-sticker-save').click();
+                }
+                """)
+            let denied = try await webView.evaluateJavaScript("document.querySelector('.vigil-snap-sticker-save').textContent==='Sticker unavailable or blocked'") as? Bool
+            XCTAssertEqual(denied, true, protection)
+            XCTAssertEqual(try library.entries().count, 1)
+        }
+        _ = try await webView.evaluateJavaScript("""
+            document.querySelectorAll('.fixture-sticker-shield').forEach(node=>node.remove());
+            document.getElementById('fixture-sticker').style.filter='none';document.getElementById('fixture-sticker').dataset.vigilMediaVerdict='safe';
+            document.documentElement.dataset.vigilPageVerdict='safe';
+            document.querySelector('.vigil-snap-sticker-toggle').click();
+            """)
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-sticker-item')!==null", in: webView)
+        _ = try await webView.evaluateJavaScript("document.querySelectorAll('.vigil-snap-sticker-item button')[1].click()")
+        try await waitForJavaScriptCondition("document.querySelector('.vigil-snap-sticker-grid').children.length===0", in: webView)
+        XCTAssertEqual(try library.entries().count, 0)
+        await store.handleSceneActivity(false, isServiceVisible: false)
+        withExtendedLifetime(store) {}
+    }
+
+    @MainActor
     func testSnapchatCameraRollBridgeSavesTheOpenedPhoto() async throws {
         guard PHPhotoLibrary.authorizationStatus(for: .addOnly) == .authorized else {
             throw XCTSkip("Grant photos-add to the simulator fixture app before this test")

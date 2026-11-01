@@ -6255,7 +6255,7 @@ enum DOMAdapters {
         case .instagram: instagramStable
         case .youtube: youtube
         case .linkedin: linkedin
-        case .snapchat: snapchat + snapchatMobileLayout
+        case .snapchat: snapchat + snapchatMobileLayout + snapchatStickers
         case .facebook, .x, .tiktok, .reddit:
             expandedSafetyScript(for: service) + expandedServiceScript(for: service)
         }
@@ -7661,6 +7661,215 @@ enum DOMAdapters {
           return result;
         };
       }
+      reconcile();
+    })();
+    """#
+
+    private static let snapchatStickers = #"""
+    (() => {
+      if (window !== window.top || window.__vigilSnapchatStickersInstalled
+          || location.protocol !== 'https:' || (location.port && location.port !== '443')
+          || !['www.snapchat.com', 'web.snapchat.com', 'snapchat.com'].includes(location.hostname)
+          || !/^\/web(?:\/|$)/.test(location.pathname)) return;
+      window.__vigilSnapchatStickersInstalled = true;
+      // Verified Snapchat Web sticker renderers. Exclude avatars, reactions,
+      // quotes, photo attachments, Snap viewers and live camera/call content.
+      const stickerSelector = '.aXEpU .KB4Aq .p8r1z :is(img.qHVR1, .rBYFf img.pjJv3)';
+      const visible = node => node?.isConnected && node.getClientRects().length
+        && getComputedStyle(node).visibility === 'visible' && getComputedStyle(node).display !== 'none';
+      const chatAllowed = chat => visible(chat) && document.hasFocus() && document.visibilityState === 'visible'
+        && document.documentElement.dataset.vigilPageVerdict === 'safe'
+        && !chat.querySelector('.ATeie') && ![...chat.querySelectorAll('.ejVI4, .eNF_J')].some(visible);
+      const stickerAllowed = image => image?.matches(stickerSelector) && visible(image)
+        && !image.closest('.Hts9j, .oqVsN, .PmTA8, .ET_CR, .S4e9r, .BN1L1, .ATeie')
+        && image.dataset.vigilMediaVerdict === 'safe' && !/blur\(/.test(getComputedStyle(image).filter)
+        && image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+        && chatAllowed(image.closest('.aXEpU'));
+      let pending = null, drawer = null, scheduled = false;
+      const current = request => request && request.url === location.href && chatAllowed(request.chat)
+        && (request.image ? stickerAllowed(request.image) && (request.image.currentSrc || request.image.src) === request.source
+          : request.composer.isConnected && request.chat.contains(request.composer)
+            && drawer?.isConnected && !drawer.hidden);
+      window.__vigilValidateSnapchatSticker = id => Boolean(pending?.id === id && current(pending));
+      window.__vigilCompleteSnapchatSticker = (id, result) => {
+        if (pending?.id !== id) return;
+        const request = pending; pending = null; clearTimeout(request.timeout);
+        request.resolve(current(request) ? result : { error: 'Sticker unavailable or blocked' });
+      };
+      const request = (action, context, payload = {}) => new Promise(resolve => {
+        if (pending || typeof window.__vigilBridge !== 'function') return resolve({ error: 'Try again in a moment' });
+        const id = crypto.randomUUID();
+        pending = { ...context, id, action, url: location.href, resolve,
+          timeout: setTimeout(() => {
+            if (pending?.id !== id) return;
+            pending = null; resolve({ error: 'Could not load stickers. Try again' });
+          }, 30000) };
+        if (!current(pending)) { window.__vigilCompleteSnapchatSticker(id, { error: 'Sticker unavailable or blocked' }); return; }
+        window.__vigilBridge({ type: 'snapchatSticker', action, requestID: id, ...payload });
+      });
+      const style = document.createElement('style'); style.id = 'vigil-snapchat-stickers-style';
+      style.textContent = `
+        .vigil-snap-sticker-save, .vigil-snap-sticker-toggle, .vigil-snap-sticker-drawer button {
+          font: 14px/1.3 -apple-system, sans-serif; color: var(--sigTextPrimary, #16191c);
+          background: var(--sigBackgroundPrimary, var(--sigSurface, #fff)); border: 1px solid var(--sigDivider, #ddd);
+          border-radius: 20px; min-height: 44px; padding: 8px 12px; touch-action: manipulation;
+        }
+        .vigil-snap-sticker-save { display: block; margin-block: 4px; color: var(--sigTextSecondary, #656d78); }
+        .vigil-snap-sticker-toggle { margin-block: 4px; }
+        .vigil-snap-sticker-drawer { box-sizing: border-box; padding: 12px; border-block: 1px solid var(--sigDivider, #ddd);
+          background: var(--sigBackgroundPrimary, var(--sigSurface, #fff)); color: var(--sigTextPrimary, #16191c);
+          font: 14px/1.4 -apple-system, sans-serif; max-height: min(360px, 45dvh); overflow-y: auto; overscroll-behavior: contain; }
+        .vigil-snap-sticker-drawer[hidden] { display: none !important; }
+        .vigil-snap-sticker-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+        .vigil-snap-sticker-drawer p { margin: 6px 0; color: var(--sigTextSecondary, #656d78); }
+        .vigil-snap-sticker-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+        .vigil-snap-sticker-item { min-width: 0; display: flex; flex-direction: column; }
+        .vigil-snap-sticker-item button { border-radius: 12px; }
+        .vigil-snap-sticker-item img { display: block; width: 100%; height: 76px; object-fit: contain; }
+        .vigil-snap-sticker-drawer button:disabled, .vigil-snap-sticker-save:disabled { opacity: .6; }
+      `;
+      document.documentElement.append(style);
+      const installSave = image => {
+        const host = image.closest('.p8r1z');
+        if (!host || image.closest('.Hts9j, .oqVsN, .PmTA8, .ET_CR')) return;
+        let button = host.querySelector(':scope > .vigil-snap-sticker-save');
+        const source = image.currentSrc || image.src;
+        if (button) {
+          if (button.stickerSource !== source && !button.disabled) { button.textContent = 'Save sticker'; button.stickerSource = source; }
+          return;
+        }
+        button = document.createElement('button'); button.type = 'button'; button.className = 'vigil-snap-sticker-save';
+        button.textContent = 'Save sticker'; button.stickerSource = source; button.setAttribute('aria-live', 'polite');
+        button.addEventListener('click', async event => {
+          event.preventDefault(); event.stopPropagation();
+          // Resolve the current node again: React may have recycled the message.
+          const image = host.querySelector('img.qHVR1, .rBYFf img.pjJv3');
+          if (!stickerAllowed(image)) { button.textContent = 'Sticker unavailable or blocked'; return; }
+          button.disabled = true;
+          const source = image.currentSrc || image.src, canvas = document.createElement('canvas');
+          try {
+            const scale = Math.min(1, 2048 / image.naturalWidth, 2048 / image.naturalHeight);
+            canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+            canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+            canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+            // Preserve transparency. Animated stickers become a still image.
+            let blob;
+            try { blob = await new Promise(done => canvas.toBlob(done, 'image/png')); }
+            catch (_) {
+              // Snapchat's CDN images are often mounted without crossorigin.
+              // Fetch that exact displayed resource using ordinary CORS, as
+              // the existing media inspector does; never bypass CORS or auth.
+              const response = await fetch(source, { mode: 'cors', credentials: 'omit', signal: AbortSignal.timeout(10000) });
+              if (!response.ok || Number(response.headers.get('content-length')) > 4 * 1024 * 1024) throw new Error('Sticker unavailable');
+              const resource = await response.blob();
+              if (!resource.size || resource.size > 4 * 1024 * 1024) throw new Error('Sticker unavailable');
+              const objectURL = URL.createObjectURL(resource), decoded = new Image();
+              try {
+                decoded.src = objectURL; await decoded.decode();
+                canvas.width = canvas.width; // Reset the origin-tainted backing store.
+                canvas.getContext('2d').drawImage(decoded, 0, 0, canvas.width, canvas.height);
+                blob = await new Promise(done => canvas.toBlob(done, 'image/png'));
+              } finally { URL.revokeObjectURL(objectURL); }
+            }
+            if (!blob || !blob.size || blob.size > 4 * 1024 * 1024 || !stickerAllowed(image)
+                || (image.currentSrc || image.src) !== source) throw new Error('Sticker unavailable');
+            const dataURL = await new Promise((resolve, reject) => {
+              const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob);
+            });
+            // Capture the original source, including across the FileReader await.
+            const result = await request('save', { chat: image.closest('.aXEpU'), image, source },
+              { base64: dataURL.slice(dataURL.indexOf(',') + 1) });
+            button.textContent = result.id ? 'Sticker saved' : (result.error || 'Could not save. Try again');
+          } catch (_) { button.textContent = 'Could not save sticker. Try again'; }
+          finally { button.disabled = false; canvas.width = 0; canvas.height = 0; }
+        });
+        host.append(button);
+      };
+      const installDrawer = composer => {
+        if (composer.querySelector('.vigil-snap-sticker-toggle')) return;
+        const chat = composer.closest('.aXEpU'), textbox = composer.querySelector('[role="textbox"][contenteditable="true"]');
+        if (!textbox) return;
+        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'vigil-snap-sticker-toggle';
+        toggle.textContent = 'Saved stickers'; toggle.setAttribute('aria-expanded', 'false');
+        const panel = document.createElement('section'); panel.className = 'vigil-snap-sticker-drawer'; panel.hidden = true;
+        panel.setAttribute('aria-label', 'Saved stickers');
+        const heading = document.createElement('div'); heading.className = 'vigil-snap-sticker-heading';
+        const title = document.createElement('strong'); title.textContent = 'Saved stickers';
+        const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
+        heading.append(title, close);
+        const explanation = document.createElement('p');
+        explanation.textContent = 'Saved on this phone. Tap to add an image to your chat, then press Send. Animated stickers save as still images.';
+        const status = document.createElement('p'); status.setAttribute('role', 'status');
+        const grid = document.createElement('div'); grid.className = 'vigil-snap-sticker-grid';
+        panel.append(heading, explanation, status, grid); composer.prepend(toggle, panel);
+        const hide = () => { panel.hidden = true; toggle.setAttribute('aria-expanded', 'false'); if (drawer === panel) drawer = null; };
+        close.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); hide(); toggle.focus(); });
+        const context = { chat, composer };
+        toggle.addEventListener('click', async event => {
+          event.preventDefault(); event.stopPropagation();
+          if (!panel.hidden) { hide(); return; }
+          if (!chatAllowed(chat)) return;
+          if (drawer && drawer !== panel) drawer.hidden = true;
+          drawer = panel; panel.hidden = false; toggle.setAttribute('aria-expanded', 'true'); status.textContent = 'Loading…'; grid.replaceChildren();
+          const result = await request('list', context);
+          if (drawer !== panel || panel.hidden) return;
+          const entries = Array.isArray(result.entries) ? result.entries : [];
+          status.textContent = result.error || (entries.length ? '' : 'Tap Save sticker below a sticker in chat to keep it here.');
+          for (const [index, entry] of entries.entries()) {
+            if (!/^[a-f0-9]{64}$/.test(entry.id) || !/^data:image\/png;base64,/.test(entry.thumbnail)) continue;
+            const item = document.createElement('div'); item.className = 'vigil-snap-sticker-item';
+            const add = document.createElement('button'); add.type = 'button'; add.setAttribute('aria-label', `Add saved sticker ${index + 1}`);
+            // Ordinary media inspection conceals each thumbnail until approved.
+            const image = document.createElement('img'); image.alt = ''; image.src = entry.thumbnail; add.append(image);
+            const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove';
+            remove.setAttribute('aria-label', `Remove saved sticker ${index + 1}`);
+            item.append(add, remove); grid.append(item);
+            remove.addEventListener('click', async event => {
+              event.preventDefault(); event.stopPropagation(); remove.disabled = true;
+              const result = await request('remove', context, { stickerID: entry.id });
+              if (result.removed) { item.remove(); if (!grid.children.length) status.textContent = 'No saved stickers yet'; }
+              else status.textContent = result.error || 'Could not remove sticker';
+              remove.disabled = false;
+            });
+            add.addEventListener('click', async event => {
+              event.preventDefault(); event.stopPropagation();
+              if (image.dataset.vigilMediaVerdict !== 'safe' || !visible(image) || !chatAllowed(chat)) {
+                status.textContent = 'Sticker unavailable or still being checked'; return;
+              }
+              add.disabled = true;
+              const result = await request('use', context, { stickerID: entry.id });
+              add.disabled = false;
+              if (!result.base64 || !chatAllowed(chat) || !textbox.isConnected || drawer !== panel || panel.hidden) {
+                status.textContent = result.error || 'Could not add sticker'; return;
+              }
+              try {
+                const bytes = Uint8Array.from(atob(result.base64), char => char.charCodeAt(0));
+                const transfer = new DataTransfer();
+                transfer.items.add(new File([bytes], `vigil-sticker-${entry.id}.png`, { type: 'image/png' }));
+                textbox.focus();
+                // Use Snapchat's existing onPaste handler. It stages an image
+                // attachment; it never clicks Send or invokes messaging APIs.
+                const consumed = !textbox.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: transfer }));
+                if (consumed) { hide(); }
+                else status.textContent = 'Snapchat could not add this sticker. Try again';
+              } catch (_) { status.textContent = 'Snapchat could not add this sticker. Try again'; }
+            });
+          }
+        });
+      };
+      const reconcile = () => {
+        scheduled = false;
+        document.querySelectorAll(stickerSelector).forEach(installSave);
+        document.querySelectorAll('.aXEpU .sT7ta').forEach(installDrawer);
+        if (drawer && (!drawer.isConnected || !chatAllowed(drawer.closest('.aXEpU')))) {
+          drawer.hidden = true; drawer.closest('.sT7ta')?.querySelector('.vigil-snap-sticker-toggle')?.setAttribute('aria-expanded', 'false'); drawer = null;
+        }
+      };
+      const schedule = () => { if (!scheduled) { scheduled = true; requestAnimationFrame(reconcile); } };
+      new MutationObserver(schedule).observe(document.documentElement, { childList: true, subtree: true, attributes: true,
+        attributeFilter: ['src', 'srcset', 'class', 'style', 'data-vigil-page-verdict', 'data-vigil-media-verdict'] });
+      for (const name of ['popstate', 'pagehide', '__vigilRouteChanged', 'blur', 'focus']) addEventListener(name, schedule);
+      document.addEventListener('visibilitychange', schedule);
       reconcile();
     })();
     """#
