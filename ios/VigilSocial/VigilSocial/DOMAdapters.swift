@@ -7812,13 +7812,23 @@ enum DOMAdapters {
       });
       const style = document.createElement('style'); style.id = 'vigil-snapchat-stickers-style';
       style.textContent = `
+        [data-vigil-snap-sticker-image="true"] { display: block; }
         .vigil-snap-sticker-save, .vigil-snap-sticker-toggle, .vigil-snap-sticker-drawer button {
           font: 14px/1.3 -apple-system, sans-serif; color: var(--sigTextPrimary, #16191c);
           background: var(--sigBackgroundPrimary, var(--sigSurface, #fff)); border: 1px solid var(--sigDivider, #ddd);
           border-radius: 20px; min-height: 44px; padding: 8px 12px; touch-action: manipulation;
         }
-        .vigil-snap-sticker-save { display: block; margin-block: 4px; color: var(--sigTextSecondary, #656d78); }
-        .vigil-snap-sticker-toggle { margin-block: 4px; }
+        .p8r1z > .vigil-snap-sticker-save {
+          display: block; position: static !important; inset: auto !important; float: none !important;
+          transform: none !important; margin: 4px 0 0; inline-size: fit-content; max-inline-size: 100%;
+          align-self: flex-start; color: var(--sigTextSecondary, #656d78);
+        }
+        .vigil-snap-sticker-toggle {
+          display: inline-flex; align-items: center; justify-content: center;
+          flex: 0 0 44px; inline-size: 44px; block-size: 44px; min-inline-size: 44px;
+          margin: 0; padding: 8px; border: 0; background: transparent;
+        }
+        .vigil-snap-sticker-toggle svg { inline-size: 24px; block-size: 24px; }
         .vigil-snap-sticker-drawer { box-sizing: border-box; padding: 12px; border-block: 1px solid var(--sigDivider, #ddd);
           background: var(--sigBackgroundPrimary, var(--sigSurface, #fff)); color: var(--sigTextPrimary, #16191c);
           font: 14px/1.4 -apple-system, sans-serif; max-height: min(360px, 45dvh); overflow-y: auto; overscroll-behavior: contain; }
@@ -7835,9 +7845,15 @@ enum DOMAdapters {
       const installSave = image => {
         const host = image.closest('.p8r1z');
         if (!host || image.closest('.Hts9j, .oqVsN, .PmTA8, .ET_CR')) return;
+        if (image.dataset.vigilSnapStickerImage !== 'true') image.dataset.vigilSnapStickerImage = 'true';
+        // Attach to this sticker's content branch, before any later message
+        // controls. Never place a save action in the composer or viewport.
+        let content = image;
+        while (content.parentElement && content.parentElement !== host) content = content.parentElement;
         let button = host.querySelector(':scope > .vigil-snap-sticker-save');
         const source = image.currentSrc || image.src;
         if (button) {
+          if (content.nextElementSibling !== button) content.after(button);
           if (button.stickerSource !== source && !button.disabled) { button.textContent = 'Save sticker'; button.stickerSource = source; }
           return;
         }
@@ -7886,14 +7902,15 @@ enum DOMAdapters {
           } catch (_) { button.textContent = 'Could not save sticker. Try again'; }
           finally { button.disabled = false; canvas.width = 0; canvas.height = 0; }
         });
-        host.append(button);
+        content.after(button);
       };
       const installDrawer = composer => {
         if (composer.querySelector('.vigil-snap-sticker-toggle')) return;
         const chat = composer.closest('.aXEpU'), textbox = composer.querySelector('[role="textbox"][contenteditable="true"]');
         if (!textbox) return;
         const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'vigil-snap-sticker-toggle';
-        toggle.textContent = 'Saved stickers'; toggle.setAttribute('aria-expanded', 'false');
+        toggle.setAttribute('aria-label', 'Saved stickers'); toggle.title = 'Saved stickers'; toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 13V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h7Z"/><path d="M13 20v-5a2 2 0 0 1 2-2h5M8 9h.01M15 9h.01M8 13c1.2 1.2 2.8 1.2 4 0"/></svg>';
         const panel = document.createElement('section'); panel.className = 'vigil-snap-sticker-drawer'; panel.hidden = true;
         panel.setAttribute('aria-label', 'Saved stickers');
         const heading = document.createElement('div'); heading.className = 'vigil-snap-sticker-heading';
@@ -7904,7 +7921,11 @@ enum DOMAdapters {
         explanation.textContent = 'Saved on this phone. Tap to add an image to your chat, then press Send. Animated stickers save as still images.';
         const status = document.createElement('p'); status.setAttribute('role', 'status');
         const grid = document.createElement('div'); grid.className = 'vigil-snap-sticker-grid';
-        panel.append(heading, explanation, status, grid); composer.prepend(toggle, panel);
+        panel.append(heading, explanation, status, grid); composer.prepend(panel);
+        // Keep drawer access with Snapchat's normal composer tools, beside the
+        // field, rather than adding a permanent text row above the composer.
+        const field = textbox.closest('.shMO3') || textbox;
+        field.after(toggle);
         const hide = () => { panel.hidden = true; toggle.setAttribute('aria-expanded', 'false'); if (drawer === panel) drawer = null; };
         close.addEventListener('click', event => { event.preventDefault(); event.stopPropagation(); hide(); toggle.focus(); });
         const context = { chat, composer };

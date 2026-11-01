@@ -8,6 +8,7 @@ struct SnapchatCallScenario: Decodable {
         let width: Double?
         let height: Double?
         let snapshot: String?
+        let focus: Bool?
     }
     let name: String
     let html: String
@@ -57,6 +58,13 @@ struct SnapchatCallScenario: Decodable {
                     if let width = step.width {
                         window.setContentSize(NSSize(width: width, height: step.height ?? 780))
                         page.frame.size = NSSize(width: width, height: step.height ?? 780)
+                    }
+                    if step.focus == true {
+                        NSApplication.shared.activate(ignoringOtherApps: true)
+                        window.makeKeyAndOrderFront(nil)
+                        window.makeFirstResponder(page)
+                        try await Task.sleep(for: .milliseconds(50))
+                        _ = try await page.evaluateJavaScript("document.querySelector('[contenteditable]')?.focus(); true")
                     }
                     if let action = step.action { _ = try await page.evaluateJavaScript(action + ";true") }
                     if let condition = step.condition {
