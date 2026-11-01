@@ -67,3 +67,48 @@ Its first service check timed out while Snapchat's protected document was
 loading. Retrying the normal transaction passed, including the exact live
 supervised policy `7d0ab7c4016d` and all service launches. No check was bypassed.
 Physical gray-out acceptance remains separate from this successful deployment.
+
+## Retained-state repair after the repeated failure
+
+The reader-only repair did not address two independent failures reproduced in
+desktop WebKit with the production guard installed at document start:
+
+1. Initial photos matched their captured sources before Relay props existed.
+   Because those sources did not change, the guard never refreshed its missing
+   manifest. A later unverified image then vetoed the whole article.
+2. The article verdict required every asset to pass. An unrelated avatar,
+   preload, or recycled media node could therefore hide independently verified
+   photos. Rejected nodes and obsolete React wrappers also stayed rejected
+   after the selected post's records proved their current sources.
+
+The guard now refreshes a missing manifest even when the initial photos retain
+their sources. A verified selected carousel gives each image/video its own
+verdict; an unverified asset stays hidden without hiding verified siblings.
+Uncertain cards retain the whole-card denial. Track and article replacement
+can recover only through the current exact parent code, a visible structural
+carousel, and freshly loaded source proof. Recovered captured permissions are
+pruned to those proven sources, including initially empty preload shells.
+Recycled node rejection heals only with fresh proof in the bound track.
+
+Validation of this repair:
+
+- All 31 production document-start WebKit carousel cases passed, covering the
+  startup gap, delayed records, individual asset denial, recycled image/video
+  recovery, replacement tracks/articles, temporary missing permalinks, and
+  exact parent/child/source denial. The preceding guard fails the newly added
+  late outside-image case. These source/layout fixtures are offline; they do
+  not establish decoded-image behavior or physical acceptance.
+- Existing checks passed: 16 decoded chat-media cases, 66 conversation cases,
+  nine Send cases, all five comments modes, the Snapchat viewer suite, 42
+  native geometry checks, and 15 focused runtime tests. The comments fade
+  mode was rerun in isolation against both baseline and repair after an
+  initial concurrent GUI-test failure; both passed.
+- Repository lint, runtime build, diff whitespace checks, and the unsigned
+  combined iOS Simulator app compilation passed. No app-only installation
+  was used. The new carousel suite is included in macOS CI.
+- Logs are ignored under `data/instagram-carousel-*`, with the final carousel
+  run in `data/instagram-carousel-retained-final.log`.
+
+The iPhone was unavailable in CoreDevice when validation completed. Use the
+normal combined verified updater for delivery; do not describe successful
+fixtures as a completed phone update or physical acceptance.

@@ -2988,6 +2988,10 @@ enum DOMAdapters {
         :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) video:not([data-vigil-single-reel-media="allowed"]) {
           visibility: hidden !important;
         }
+        :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) img[data-vigil-single-reel-media="blocked"] {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
         :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) [data-vigil-single-reel-card="blocked"],
         :is([data-vigil-single-reel-scope="p"], [data-vigil-single-reel-scope="story"]) [data-vigil-single-reel-card="blocked"] * {
           visibility: hidden !important;
@@ -3039,6 +3043,8 @@ enum DOMAdapters {
         pinnedImageSource = '';
         mediaSources = new WeakMap();
         postCarousel = null;
+        carouselManifestRefreshed = false;
+        freshCarouselManifest = null;
         postLayoutCaptured = false;
         modalContext = null;
         viewerOrigin = null;
@@ -3855,8 +3861,31 @@ enum DOMAdapters {
         return null;
       };
       let carouselManifestRefreshed = false;
+      let freshCarouselManifest = null;
+      const carouselManifestAllows = (carousel, media, manifest = carousel?.manifest) => {
+        if (!carousel || !manifest) return false;
+        let slot = media;
+        while (slot && slot.parentElement !== carousel.track) slot = slot.parentElement;
+        if (slot?.parentElement !== carousel.track) return false;
+        const srcset = media.getAttribute('srcset');
+        const sources = srcset ? srcset.split(',').map(entry => entry.trim().split(/\s+/)[0]) : [mediaSource(media)];
+        const listed = manifest[media instanceof HTMLVideoElement ? 'video' : 'image'];
+        return sources.length > 0 && sources.every(source => {
+          try { return Boolean(source.trim()) && listed.has(new URL(source, location.href).href); }
+          catch (_) { return false; }
+        });
+      };
+      const refreshCarouselManifest = () => {
+        if (!carouselManifestRefreshed) {
+          carouselManifestRefreshed = true;
+          freshCarouselManifest = loadedCarouselManifest(pinnedCard, postCarousel.track);
+          if (freshCarouselManifest) postCarousel.manifest = freshCarouselManifest;
+        }
+        return freshCarouselManifest;
+      };
       const carouselMediaAllowed = (media, source) => {
         if (!postCarousel || postCarousel.rejected || !pinnedCard?.contains(postCarousel.track)) return false;
+        if (!postCarousel.track.contains(media)) return false;
         if (!exactPostCard(pinnedCard)) { postCarousel.rejected = true; return false; }
         const slide = postCarousel.slides.find(slide => slide.node.parentElement === postCarousel.track
           && (slide.node === media || slide.node.contains(media)));
@@ -3870,25 +3899,93 @@ enum DOMAdapters {
         // Native scroll carousels also mount later slides lazily, and may use
         // div slots instead of li. The exact post's loaded manifest is proof
         // for either layout; the slot must still belong directly to this track.
-        let slot = media;
-        while (slot && slot.parentElement !== postCarousel.track) slot = slot.parentElement;
-        if (slot?.parentElement !== postCarousel.track) return false;
-        const srcset = media.getAttribute('srcset');
-        const sources = srcset ? srcset.split(',').map(entry => entry.trim().split(/\s+/)[0])
-          : [media.getAttribute('src') || media.querySelector('source')?.src || ''];
-        const listed = () => sources.length > 0 && sources.every(source => {
-          try { return postCarousel.manifest?.[video ? 'video' : 'image']?.has(new URL(source, location.href).href) === true; }
-          catch (_) { return false; }
-        });
-        if (listed()) return true;
+        if (carouselManifestAllows(postCarousel, media)) return true;
         // Lazy media fragments can arrive after the original track was bound.
         // Refresh at most once per reconciliation, still requiring this exact
         // post's loaded source list and a direct slot in the original track.
-        if (!carouselManifestRefreshed) {
-          carouselManifestRefreshed = true;
-          postCarousel.manifest = loadedCarouselManifest(pinnedCard, postCarousel.track) || postCarousel.manifest;
+        refreshCarouselManifest();
+        return carouselManifestAllows(postCarousel, media);
+      };
+      const healCarouselMediaRecord = (media, card, source) => {
+        const remembered = mediaSources.get(media);
+        if (!remembered || (!remembered.rejected && remembered.card === card) || card !== pinnedCard
+            || !postCarousel || postCarousel.rejected || !postCarousel.track.contains(media) || !exactPostCard(card)) return;
+        const manifest = refreshCarouselManifest();
+        if (!manifest || !carouselManifestAllows(postCarousel, media, manifest)) return;
+        // A previous React wrapper is not a permanent denial. Only a fresh
+        // source proof for this exact post and its bound track can heal it.
+        remembered.card = card;
+        remembered.source = source;
+        remembered.rejected = false;
+      };
+      const postCardHasLayout = card => {
+        if (!card?.isConnected) return false;
+        for (let node = card; node; node = node.parentElement) {
+          const style = getComputedStyle(node);
+          if (node.hidden || node.getAttribute('aria-hidden') === 'true'
+              || style.display === 'none' || Number(style.opacity) <= 0.02) return false;
         }
-        return listed();
+        // Our own visibility rule must not prevent repairing a blocked card.
+        const box = card.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && box.bottom > 0 && box.right > 0
+          && box.top < innerHeight && box.left < innerWidth;
+      };
+      const provenPostCarousel = card => {
+        if (!postCardHasLayout(card) || !exactPostCard(card)) return null;
+        const carousel = capturePostCarousel(card);
+        const media = carousel && [...carousel.track.querySelectorAll('img,video')].filter(contentMedia);
+        if (!carousel?.manifest || media.length < 2 || !media.some(node => carouselManifestAllows(carousel, node))) return null;
+        // Rebinding is stricter than the initial user-selected layout: keep
+        // captured permission only for sources independently proven by the
+        // selected post's records. Preloads/other assets remain individually
+        // closed, including when their empty shells hydrate later.
+        carousel.slides.forEach(slide => {
+          slide.media = slide.media.filter(entry => carouselManifestAllows(carousel, entry.node));
+        });
+        return carousel;
+      };
+      const recoverPostCarousel = () => {
+        if (pinnedKind !== 'p') return;
+        if (!postCarousel && postLayoutCaptured) {
+          // An article can render one photo before it mounts its real track.
+          // A late track must earn source proof rather than inheriting the
+          // initial single-image layout's permission for every new slide.
+          const late = capturePostCarousel(pinnedCard);
+          if (late) { postCarousel = late; postCarousel.rejected = true; }
+        }
+        const stale = postCarousel && (postCarousel.rejected || !pinnedCard?.contains(postCarousel.track)
+          || !postCardHasLayout(pinnedCard) || ![...postCarousel.track.querySelectorAll('img,video')].some(contentMedia));
+        if (!stale && (postCarousel || !postLayoutCaptured)) return;
+        const candidates = new Set([pinnedCard, ...(modalContext || document).querySelectorAll('article,[role="article"]')]);
+        let inspected = 0;
+        for (const card of candidates) {
+          if (!card || !exactPostCard(card)) continue;
+          if (++inspected > 16) break;
+          const next = provenPostCarousel(card);
+          if (!next) continue;
+          const previous = pinnedCard;
+          if (postCarousel) {
+            postCarousel.track.removeAttribute('data-vigil-single-reel-carousel');
+            postCarousel.viewport.removeAttribute('data-vigil-single-reel-carousel');
+          }
+          if (previous !== card) {
+            mark(previous, 'data-vigil-single-reel-card', 'blocked');
+            lockedScroll.forEach((_, node) => {
+              if (node === previous || previous.contains(node)) {
+                node.removeAttribute('data-vigil-single-reel-scroll');
+                lockedScroll.delete(node);
+              }
+            });
+          }
+          pinnedCard = card;
+          postCarousel = next;
+          postLayoutCaptured = true;
+          carouselManifestRefreshed = true;
+          freshCarouselManifest = next.manifest;
+          mark(next.track, 'data-vigil-single-reel-carousel', 'true');
+          mark(next.viewport, 'data-vigil-single-reel-carousel', 'true');
+          return;
+        }
       };
       const blockSuggestedReels = () => {
         if (suggestedReelsRoot) {
@@ -3955,6 +4052,7 @@ enum DOMAdapters {
         normalizeRecipientSheets();
         if (!syncRoute() || !concealmentScope) return;
         carouselManifestRefreshed = false;
+        freshCarouselManifest = null;
         // Reel playback may change CDN/blob sources and remount its player.
         // Contain input without granting permission to a particular video URL.
         if (pinnedKind === 'reel') return;
@@ -4034,9 +4132,26 @@ enum DOMAdapters {
         if (postCarousel && (!pinnedCard?.contains(postCarousel.track) || !exactPostCard(pinnedCard))) {
           postCarousel.rejected = true;
         }
+        recoverPostCarousel();
+        // Document-start can bind the track before Relay publishes its props.
+        // Initial slides may keep matching their captured sources forever, so
+        // waiting for a source mismatch never refreshes that missing manifest.
+        if (postCarousel && !postCarousel.manifest && exactPostCard(pinnedCard)) refreshCarouselManifest();
         const cardDecisions = new Map();
         const recordCard = (card, allowed) => {
-          if (card) cardDecisions.set(card, (cardDecisions.get(card) ?? true) && allowed);
+          if (!card) return;
+          const verifiedCarousel = card === pinnedCard && postCarousel?.manifest && !postCarousel.rejected
+            && pinnedCard.contains(postCarousel.track) && exactPostCard(card);
+          // Each asset keeps its own fail-closed verdict. A verified photo
+          // must not disappear because an avatar, preload or another slide
+          // has no source proof yet. Unselected/uncertain cards stay closed.
+          cardDecisions.set(card, verifiedCarousel
+            ? (cardDecisions.get(card) ?? false) || allowed
+            : (cardDecisions.get(card) ?? true) && allowed);
+        };
+        const recordMedia = (media, card, allowed) => {
+          mark(media, 'data-vigil-single-reel-media', allowed ? 'allowed' : 'blocked');
+          recordCard(card, allowed);
         };
         const isPosterForPinnedReel = media => {
           if (pinnedKind !== 'reel' || !(media instanceof HTMLImageElement)
@@ -4051,6 +4166,7 @@ enum DOMAdapters {
         };
         for (const video of videos) {
           const source = mediaSource(video);
+          healCarouselMediaRecord(video, cardFor(video), source);
           if (video === pinnedVideo && !pinnedSource && !emptyMediaSource(source)) pinnedSource = source;
           // React can recycle the same video node without changing history.
           // Carousel permission belongs to the original slide and source,
@@ -4065,7 +4181,7 @@ enum DOMAdapters {
           // anonymous viewer must never promote its portal, body or thread to
           // a media card just because only one video has loaded so far.
           const card = cardFor(video);
-          recordCard(card, allowed);
+          recordMedia(video, card, allowed);
           if (allowed && card?.parentElement) {
             for (const sibling of card.parentElement.children) {
               if (sibling === card || inSheet(sibling)) continue;
@@ -4094,6 +4210,7 @@ enum DOMAdapters {
               || mediaRoute(location.href)?.id === pinnedID);
             if (!remembered.rejected && !pendingMedia && (routes.some(matches) || selectedVideo)) remembered.source = source;
           }
+          healCarouselMediaRecord(media, card, source);
           if (card === pinnedCard && media instanceof HTMLImageElement && pinnedKind !== 'p' && !pinnedImageSource) {
             pinnedImageSource = source;
           }
@@ -4105,7 +4222,7 @@ enum DOMAdapters {
           // A Reel's poster can hydrate or change resolution independently of
           // the video. Only the selected video's source authorizes playback;
           // a decorative image must not veto that unchanged video and hide it.
-          if (!isPosterForPinnedReel(media)) recordCard(card, allowed);
+          if (!isPosterForPinnedReel(media)) recordMedia(media, card, allowed);
           if (allowed) {
             // Recycled Home classifications belong to the old feed card.
             // Release only the exact pinned item, never the retained stream.

@@ -42,6 +42,10 @@ jobs:
         timeout-minutes: 3
         run: node scripts/test-instagram-send-webkit.mjs
 
+      - name: Test Instagram profile carousel loading and recovery
+        timeout-minutes: 3
+        run: node scripts/test-instagram-carousel-webkit.mjs
+
       - name: Test Instagram comments interaction and dismissal
         timeout-minutes: 3
         run: node scripts/test-instagram-comments-webkit.mjs

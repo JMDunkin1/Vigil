@@ -1,4 +1,5 @@
-<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="img-src 'none'; media-src 'none'">
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>
 body{margin:0}article{width:390px}#viewport{position:relative;display:flex;overflow-x:hidden;width:390px;height:500px}
 #track{position:relative;display:flex;flex-direction:row;width:1px;height:500px;margin:0;padding:0}
 li{position:absolute;width:390px;height:500px;list-style:none}img,video{width:390px;height:500px}
@@ -58,8 +59,45 @@ window.fixtureLater=(kind='image')=>{
 window.fixtureAllowed=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='allowed'
  && getComputedStyle(document.getElementById('later')).visibility==='visible';
 window.fixtureBlocked=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='blocked';
+window.fixtureDenied=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='allowed'
+ && getComputedStyle(document.getElementById('later')).visibility==='hidden'
+ && getComputedStyle(document.querySelector('#track img[src="https://example.com/second.jpg"]')).visibility==='visible';
+window.fixtureFirstDenied=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='allowed'
+ && getComputedStyle(document.querySelector('#track img')).visibility==='hidden'
+ && getComputedStyle(document.querySelector('#track img[src="https://example.com/second.jpg"]')).visibility==='visible';
+window.fixturePhotosVisible=()=>document.getElementById('selected').dataset.vigilSingleReelCard==='allowed'
+ && [...document.querySelectorAll('#track img,#track video')].every(n=>getComputedStyle(n).visibility==='visible');
+window.fixtureChrome=(kind='image')=>{
+ const media=document.createElement(kind==='video'?'video':'img');media.id='chrome';
+ media.src='https://example.com/unlisted-chrome.'+(kind==='video'?'mp4':'jpg');
+ media.style='width:32px;height:32px';
+ const header=document.createElement('header');header.append(media);document.getElementById('selected').append(header);
+};
+window.fixtureRemountTrack=(known=true)=>{
+ const old=document.getElementById('track'),next=old.cloneNode(true);old.replaceWith(next);
+ if(!known)next.querySelector('img').src='https://example.com/recommendation.jpg';
+};
+window.fixtureRewrapPost=(known=true)=>{
+ const old=document.getElementById('selected'),next=document.createElement('article');
+ old.id='retained';next.id='selected';next.innerHTML='<a href="/creator/p/Dump123/">Post</a>';
+ next.append(document.getElementById('viewport'));old.after(next);old.style.display='none';
+ if(!known)document.getElementById('track').querySelector('img').src='https://example.com/recommendation.jpg';
+};
+window.fixtureClonePost=(known=true)=>{
+ const old=document.getElementById('selected'),next=old.cloneNode(true);
+ const props=document.getElementById('viewport')['__reactProps$fixture'];
+ old.id='retained';old.querySelectorAll('[id]').forEach(n=>n.id='retained-'+n.id);old.style.opacity='0';old.after(next);
+ next.querySelector('#viewport')['__reactProps$fixture']=props;
+ if(!known)next.querySelector('#track img').src='https://example.com/recommendation.jpg';
+};
+window.fixtureMountCarousel=()=>{
+ const viewport=document.getElementById('viewport'),track=document.createElement('ul');
+ track.id='track';track.innerHTML='<li></li><li style="transform:translateX(390px)"><img src="https://example.com/second.jpg"></li>';
+ track.firstElementChild.append(document.getElementById('single'));viewport.firstElementChild.append(track);
+ viewport.style.removeProperty('display');viewport.style.removeProperty('overflow-x');
+};
 window.fixtureContained=()=>{
- const image=document.getElementById('later'),wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
+ const image=document.getElementById('later')||document.querySelector('#track img'),wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:100});
  image.dispatchEvent(wheel);history.pushState({},'', '/p/Other123/');
  return wheel.defaultPrevented&&location.pathname==='/creator/p/Dump123/'
   && getComputedStyle(document.querySelector('#other img')).visibility==='hidden';

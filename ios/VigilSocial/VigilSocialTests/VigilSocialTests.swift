@@ -15282,7 +15282,7 @@ extension VigilSocialTests {
             let authorized = try await evaluateJavaScriptRetryingKnownGestureTransition("document.querySelector('article').dataset.vigilSingleReelCard==='allowed' && getComputedStyle(document.getElementById('later')).visibility==='visible'", in: webView) as? Bool
             XCTAssertEqual(authorized, exact, "Only the selected post's loaded sidecar source list may authorize a virtual remount")
             _ = try await evaluateJavaScriptRetryingKnownGestureTransition("document.getElementById('later').src='https://example.com/vigil-fixture-recommendation.jpg';true", in: webView)
-            try await waitForJavaScriptCondition("document.querySelector('article').dataset.vigilSingleReelCard==='blocked'", in: webView)
+            try await waitForJavaScriptCondition("getComputedStyle(document.getElementById('later')).visibility==='hidden'", in: webView)
         }
     }
 }
@@ -15431,7 +15431,7 @@ extension VigilSocialTests {
                 let allowed = try await webView.evaluateJavaScript("document.querySelector('article').dataset.vigilSingleReelCard==='allowed'") as? Bool
                 XCTAssertEqual(allowed, exact, "Lazy photos need the exact selected post's source manifest (wrapped=\(wrapped))")
                 _ = try await webView.evaluateJavaScript("document.getElementById('fourth').src='https://example.com/recommendation.jpg'")
-                try await waitForJavaScriptCondition("document.querySelector('article').dataset.vigilSingleReelCard==='blocked'", in: webView)
+                try await waitForJavaScriptCondition("getComputedStyle(document.getElementById('fourth')).visibility==='hidden'", in: webView)
             }
         }
     }
