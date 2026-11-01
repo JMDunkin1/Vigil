@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { randomUUID } from 'node:crypto';
-import { youtubeBuildConfiguration } from '../scripts/youtube-build-connection.mjs';
+import { youtubeBuildConfiguration, youtubeLocalEngine } from '../scripts/youtube-build-connection.mjs';
 
 test('phone bundles a standalone ledger and preserves the migration seed without a server credential', async () => {
   const original = process.env.VIGIL_DATA_DIR;
@@ -34,4 +34,22 @@ test('phone bundles a standalone ledger and preserves the migration seed without
     else process.env.VIGIL_DATA_DIR = original;
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('the bundled phone engine persists account reconciliation and refuses a fifth save after reopening', async () => {
+  const engine = await youtubeLocalEngine();
+  const load = () => runInNewContext(`${engine}\nvigilLocalAction`, { __uuid: randomUUID });
+  let action = load();
+  let current = JSON.parse(action('{}', JSON.stringify({ action: 'watch-later-checkpoint' })));
+  const ids = Array.from({ length: 4 }, (_, i) => `video${String(i).padStart(6, '0')}`);
+  current = JSON.parse(action(JSON.stringify(current.state), JSON.stringify({ action: 'watch-later-sync',
+    accountKey: 'a'.repeat(64), complete: true, revision: 0, day: current.reply.day,
+    videoIds: ids, cards: ids.map(videoId => ({ videoId, title: videoId })) })));
+  assert.equal(current.reply.ok, true);
+  assert.equal(current.reply.slots.filter(Boolean).length, 4);
+  assert.deepEqual(current.state.youtubeLimits.watchLater.videoIds, ids);
+  action = load();
+  const blocked = JSON.parse(action(JSON.stringify(current.state), JSON.stringify({ action: 'save', videoId: 'video000004' })));
+  assert.equal(blocked.reply.ok, false);
+  assert.deepEqual(blocked.state.youtubeLimits.watchLater, current.state.youtubeLimits.watchLater);
 });

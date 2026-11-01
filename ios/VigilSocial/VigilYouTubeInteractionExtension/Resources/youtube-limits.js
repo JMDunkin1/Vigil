@@ -25,6 +25,8 @@
   let menuVideo = null, replayingSave = false;
   let spacePress = null, idleSince = null, playbackClock = null;
   let preparation = null;
+  let watchLaterSync = null, watchLaterSnapshot = null, watchLaterCheckedAt = -Infinity;
+  let watchLaterChanging = false;
   let pressedControl = null;
   const playControlSelector = '.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]';
   const controlLabel = control => (control.getAttribute('aria-label') || control.getAttribute('title') || '').trim();
@@ -102,7 +104,7 @@
       && !(state.grace.status === 'active' && state.grace.usedMs < 1200000 && state.grace.videoId === currentID());
     const text = timeFinished ? 'Watch time used for today' : state.grace.status === 'active'
       ? `Finish this video · ${Math.ceil((1200000 - state.grace.usedMs) / 60000)} min left`
-      : `${4 - state.slots.filter(Boolean).length} saves left · ${Math.ceil(remaining / 60000)} min left`;
+      : `${state.watchLaterOverflow ? 0 : 4 - state.slots.filter(Boolean).length} saves left · ${Math.ceil(remaining / 60000)} min left`;
     if (statusLine.textContent !== text) statusLine.textContent = text;
   }
   const sample = () => {
@@ -155,17 +157,15 @@
     busy = true;
     updateHeldPlayer();
     try {
-      // Start the account lookup on navigation. Opening a video never obtains
-      // a playback lease; the real Start still validates the durable ledger.
-      // Saved/search/external videos can Start immediately even if an account
-      // lookup is pending. Only a save-first reply needs its membership result.
+      // Reconcile on navigation, but do not hold existing playback permission
+      // behind YouTube's network. Only a new saved-video import needs the list.
       void prepareCurrentVideo();
       let sent = performance.now(), response;
       try { response = await request({ action: 'start', videoId: id }); }
       catch (error) {
         if (error.message !== 'Save this video to Watch Later before playing.') throw error;
         show('Checking Watch Later…');
-        const saved = await preparedMembership(id);
+        const saved = await watchLaterMembership(id, true);
         if (!saved) throw error;
         await request({ action: 'save', ...saved });
         sent = performance.now(); response = await request({ action: 'start', videoId: id });
@@ -359,25 +359,118 @@
     }
     return cards;
   }
-  async function watchLaterMembership(videoId) {
-    const response = await accountFetch('/playlist?list=WL', { credentials: 'include', signal: AbortSignal.timeout(10000) });
+  function watchLaterPage(data, continuation = false) {
+    const lists = [];
+    const visit = value => {
+      if (!value || typeof value !== 'object') return;
+      const list = continuation ? value.playlistVideoListContinuation || value.appendContinuationItemsAction
+        : value.playlistVideoListRenderer;
+      if (list) { lists.push(list); return; }
+      for (const child of Object.values(value)) if (typeof child === 'object') {
+        if (Array.isArray(child)) child.forEach(visit); else visit(child);
+      }
+    };
+    visit(data);
+    if (lists.length !== 1) throw new Error('Could not verify the Watch Later playlist. Please try again.');
+    const list = lists[0];
+    if (list.playlistId && list.playlistId !== 'WL'
+        || list.targetId && !['WL', 'VLWL', 'playlist-video-list'].includes(list.targetId)) {
+      throw new Error('Could not verify the Watch Later playlist. Please try again.');
+    }
+    const contents = list.contents || list.continuationItems;
+    if (!Array.isArray(contents)) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
+    const cards = [], tokens = [];
+    for (const item of contents) {
+      const video = item.playlistVideoRenderer || item.playlistPanelVideoRenderer;
+      if (video) {
+        if (!/^[\w-]{11}$/.test(video.videoId || '')) throw new Error('Could not read a Watch Later entry. Please try again.');
+        cards.push({ videoId: video.videoId, title: textOf(video.title).trim().slice(0, 200) || video.videoId });
+      } else if (item.continuationItemRenderer) {
+        const token = item.continuationItemRenderer.continuationEndpoint?.continuationCommand?.token;
+        if (!token) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
+        tokens.push(token);
+      } else if (!item.messageRenderer) {
+        throw new Error('Could not read a Watch Later entry. Please try again.');
+      }
+    }
+    for (const entry of list.continuations || []) {
+      const token = entry.nextContinuationData?.continuation;
+      if (!token) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
+      tokens.push(token);
+    }
+    if (new Set(tokens).size > 1) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
+    return { cards, token: tokens[0] || null };
+  }
+  async function readWatchLater() {
+    if (!accountFetch || !/^(www\.|m\.)?youtube\.com$/.test(location.hostname) || !topFrame) {
+      throw new Error('Open YouTube to check your shared Watch Later.');
+    }
+    const options = { credentials: 'include', cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(10000) };
+    const response = await accountFetch('/playlist?list=WL', options);
     if (!response.ok) throw new Error('Could not check Watch Later. Please try again.');
     const html = await response.text();
-    const initial = jsonAfter(html, /(?:var\s+)?ytInitialData\s*=\s*/);
-    if (!initial) throw new Error('Could not check Watch Later. Please try again.');
-    let page = videoCards(initial);
+    const initial = jsonAfter(html, /(?:var\s+)?(?:window\s*\[\s*["']ytInitialData["']\s*\]|ytInitialData)\s*=\s*/);
     const config = jsonAfter(html, /ytcfg\.set\(\s*/);
-    for (let i = 0; i < 5; i++) {
-      const card = page.cards.find(card => card.videoId === videoId);
-      if (card) return card;
-      const token = page.continuations[0];
-      if (!token || !config?.INNERTUBE_CONTEXT) return null;
-      const next = await accountFetch('/youtubei/v1/browse', { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(10000), body: JSON.stringify({ context: config.INNERTUBE_CONTEXT, continuation: token }) });
-      if (!next.ok) throw new Error('Could not check Watch Later. Please try again.');
-      page = videoCards(await next.json());
+    if (!initial || config?.LOGGED_IN !== true || typeof config.DATASYNC_ID !== 'string' || !config.DATASYNC_ID.trim()) {
+      throw new Error('Sign in to the same YouTube account to check your shared Watch Later.');
     }
-    throw new Error('Could not find this video in Watch Later. Open the playlist and try again.');
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(config.DATASYNC_ID));
+    const accountKey = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+    const cards = [], ids = new Set(), tokens = new Set();
+    let page = watchLaterPage(initial);
+    for (let i = 0; i < 100; i++) {
+      for (const card of page.cards) {
+        if (ids.has(card.videoId)) throw new Error('Watch Later changed while checking. Please try again.');
+        ids.add(card.videoId); cards.push(card);
+      }
+      if (cards.length > 5000) throw new Error('Watch Later is too large to verify.');
+      if (!page.token) return { accountKey, cards };
+      if (tokens.has(page.token) || !config.INNERTUBE_CONTEXT) break;
+      tokens.add(page.token);
+      const next = await accountFetch('/youtubei/v1/browse', {
+        ...options, method: 'POST', signal: AbortSignal.timeout(10000), headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ context: config.INNERTUBE_CONTEXT, continuation: page.token })
+      });
+      if (!next.ok) throw new Error('Could not check Watch Later. Please try again.');
+      page = watchLaterPage(await next.json(), true);
+    }
+    throw new Error('Could not read the complete Watch Later playlist. Please try again.');
+  }
+  async function reconcileWatchLater(force = false) {
+    if (watchLaterSync) {
+      // Save confirmation must see a snapshot fetched after YouTube's click.
+      if (!force) return watchLaterSync;
+      await watchLaterSync.catch(() => {});
+      return reconcileWatchLater(true);
+    }
+    if (!force && watchLaterSnapshot && watchLaterSnapshot.day === state?.day
+        && performance.now() - watchLaterCheckedAt < 30000) return watchLaterSnapshot;
+    watchLaterSync = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const before = await request({ action: 'watch-later-checkpoint' });
+        const snapshot = await readWatchLater();
+        const known = new Set(before.watchLater?.videoIds || []);
+        const candidates = snapshot.cards.filter(card => !known.has(card.videoId)
+          && !before.slots.some(slot => slot?.videoId === card.videoId)).slice(0, 4);
+        for (const card of snapshot.cards) if ((card.videoId === currentID() || before.slots.some(slot => slot?.videoId === card.videoId))
+            && !candidates.some(item => item.videoId === card.videoId)) candidates.push(card);
+        try {
+          const reply = await request({ action: 'watch-later-sync', accountKey: snapshot.accountKey,
+            videoIds: snapshot.cards.map(card => card.videoId), cards: candidates, complete: true,
+            revision: before.watchLater?.revision || 0, day: before.day });
+          watchLaterSnapshot = { ...snapshot, day: reply.day };
+          watchLaterCheckedAt = performance.now();
+          return watchLaterSnapshot;
+        } catch (error) {
+          if (attempt || error.message !== 'Watch Later changed while checking. Please try again.') throw error;
+        }
+      }
+    })();
+    try { return await watchLaterSync; } finally { watchLaterSync = null; }
+  }
+  async function watchLaterMembership(videoId, force = false) {
+    const snapshot = await reconcileWatchLater(force);
+    return snapshot.cards.find(card => card.videoId === videoId) || null;
   }
   function prepareCurrentVideo() {
     const id = currentID();
@@ -387,6 +480,9 @@
     const entry = { id, day: state?.day, at: performance.now(), membership: null, membershipChecked: false, promise: null };
     preparation = entry;
     entry.promise = (async () => {
+      // Import the whole account delta even when this video was saved locally.
+      // External/search grants still play without waiting for this request.
+      await reconcileWatchLater();
       try { await request({ action: 'check', videoId: id }); }
       catch (error) {
         if (error.message !== 'Save this video to Watch Later before playing.') throw error;
@@ -400,15 +496,6 @@
     void entry.promise.catch(() => {});
     return entry.promise;
   }
-  async function preparedMembership(id) {
-    const entry = preparation;
-    if (entry?.id === id && entry.day === state?.day
-        && performance.now() - entry.at < 30000) {
-      try { await entry.promise; } catch { return watchLaterMembership(id); }
-      if (entry.membershipChecked) return entry.membership;
-    }
-    return watchLaterMembership(id);
-  }
   function rememberMenuVideo(target) {
     const card = target.closest(`${nativeCardSelector},ytm-playlist-video-renderer,ytd-playlist-video-renderer`);
     const anchor = card?.querySelector('a[href*="watch?v="]');
@@ -418,20 +505,24 @@
     if (card || videoId) menuVideo = videoId ? { videoId, title } : null;
   }
   async function standardWatchLaterChange(target, remove) {
+    if (watchLaterChanging) return;
     preparation = null;
     const video = menuVideo;
     if (!video) { show('Open the video’s menu again to change Watch Later.'); return; }
-    const before = state?.slots.find(slot => slot?.videoId === video.videoId);
+    watchLaterChanging = true;
+    let before;
     try {
-      // Reserve before allowing YouTube to save, so a fifth save cannot slip
-      // through concurrent tabs. YouTube itself performs the account change.
+      // Refresh the account before reserving locally. YouTube performs the
+      // account change; its confirmed snapshot is shared by all installations.
+      await reconcileWatchLater(true);
+      before = state?.slots.find(slot => slot?.videoId === video.videoId);
       if (!remove) await request({ action: 'save', ...video });
       replayingSave = true;
       try { target.click(); } finally { replayingSave = false; }
       let saved = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         await new Promise(resolve => setTimeout(resolve, 700));
-        saved = await watchLaterMembership(video.videoId);
+        saved = await watchLaterMembership(video.videoId, true);
         if (Boolean(saved) !== remove) break;
       }
       if (remove && !saved) await request({ action: 'remove', videoId: video.videoId });
@@ -441,6 +532,7 @@
       }
       show('');
     } catch (error) { show(error.message); }
+    finally { watchLaterChanging = false; }
   }
   function feedName() { return ['/', '/feed/recommended'].includes(location.pathname) ? 'home' : location.pathname === '/feed/subscriptions' ? 'subscriptions' : ''; }
   const nativeCardSelector = 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytd-rich-item-renderer,ytd-rich-grid-media,ytm-rich-grid-media,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer,yt-lockup-view-model,ytm-lockup-view-model';
@@ -624,7 +716,7 @@
   }
   function updateFinishedScreen() {
     if (!topFrame || !document.documentElement) return;
-    const full = Boolean(state?.slots?.filter(Boolean).length === 4);
+    const full = Boolean(state?.watchLaterOverflow || state?.slots?.filter(Boolean).length === 4);
     const id = currentID();
     const slot = state?.slots?.find(slot => slot?.videoId === id);
     const grace = state?.grace;
@@ -955,6 +1047,8 @@
       // Those same-video updates must not cancel a pending or active Play.
       if (!previousID || previousID !== currentID()) {
         preparation = null;
+        watchLaterCheckedAt = -Infinity;
+        refreshWatchLater();
         intent = ''; resumeMedia = null; wantsPlayback = false; queuedStart = false;
         void stop().then(() => request({ action: 'switch', videoId: currentID() })).catch(error => show(error.message));
       }
@@ -1012,7 +1106,17 @@
     void prepareCurrentVideo();
     clean();
   }, 500);
-  setInterval(() => { if (!lease && !busy) void request({ action: 'status' }).catch(error => show(error.message)); }, 30000);
+  function refreshWatchLater() {
+    if (!topFrame || !/^(www\.|m\.)?youtube\.com$/.test(location.hostname) || document.hidden || watchLaterChanging) return;
+    void reconcileWatchLater().catch(error => show(error.message));
+  }
+  window.addEventListener('focus', () => { watchLaterCheckedAt = -Infinity; refreshWatchLater(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) { watchLaterCheckedAt = -Infinity; refreshWatchLater(); }
+  });
+  setInterval(() => {
+    if (!lease && !busy) void request({ action: 'status' }).then(refreshWatchLater).catch(error => show(error.message));
+  }, 30000);
   // A native installation check must test the working limiter and mounted
   // allowance, rather than the flag set before initialization has completed.
   window.__vigilYouTubeLimitsHealth = () => {
@@ -1021,5 +1125,6 @@
   };
   if (document.documentElement) clean();
   if (!document.body) document.addEventListener('DOMContentLoaded', clean, { once: true });
+  refreshWatchLater();
   void prepareCurrentVideo();
 })();

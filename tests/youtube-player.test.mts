@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
-import { webcrypto } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { defaultState } from '../src/defaults.js';
 import type { YouTubeRequest } from '../src/youtubeLimits.js';
 import { youtubeAction, YOUTUBE_BASE_MS } from '../src/youtubeLimits.js';
@@ -18,12 +18,17 @@ interface PlayerFixtureOptions {
   settlementDelay?: number;
   embedHost?: string;
   holdAccountLookup?: boolean;
+  accountVideoIds?: string[];
+  initialRoute?: string;
 }
 async function playerFixture({
   nativeReply = false, ledgerInitiallySaved = true, accountInitiallySaved = ledgerInitiallySaved,
-  renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = '', holdAccountLookup = false
+  renewalDelay = 0, timerCadence = 50, settlementDelay = 0, embedHost = '', holdAccountLookup = false,
+  accountVideoIds = [], initialRoute = `/watch?v=${id}`
 }: PlayerFixtureOptions = {}) {
   let accountSaved = accountInitiallySaved;
+  let accountOtherVideos = accountVideoIds;
+  let accountUnavailable = false;
   let finishAccountLookup: (() => void) | undefined;
   const accountRequests: string[] = [];
   let clock = 0;
@@ -66,7 +71,8 @@ async function playerFixture({
       ? new Promise(resolve => replies.push({ at: clock + delay, resolve: () => resolve(response) }))
       : Promise.resolve(response);
   };
-  const window: Record<string, unknown> = { addEventListener() {} }; window.top = embedHost ? {} : window;
+  const windowHandlers = new Map<string, Callback>();
+  const window: Record<string, unknown> = { addEventListener(event: string, callback: Callback) { windowHandlers.set(event, callback); } }; window.top = embedHost ? {} : window;
   if (nativeReply === true) window.webkit = { messageHandlers: { vigilYouTube: { async postMessage(envelope: { body: YouTubeRequest }) { return delayedAct(envelope.body); } } } };
   if (nativeReply === 'safari') {
     Object.defineProperty(window, 'ytInitialData', { configurable: true, get() { throw new Error('Page globals unavailable in Safari isolated world'); } });
@@ -81,13 +87,20 @@ async function playerFixture({
     querySelectorAll(selector: string) { return selector === 'video,audio' ? [selectedMedia] : []; },
     addEventListener(event: string, callback: Callback) { handlers.set(event, [...handlers.get(event) || [], callback]); }
   };
-  const location = Object.assign(new URL(embedHost ? `https://${embedHost}/embed/${id}` : `https://www.youtube.com/watch?v=${id}`), { assign(url: string) { location.href = url; } });
+  const location = Object.assign(new URL(embedHost ? `https://${embedHost}/embed/${id}` : `https://www.youtube.com${initialRoute}`), { assign(url: string) { location.href = url; } });
   runInNewContext(source, { window, document, location,
-    crypto: webcrypto, URL, Element: Node, performance: { now: () => clock },
+    crypto: { randomUUID: () => webcrypto.randomUUID(), subtle: { digest: async (_: string, bytes: Uint8Array) => createHash('sha256').update(bytes).digest() } },
+    TextEncoder, URL, Element: Node, performance: { now: () => clock },
     setInterval(callback: Callback, ms: number) { const timer = { callback, ms, active: true }; intervals.push(timer); return timer; },
     clearInterval(timer: {active: boolean}) { timer.active = false; },
     setTimeout, clearTimeout, AbortSignal,
-    fetch: async (url: string) => { accountRequests.push(url); if (holdAccountLookup) await new Promise<void>(resolve => { finishAccountLookup = resolve; }); return { ok: true, text: async () => `var ytInitialData = ${JSON.stringify({ contents: accountSaved ? [{ playlistVideoRenderer: { videoId: id, title: { simpleText: 'Real Watch Later video' } } }] : [] })};` }; },
+    fetch: async (url: string) => {
+      accountRequests.push(url);
+      if (accountUnavailable) throw new Error('YouTube is unavailable');
+      if (holdAccountLookup) await new Promise<void>(resolve => { finishAccountLookup = resolve; });
+      const accountIds = [...new Set([...(accountSaved ? [id] : []), ...accountOtherVideos])];
+      return { ok: true, text: async () => `ytcfg.set({"LOGGED_IN":true,"DATASYNC_ID":"fixture-account"});var ytInitialData = ${JSON.stringify({ contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: accountIds.map(videoId => ({ playlistVideoRenderer: { videoId, title: { simpleText: 'Real Watch Later video' } } })) } } })};` };
+    },
     browser: nativeReply === 'safari' ? { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return delayedAct(message.youtube); } } } : undefined,
     chrome: nativeReply === 'safari' ? undefined : { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return delayedAct(message.youtube); } } }
   });
@@ -163,16 +176,18 @@ async function playerFixture({
     for (const callback of handlers.get('click') || []) callback({ isTrusted: true, target: media, preventDefault() {}, stopImmediatePropagation() {} });
     await flush();
   };
-  return { finishAccountLookup: () => finishAccountLookup?.(), accountRequests, mobileTap, replaceMedia: () => { Object.assign(media, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...media, isConnected:true, paused:true, play: async () => { selectedMedia.paused = false; for (const callback of handlers.get('play') || []) callback({target:selectedMedia,isTrusted:true}); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, window, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
+  return { setAccountVideos: (videos: string[]) => { accountOtherVideos = videos; }, failAccountReads: () => { accountUnavailable = true; },
+    focus: async () => { windowHandlers.get('focus')?.(); await flush(); },
+    finishAccountLookup: () => finishAccountLookup?.(), accountRequests, mobileTap, replaceMedia: () => { Object.assign(media, {isConnected:false}); selectedMedia = Object.assign(new Node(), {...media, isConnected:true, paused:true, play: async () => { selectedMedia.paused = false; for (const callback of handlers.get('play') || []) callback({target:selectedMedia,isTrusted:true}); }}); return selectedMedia; }, rawTap: async (label = '') => { media.attributes.set('aria-label', label); for (const callback of handlers.get('click') || []) callback({isTrusted:true,target:media,preventDefault(){},stopImmediatePropagation(){}}); await flush(); }, location, startupControl, flush, searchClick, activeFastTimers: () => intervals.filter(timer => timer.active && timer.ms === 50).length, state, media, click, advance, emit, nodes, standardSave, window, root:document.documentElement, key, jump:(ms:number)=>{clock+=ms;} };
 }
 
-test('opening a video checks Watch Later before Play without allocating a slot or playback lease', async () => {
+test('opening a video imports Watch Later selections before Play without allocating playback time or a lease', async () => {
   const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false, accountInitiallySaved: true });
   assert.deepEqual(f.accountRequests, ['/playlist?list=WL']);
   assert.equal(f.media.paused, true);
   assert.equal(f.state.youtubeLimits!.lease, null);
   assert.equal(f.state.youtubeLimits!.usedMs, 0);
-  assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 0);
+  assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 1);
   await f.click('Play this video');
   assert.equal(f.media.paused, false);
   assert.equal(f.accountRequests.length, 1, 'Play reuses the lookup completed on opening');
@@ -270,6 +285,32 @@ test('a full daily allowance blocks the standard save before YouTube changes its
   state.youtubeLimits!.slots = Array.from({ length: 4 }, (_, i) => ({ videoId: `other${String(i).padStart(6, '0')}`, title: `Existing ${i}`, locked: false, removed: false }));
   assert.equal(await standardSave(), false);
   assert.equal(state.youtubeLimits!.slots.filter(Boolean).length, 4);
+});
+
+test('a fresh account read blocks a fifth save made after another surface filled Watch Later', async () => {
+  const f = await playerFixture({ ledgerInitiallySaved: false });
+  const remote = Array.from({ length: 4 }, (_, i) => `other${String(i).padStart(6, '0')}`);
+  f.setAccountVideos(remote);
+  assert.equal(await f.standardSave(), false);
+  assert.deepEqual(f.state.youtubeLimits!.slots.map(slot => slot?.videoId), remote);
+});
+
+test('opening the homepage and returning focus import saves without opening a watch page', async () => {
+  const f = await playerFixture({ ledgerInitiallySaved: false, initialRoute: '/', accountVideoIds: ['other000000'] });
+  assert.equal(f.state.youtubeLimits!.slots[0]!.videoId, 'other000000');
+  f.setAccountVideos(['other000000', 'other000001']);
+  await f.focus();
+  assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 2);
+  assert.equal(f.state.youtubeLimits!.lease, null);
+  assert.equal(f.state.youtubeLimits!.usedMs, 0);
+});
+
+test('an unreadable account cannot approve a new save or erase the previous checkpoint', async () => {
+  const f = await playerFixture({ ledgerInitiallySaved: false, accountVideoIds: ['other000000'] });
+  const before = structuredClone(f.state.youtubeLimits);
+  f.failAccountReads();
+  assert.equal(await f.standardSave(), false);
+  assert.deepEqual(f.state.youtubeLimits, before);
 });
 
 

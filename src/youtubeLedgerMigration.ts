@@ -25,6 +25,16 @@ export function mergeYouTubeLedgers(sources: YouTubeMigrationSources, now = new 
   });
   if (new Set(normalized.map(day => day.day)).size !== 1) throw new Error("Ledger clocks disagree. Do not reset them to activate sharing.");
   const day = structuredClone(normalized[0]);
+  const checkpoints = normalized.flatMap(ledger => ledger.watchLater ? [ledger.watchLater] : []);
+  if (new Set(checkpoints.map(checkpoint => checkpoint.accountKey)).size > 1) {
+    throw new Error("YouTube accounts disagree. Keep the original ledgers and use the same shared Watch Later account.");
+  }
+  if (checkpoints.length) {
+    day.watchLater = { accountKey: checkpoints[0].accountKey,
+      videoIds: [...new Set(checkpoints.flatMap(checkpoint => checkpoint.videoIds))].sort(),
+      revision: Math.max(...checkpoints.map(checkpoint => checkpoint.revision)) + 1 };
+  }
+  day.watchLaterOverflow = normalized.some(ledger => ledger.watchLaterOverflow);
   day.played = {}; day.external = []; day.feeds = {}; day.lease = null;
   const slots = new Map<string, YouTubeSlot>();
   let used = 0;

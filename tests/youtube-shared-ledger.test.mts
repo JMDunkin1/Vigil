@@ -47,6 +47,21 @@ test('shared watch time and lease ownership follow the same authority across sur
   await f.send({action:'settle',leaseId:started.lease.id,playedMs:1500,client:'phone'});
   const other=await(await f.send({action:'status',client:'safari'})).json();assert.equal(other.usedMs,1500);
 });
+test('the optional shared authority accepts a bounded full Watch Later roster and preserves its checkpoint', async () => {
+  const f = fixture();
+  const before = await (await f.send({ action: 'watch-later-checkpoint' })).json();
+  const videoIds = Array.from({ length: 5000 }, (_, i) => `v${String(i).padStart(10, '0')}`);
+  const response = await f.send({ action: 'watch-later-sync', accountKey: 'a'.repeat(64), complete: true,
+    day: before.day, revision: 0, videoIds, cards: videoIds.slice(0, 4).map(videoId => ({ videoId, title: videoId })) });
+  assert.equal(response.status, 200);
+  const reply = await response.json();
+  assert.equal(reply.ok, true);
+  assert.equal(reply.slots.filter(Boolean).length, 4);
+  assert.equal(reply.watchLaterOverflow, true);
+  const checkpoint = await (await f.send({ action: 'watch-later-checkpoint' })).json();
+  assert.deepEqual(checkpoint.watchLater.videoIds, videoIds);
+  assert.equal((await f.send({ action: 'watch-later-sync', padding: 'x'.repeat(131073) })).status, 413);
+});
 test('credentials, malformed bodies, oversized chunked inputs and redirect recipients are rejected',async()=>{
   const f=fixture();assert.equal((await f.send({action:'status'},'2'.repeat(64))).status,403);
   assert.equal((await f.send([])).status,400);

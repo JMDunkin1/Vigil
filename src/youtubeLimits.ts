@@ -8,6 +8,13 @@ const LEASE_LIFETIME_MS = 5_000;
 export const YOUTUBE_FULL = "Watch Later is full. Replace an unwatched video to save this one.";
 export const YOUTUBE_USED = "You’ve used all four Watch Later slots today.";
 export const YOUTUBE_TIME = "You’ve reached today’s watch time.";
+export const YOUTUBE_WATCH_LATER_MAX = 5000;
+export const YOUTUBE_WATCH_LATER_RETRY = "Watch Later changed while checking. Please try again.";
+export interface YouTubeWatchLaterCheckpoint {
+  accountKey: string;
+  videoIds: string[];
+  revision: number;
+}
 export interface YouTubeSlot { videoId: string; title: string; locked: boolean; removed: boolean; completed?: boolean }
 export interface YouTubeCard { videoId: string; title: string; channel?: string; duration?: string }
 interface Lease { id: string; client: string; videoId: string; milliseconds: number; settledMs: number; expiresAt: number }
@@ -22,14 +29,25 @@ export interface YouTubeDay {
   feeds: Partial<Record<"home" | "subscriptions", YouTubeCard[]>>;
   external: string[];
   lease: Lease | null;
+  watchLater?: YouTubeWatchLaterCheckpoint;
+  watchLaterOverflow?: boolean;
 }
 export interface YouTubeRequest {
   action?: unknown; client?: unknown; videoId?: unknown; title?: unknown;
   replace?: unknown; mode?: unknown; feed?: unknown; cards?: unknown; leaseId?: unknown;
   playedMs?: unknown; ended?: unknown;
+  accountKey?: unknown; videoIds?: unknown; revision?: unknown; day?: unknown; complete?: unknown;
 }
 function videoId(value: unknown): string {
   return typeof value === "string" && /^[a-zA-Z0-9_-]{11}$/.test(value) ? value : "";
+}
+export function validYouTubeWatchLaterCheckpoint(value: unknown): value is YouTubeWatchLaterCheckpoint {
+  const checkpoint = value as Partial<YouTubeWatchLaterCheckpoint> | null;
+  return Boolean(checkpoint && /^[a-f0-9]{64}$/.test(checkpoint.accountKey || "")
+    && Number.isSafeInteger(checkpoint.revision) && checkpoint.revision! > 0
+    && Array.isArray(checkpoint.videoIds) && checkpoint.videoIds.length <= YOUTUBE_WATCH_LATER_MAX
+    && checkpoint.videoIds.every(id => Boolean(videoId(id)))
+    && new Set(checkpoint.videoIds).size === checkpoint.videoIds.length);
 }
 let dayFormatter: { timezone: string; formatter: Intl.DateTimeFormat } | undefined;
 function localDay(now: Date, timezone: string): string {
@@ -57,8 +75,12 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
   const key = localDay(now, timezone);
   // A backwards wall-clock jump must never reopen a prior day.
   if (!state.youtubeLimits || key > state.youtubeLimits.day) {
+    // Carry the latest account snapshot across midnight, not yesterday's
+    // allowance. Unchanged old playlist entries must not refill today's slots.
+    const watchLater = state.youtubeLimits?.watchLater;
     state.youtubeLimits = { day: key, timezone, slots: [null, null, null, null], played: {}, usedMs: 0,
-      grace: { status: "unused", videoId: null, usedMs: 0 }, feeds: {}, external: [], lease: null };
+      grace: { status: "unused", videoId: null, usedMs: 0 }, feeds: {}, external: [], lease: null,
+      ...(watchLater ? { watchLater } : {}) };
   }
   const day = state.youtubeLimits;
   if (day.lease && now.getTime() >= day.lease.expiresAt) {
@@ -69,6 +91,10 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
   const result = (ok = true, message = "", lease: Lease | null = null) => ({
     ok, message, day: day.day, slots: structuredClone(day.slots), usedMs: day.usedMs,
     grace: { ...day.grace }, feeds: structuredClone(day.feeds), external: [...day.external], lease,
+    watchLaterOverflow: day.watchLaterOverflow === true,
+    // The full checkpoint is needed only before reconciliation; never send a
+    // potentially large playlist back with every short playback renewal.
+    ...(input.action === "watch-later-checkpoint" ? { watchLater: structuredClone(day.watchLater || null) } : {}),
     serverTime: now.getTime()
   });
   const id = videoId(input.videoId);
@@ -76,6 +102,43 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
   const slot = day.slots.find((item) => item?.videoId === id);
   switch (input.action) {
     case "status": return result();
+    case "watch-later-checkpoint": return result();
+    case "watch-later-sync": {
+      if (input.complete !== true || typeof input.accountKey !== "string" || !/^[a-f0-9]{64}$/.test(input.accountKey)
+          || !Array.isArray(input.videoIds) || input.videoIds.length > YOUTUBE_WATCH_LATER_MAX
+          || !input.videoIds.every(id => Boolean(videoId(id))) || new Set(input.videoIds).size !== input.videoIds.length
+          || !Array.isArray(input.cards) || input.cards.length > 16
+          || input.cards.some(card => !card || typeof card !== "object" || !videoId(card.videoId)
+            || typeof card.title !== "string" || !card.title.trim() || card.title.length > 200)) {
+        return result(false, "Watch Later could not be verified. Please try again.");
+      }
+      const checkpoint = day.watchLater;
+      if (checkpoint && !validYouTubeWatchLaterCheckpoint(checkpoint)) return result(false, "Your Watch Later checkpoint could not be verified.");
+      if (input.day !== day.day || input.revision !== (checkpoint?.revision || 0)) return result(false, YOUTUBE_WATCH_LATER_RETRY);
+      if (checkpoint && checkpoint.accountKey !== input.accountKey) return result(false, "Use the same YouTube account as your shared Watch Later.");
+      const previous = new Set(checkpoint?.videoIds || []);
+      const titles = new Map(input.cards.map(card => [card.videoId as string, card.title as string]));
+      for (const id of input.videoIds as string[]) {
+        const saved = day.slots.find(slot => slot?.videoId === id);
+        if (saved) {
+          if (titles.has(id)) saved.title = titles.get(id)!;
+          // A verified re-save can restore membership, never completion/usage.
+          saved.removed = false;
+          continue;
+        }
+        if (previous.has(id)) continue;
+        const index = day.slots.indexOf(null);
+        if (index < 0 || day.watchLaterOverflow) { day.watchLaterOverflow = true; continue; }
+        day.slots[index] = { videoId: id, title: titles.get(id) || id, locked: (day.played[id] || 0) > 15_000, removed: false };
+      }
+      // Absence is not a refund: another surface may have watched and removed
+      // a video, or this snapshot may predate a pending YouTube save.
+      const videoIds = [...input.videoIds as string[]].sort();
+      if (!checkpoint || JSON.stringify(videoIds) !== JSON.stringify(checkpoint.videoIds)) {
+        day.watchLater = { accountKey: input.accountKey, videoIds, revision: (checkpoint?.revision || 0) + 1 };
+      }
+      return result();
+    }
     case "switch":
       if (id && day.grace.status === "active" && day.grace.videoId !== id) day.grace.status = "ended";
       return result();
@@ -87,6 +150,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
     case "save": {
       if (!id) return result(false, "Invalid video.");
       if (slot) { slot.removed = false; return result(); }
+      if (day.watchLaterOverflow) return result(false, YOUTUBE_USED);
       let index = day.slots.indexOf(null);
       if (typeof input.replace === "string") {
         index = day.slots.findIndex((item) => item !== null && item.videoId === input.replace && !item.locked);
