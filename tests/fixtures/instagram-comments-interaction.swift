@@ -7,6 +7,7 @@ struct Scenario: Decodable {
     let name: String
     let html: String
     let path: String
+    let documentStart: Bool?
     let steps: [Step]
 }
 @MainActor final class Runner: NSObject, WKNavigationDelegate {
@@ -23,7 +24,7 @@ struct Scenario: Decodable {
             for scenario in scenarios {
                 let config = WKWebViewConfiguration()
                 config.websiteDataStore = .nonPersistent()
-                config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true))
+                config.userContentController.addUserScript(WKUserScript(source: source, injectionTime: scenario.documentStart == true ? .atDocumentStart : .atDocumentEnd, forMainFrameOnly: true))
                 let page = WKWebView(frame: NSRect(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 webView = page
                 page.navigationDelegate = self

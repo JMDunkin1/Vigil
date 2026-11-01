@@ -69,7 +69,7 @@ enum DOMAdapters {
             + expandedSafetyScript(for: service)
             + expandedServiceScript(for: service)
             + documentIdentityBootstrap
-            + (service == .instagram ? instagramActivityFeedCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
+            + (service == .instagram ? instagramActivityFeedCompatibility + instagramOutgoingUnreadCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -2221,6 +2221,104 @@ enum DOMAdapters {
       };
       // At document start the module loader may not exist yet. Parser mutations
       // let us subscribe before the later notification bundle executes.
+      const observer = new MutationObserver(register);
+      observer.observe(document, { childList: true, subtree: true });
+      timer = setInterval(register, 50);
+      deadline = setTimeout(stop, 15000);
+      register();
+    })();
+    """#
+
+    // Slide's unread resolver compares all activity, including our own sends,
+    // against the viewer's receipt. Correct only a proven outgoing-only gap in
+    // the already loaded message history. Never send a read acknowledgment or
+    // infer read state from the inbox preview, a blue dot, or message text.
+    static let instagramOutgoingUnreadCompatibility = #"""
+    (() => {
+      if (window !== window.top || location.protocol !== 'https:'
+          || !['instagram.com', 'www.instagram.com'].includes(location.hostname)
+          || (location.port && location.port !== '443')
+          || window.__vigilInstagramOutgoingUnreadCompatibility) return;
+      let installed = false, registered = false, timer = 0, deadline = 0;
+      window.__vigilInstagramOutgoingUnreadCompatibility = Object.freeze({
+        get installed() { return installed; }
+      });
+      const connectionNames = ['__IGDInbox__slide_messages_connection', '__IGDMessagesList_slide_messages_connection'];
+      const scalar = name => ({ alias: null, args: null, kind: 'ScalarField', name, storageKey: null });
+      const connections = connectionNames.map(name => ({
+        alias: null, args: null, concreteType: 'XFBIGDirectViewerThreadSlideMessagesConnection',
+        kind: 'LinkedField', name, plural: false, storageKey: null, selections: [{
+          alias: null, args: null, concreteType: 'XFBIGDirectViewerThreadSlideMessagesEdge',
+          kind: 'LinkedField', name: 'edges', plural: true, storageKey: null, selections: [{
+            alias: null, args: null, concreteType: 'SlideMessage', kind: 'LinkedField',
+            name: 'node', plural: false, storageKey: null,
+            selections: ['id', 'sender_fbid', 'timestamp_ms'].map(scalar)
+          }]
+        }]
+      }));
+      const integer = value => typeof value === 'string' && /^\d{1,20}$/.test(value)
+        ? BigInt(value) : typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : null;
+      const outgoingOnly = (data, currentUser) => {
+        if (data?.marked_as_unread !== false) return false;
+        const viewer = integer(currentUser), activity = integer(data.last_activity_timestamp_ms);
+        if (viewer === null || viewer <= 0n || activity === null || activity <= 0n
+            || !Array.isArray(data.slide_read_receipts)) return false;
+        const receipts = data.slide_read_receipts.filter(receipt => integer(receipt?.participant_fbid) === viewer);
+        if (receipts.length !== 1) return false;
+        const watermark = integer(receipts[0].watermark_timestamp_ms);
+        if (watermark === null || watermark <= 0n || watermark >= activity) return false;
+        let complete = false;
+        for (const name of connectionNames) {
+          const connection = data[name];
+          if (connection == null) continue;
+          if (!Array.isArray(connection.edges) || connection.edges.length > 500) return false;
+          let covered = false, latestIsOwn = false;
+          for (const edge of connection.edges) {
+            const message = edge?.node, sender = integer(message?.sender_fbid), timestamp = integer(message?.timestamp_ms);
+            // Unknown/deleted records, history gaps and concurrent new messages
+            // retain Instagram's original unread decision.
+            if (typeof message?.id !== 'string' || !message.id || sender === null || sender <= 0n
+                || timestamp === null || timestamp <= 0n || timestamp > activity) return false;
+            if (timestamp <= watermark) covered = true;
+            else if (sender !== viewer) return false;
+            if (timestamp === activity && sender === viewer) latestIsOwn = true;
+          }
+          if (covered && latestIsOwn) complete = true;
+        }
+        return complete;
+      };
+      const stop = () => { observer.disconnect(); clearInterval(timer); clearTimeout(deadline); };
+      const install = (module, fragment, fragments, user) => {
+        const original = module?.client__is_unread;
+        if (installed || typeof original !== 'function' || fragment?.kind !== 'Fragment'
+            || fragment.name !== 'XFBIGDirectViewerThreadIsUnreadResolver_XFBIGDirectViewerThread'
+            || !Array.isArray(fragment.selections) || typeof fragments?.readFragment !== 'function'
+            || typeof user?.getEIMU !== 'function') return;
+        // Relay caches the first fragment read in a resolver evaluation. Read
+        // the expanded fragment first, preserving every original selection.
+        // Optional client connections add subscriptions, never network fields.
+        const expanded = { ...fragment, selections: [...fragment.selections,
+          { kind: 'ClientExtension', selections: connections }] };
+        const resolve = function(...args) {
+          let data;
+          try { data = fragments.readFragment(expanded, args[0]); } catch (_) {}
+          const result = Reflect.apply(original, this, args);
+          if (result !== true) return result;
+          try { if (outgoingOnly(data, user.getEIMU())) return false; } catch (_) {}
+          return result;
+        };
+        try { module.client__is_unread = resolve; installed = module.client__is_unread === resolve; } catch (_) {}
+      };
+      const register = () => {
+        if (registered || typeof window.requireLazy !== 'function') return;
+        try {
+          window.requireLazy(['XFBIGDirectViewerThreadIsUnreadResolver',
+            'XFBIGDirectViewerThreadIsUnreadResolver_XFBIGDirectViewerThread.graphql',
+            'relay-runtime/store/ResolverFragments', 'CurrentUser'], install);
+          registered = true;
+          stop();
+        } catch (_) {}
+      };
       const observer = new MutationObserver(register);
       observer.observe(document, { childList: true, subtree: true });
       timer = setInterval(register, 50);
