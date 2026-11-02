@@ -29,6 +29,7 @@
   let watchLaterChanging = false;
   let watchLaterError = '';
   let watchLaterTools = null, bulkClearRunning = false, bulkClearStopped = false;
+  let watchLaterMenuUntil = 0, watchLaterMenuEntry = null, watchLaterMenuPopup = null;
   const ownedMedia = new WeakSet();
   let pressedControl = null;
   const playControlSelector = '.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]';
@@ -322,14 +323,9 @@
     panel = document.createElement('aside'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(300px,36vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
+    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
     statusLine = document.createElement('strong'); statusLine.textContent = 'Checking allowance…';
-    const tools = document.createElement('button'); tools.type = 'button'; tools.textContent = 'Watch Later';
-    tools.setAttribute('aria-label', 'Manage Watch Later');
-    tools.style.cssText = 'pointer-events:auto;touch-action:manipulation;white-space:nowrap;flex:0 0 auto;margin-left:10px;min-height:32px;padding:4px 8px;border:1px solid currentColor;border-radius:7px;background:transparent;color:inherit;font:inherit;cursor:pointer';
-    tools.hidden = !topFrame;
-    tools.addEventListener('click', event => { if (event.isTrusted) void openWatchLaterTools(); });
-    shadow.append(style, statusLine, tools);
+    shadow.append(style, statusLine);
     panel.setAttribute('aria-label', 'YouTube daily allowance');
     document.body.append(panel);
     positionAllowance();
@@ -598,6 +594,50 @@
     }
     throw new Error('Could not read the complete Watch Later playlist. Please try again.');
   }
+  // BEGIN WATCH LATER MENU
+  function removeWatchLaterMenuEntry() {
+    watchLaterMenuEntry?.remove();
+    watchLaterMenuEntry = null; watchLaterMenuPopup = null;
+  }
+  function watchLaterPlaylistPage() {
+    return topFrame && location.pathname === '/playlist' && new URL(location.href).searchParams.get('list') === 'WL';
+  }
+  function mountWatchLaterMenu() {
+    if (!watchLaterPlaylistPage()) { removeWatchLaterMenuEntry(); watchLaterMenuUntil = 0; return; }
+    if (watchLaterMenuEntry) {
+      const rect = watchLaterMenuPopup?.getBoundingClientRect();
+      if (watchLaterMenuEntry.isConnected && rect?.width > 0 && rect.height > 0) return;
+      removeWatchLaterMenuEntry();
+    }
+    if (performance.now() >= watchLaterMenuUntil) return;
+    for (const popup of document.querySelectorAll('ytd-menu-popup-renderer,ytm-menu-popup-renderer')) {
+      const rect = popup.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      const entry = document.createElement('button'); entry.type = 'button';
+      entry.textContent = 'Clear Watch Later…'; entry.setAttribute('data-vigil-watch-later-clear', '');
+      entry.style.cssText = 'display:block;width:100%;min-height:44px;padding:12px 16px;border:0;background:transparent;color:inherit;font:14px Roboto,Arial,sans-serif;text-align:left;cursor:pointer';
+      entry.addEventListener('click', event => {
+        if (!event.isTrusted) return;
+        event.preventDefault(); event.stopPropagation();
+        popup.closest('tp-yt-iron-dropdown')?.close?.();
+        void openWatchLaterTools();
+      });
+      (popup.querySelector('tp-yt-paper-listbox') || popup).append(entry);
+      watchLaterMenuEntry = entry; watchLaterMenuPopup = popup;
+      return;
+    }
+  }
+  function watchLaterMenuClick(event) {
+    if (!event.isTrusted || !(event.target instanceof Element) || watchLaterMenuEntry?.contains(event.target)) return;
+    removeWatchLaterMenuEntry(); watchLaterMenuUntil = 0;
+    if (!watchLaterPlaylistPage()) return;
+    const button = event.target.closest('button,[role="button"]');
+    const header = button?.closest('ytd-playlist-sidebar-renderer,ytd-playlist-header-renderer,ytd-playlist-sidebar-primary-info-renderer,ytm-playlist-header-renderer,ytm-playlist-metadata-renderer,yt-page-header-view-model,ytm-page-header-renderer');
+    if (!header || !/^(?:action menu|more actions|more|playlist actions)$/i.test(controlLabel(button))) return;
+    watchLaterMenuUntil = performance.now() + 2500;
+    setTimeout(mountWatchLaterMenu, 0);
+  }
+  // END WATCH LATER MENU
   // BEGIN WATCH LATER BULK CLEAR
   async function clearWatchLaterSnapshot(reviewed, stopped, progress) {
     const fresh = await readWatchLater(true);
@@ -667,13 +707,13 @@
       const shadow = host.attachShadow({ mode: 'closed' });
       const style = document.createElement('style');
       style.textContent = `:host{display:contents}dialog{box-sizing:border-box;width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto;
-        margin:auto;padding:24px;border:1px solid #ffffff26;border-radius:16px;background:#212121;color:#f1f1f1;
+        margin:auto;padding:24px;border:1px solid #ffffff26;border-radius:14px;background:#212121;color:#f1f1f1;
         font:14px/1.5 Roboto,Arial,sans-serif;box-shadow:0 18px 70px #0006}dialog::backdrop{background:#0009}
-        *{box-sizing:border-box}.header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}
-        h1{margin:0;font-size:22px;line-height:1.25;letter-spacing:-.4px}#summary{min-height:21px;margin:0 0 12px;color:#aaa;font-variant-numeric:tabular-nums}
+        *{box-sizing:border-box}.header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
+        h1{margin:0;font-size:20px;line-height:1.25;letter-spacing:-.4px}#summary{min-height:21px;margin:0 0 12px;color:#aaa;font-variant-numeric:tabular-nums}
         button,.menu-toggle{min-height:44px;border:0;border-radius:9px;background:transparent;color:inherit;font:500 14px/1.3 Roboto,Arial,sans-serif;cursor:pointer;touch-action:manipulation}
         button:hover,.menu-toggle:hover{background:#ffffff12}button:focus-visible,.menu-toggle:focus-visible{outline:2px solid #3ea6ff;outline-offset:3px}
-        button:disabled{opacity:.45;cursor:default}#clear{background:#c62828;color:#fff;width:100%;margin-top:20px;padding:12px}
+        button:disabled{opacity:.45;cursor:default}#clear{background:#c62828;color:#fff;width:100%;margin-top:16px;padding:12px}#clear[data-mode="done"],#clear[data-mode="stop"]{background:#ffffff14;color:inherit}[hidden]{display:none!important}
         progress{display:block;width:100%;height:6px;accent-color:#3ea6ff;border:0;border-radius:4px;overflow:hidden}
         progress::-webkit-progress-bar{background:#ffffff18;border-radius:4px}progress::-webkit-progress-value{background:#3ea6ff;border-radius:4px}
         details{position:relative;flex:0 0 auto}details[inert]{opacity:.45}.menu-toggle{display:grid;place-items:center;width:40px;font-size:24px;list-style:none}
@@ -682,20 +722,20 @@
         @media(prefers-color-scheme:light){dialog{background:#fff;color:#181818;border-color:#ddd}#summary{color:#606060}.menu{background:#fff;border-color:#ddd}
         button:hover,.menu-toggle:hover{background:#00000008}progress::-webkit-progress-bar{background:#00000012}}`;
       const header = document.createElement('div'); header.className = 'header';
-      const heading = document.createElement('h1'); heading.textContent = 'Watch Later';
+      const heading = document.createElement('h1'); heading.textContent = 'Clear Watch Later';
       const options = document.createElement('details');
       const menuToggle = document.createElement('summary'); menuToggle.className = 'menu-toggle'; menuToggle.textContent = '⋮';
       menuToggle.setAttribute('aria-label', 'Watch Later options');
       const menu = document.createElement('div'); menu.className = 'menu';
       const summary = document.createElement('p'); summary.id = 'summary'; summary.setAttribute('role', 'status'); summary.setAttribute('aria-live', 'polite');
-      const progress = document.createElement('progress'); progress.max = 1; progress.value = 0; progress.setAttribute('aria-label', 'Clear Watch Later progress');
+      const progress = document.createElement('progress'); progress.hidden = true; progress.max = 1; progress.value = 0; progress.setAttribute('aria-label', 'Clear Watch Later progress');
       const backup = document.createElement('button'); backup.type = 'button'; backup.textContent = 'Export list';
       const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Refresh page';
       const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
-      const clear = document.createElement('button'); clear.type = 'button'; clear.id = 'clear'; clear.textContent = 'Clear'; clear.disabled = true;
+      const clear = document.createElement('button'); clear.type = 'button'; clear.id = 'clear'; clear.textContent = 'Clear all'; clear.disabled = true;
       menu.append(backup, review, close); options.append(menuToggle, menu); header.append(heading, options);
       dialog.append(header, summary, progress, clear); shadow.append(style, dialog);
-      watchLaterTools = { host, dialog, summary, progress, backup, review, clear, close, options, snapshot: null, opener: null, loading: false };
+      watchLaterTools = { host, dialog, summary, progress, backup, review, clear, close, options, snapshot: null, opener: null, loading: false, empty: false };
       const stopOrClose = () => {
         if (bulkClearRunning) { bulkClearStopped = true; summary.textContent = 'Stopping…'; clear.disabled = true; }
         else dialog.close();
@@ -703,6 +743,19 @@
       close.addEventListener('click', stopOrClose);
       dialog.addEventListener('cancel', event => { event.preventDefault(); if (options.open) options.open = false; else stopOrClose(); });
       dialog.addEventListener('close', () => watchLaterTools.opener?.focus?.());
+      // Backdrop events target the dialog itself; content clicks remain inside.
+      // Keep a running clear visible so its Stop control cannot be lost.
+      let backdropPress = false;
+      const outside = event => {
+        const rect = dialog.getBoundingClientRect();
+        return event.target === dialog && (event.clientX < rect.left || event.clientX > rect.right
+          || event.clientY < rect.top || event.clientY > rect.bottom);
+      };
+      dialog.addEventListener('pointerdown', event => { backdropPress = outside(event); });
+      dialog.addEventListener('click', event => {
+        if (event.isTrusted && backdropPress && outside(event) && !bulkClearRunning) dialog.close();
+        backdropPress = false;
+      });
       backup.addEventListener('click', event => {
         if (event.isTrusted && watchLaterTools.snapshot) exportWatchLater(watchLaterTools.snapshot);
       });
@@ -711,6 +764,7 @@
         // No bridge or synthetic page event can start account deletions.
         if (!event.isTrusted) return;
         if (bulkClearRunning) stopOrClose();
+        else if (watchLaterTools.empty) dialog.close();
         else if (watchLaterTools.snapshot && !watchLaterTools.loading) void runWatchLaterClear();
       });
       document.body.append(host);
@@ -723,18 +777,20 @@
   async function reviewWatchLaterTools() {
     const ui = watchLaterTools;
     if (!ui || ui.loading || bulkClearRunning) return;
-    ui.loading = true; ui.snapshot = null; ui.clear.disabled = true; ui.backup.disabled = true; ui.review.disabled = true;
-    ui.progress.removeAttribute('value'); ui.summary.textContent = 'Checking…';
+    ui.loading = true; ui.empty = false; ui.snapshot = null; ui.clear.disabled = true; ui.backup.disabled = true; ui.review.disabled = true;
+    ui.progress.hidden = true; ui.progress.removeAttribute('value'); ui.summary.textContent = 'Checking…';
     try {
       await reconcileWatchLater(true);
       const snapshot = await readWatchLater(true);
       if (snapshot.accountKey !== watchLaterSnapshot?.accountKey) throw new Error('The YouTube account changed. Refresh the list.');
       ui.snapshot = snapshot;
       const count = snapshot.cards.length;
-      ui.summary.textContent = count ? `${count.toLocaleString()} videos` : 'Empty';
+      ui.empty = count === 0;
+      ui.summary.textContent = count ? `${count.toLocaleString()} saved videos` : 'No saved videos';
       ui.progress.max = Math.max(1, count); ui.progress.value = 0;
-      ui.clear.textContent = 'Clear'; ui.clear.setAttribute('aria-label', `Clear all ${count.toLocaleString()} videos`);
-      ui.clear.disabled = !count || snapshot.cards.some(card => !card.removal);
+      ui.clear.textContent = ui.empty ? 'Done' : 'Clear all'; ui.clear.setAttribute('data-mode', ui.empty ? 'done' : 'clear');
+      ui.clear.setAttribute('aria-label', ui.empty ? 'Close Watch Later tools' : `Clear all ${count.toLocaleString()} videos`);
+      ui.clear.disabled = !ui.empty && snapshot.cards.some(card => !card.removal);
       ui.backup.disabled = !count;
       if (count && ui.clear.disabled) ui.summary.textContent = 'Removal controls unavailable.';
     } catch (error) { ui.summary.textContent = error.message; }
@@ -744,6 +800,7 @@
     const ui = watchLaterTools;
     if (!ui?.snapshot || watchLaterChanging) return;
     bulkClearRunning = true; bulkClearStopped = false; watchLaterChanging = true;
+    ui.empty = false; ui.progress.hidden = false; ui.clear.setAttribute('data-mode', 'stop');
     ui.clear.disabled = false; ui.clear.textContent = 'Stop'; ui.clear.setAttribute('aria-label', 'Stop clearing');
     ui.review.disabled = true; ui.backup.disabled = true; ui.close.disabled = true; ui.options.open = false; ui.options.inert = true;
     ui.progress.max = ui.snapshot.cards.length; ui.progress.value = 0; ui.summary.textContent = 'Checking…';
@@ -752,13 +809,14 @@
         ui.progress.value = submitted;
         if (!bulkClearStopped) ui.summary.textContent = `${submitted.toLocaleString()} / ${total.toLocaleString()}`;
       });
-      ui.progress.value = result.removed;
-      ui.summary.textContent = result.failure || (result.remaining ? `${result.remaining.toLocaleString()} remaining` : 'Empty');
+      ui.progress.value = result.removed; ui.empty = !result.failure && result.remaining === 0;
+      ui.summary.textContent = result.failure || (result.remaining ? `${result.remaining.toLocaleString()} remaining` : 'No saved videos');
       if (!result.stopped && !result.failure) location.reload();
     } catch (error) { ui.summary.textContent = `${error.message} Refresh the list to check what remains.`; }
     finally {
       ui.snapshot = null; bulkClearRunning = false; watchLaterChanging = false;
-      ui.clear.textContent = 'Clear'; ui.clear.setAttribute('aria-label', 'Clear Watch Later'); ui.clear.disabled = true;
+      ui.clear.textContent = ui.empty ? 'Done' : 'Clear all'; ui.clear.setAttribute('data-mode', ui.empty ? 'done' : 'clear');
+      ui.clear.setAttribute('aria-label', ui.empty ? 'Close Watch Later tools' : 'Clear Watch Later'); ui.clear.disabled = !ui.empty;
       ui.close.disabled = false; ui.review.disabled = false; ui.options.inert = false;
       watchLaterCheckedAt = -Infinity;
     }
@@ -1075,6 +1133,8 @@
         main{max-width:640px;margin:0 auto;color:var(--vigil-finished-text,#f1f1f1);
           animation:vigil-content-in 300ms cubic-bezier(.2,0,0,1) both}
         .brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;letter-spacing:-.2px}
+        .brand-label{border:0;background:transparent;color:inherit;font:inherit;padding:0;min-height:44px;cursor:pointer}
+        .brand-label:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:4px;border-radius:4px}
         .brand-mark{display:grid;place-items:center;width:32px;height:23px;border-radius:7px;background:#f03}
         .brand-mark::after{content:'';margin-left:2px;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:8px solid #fff}
         .count{margin-left:auto;padding:5px 10px;border-radius:8px;background:var(--vigil-finished-chip,#272727);
@@ -1133,7 +1193,12 @@
     finishedScreen.setAttribute('aria-label', timeFinished ? 'Daily YouTube watch time complete' : 'Daily YouTube saves complete');
     const brand = document.createElement('div'); brand.className = 'brand';
     const mark = document.createElement('span'); mark.className = 'brand-mark'; mark.setAttribute('aria-hidden', 'true');
-    const label = document.createElement('span'); label.textContent = timeFinished ? 'YouTube' : 'Watch Later';
+    const label = document.createElement(timeFinished ? 'span' : 'button'); label.textContent = timeFinished ? 'YouTube' : 'Watch Later';
+    if (!timeFinished) {
+      label.type = 'button'; label.setAttribute('aria-label', 'Watch Later tools');
+      label.className = 'brand-label';
+      label.addEventListener('click', event => { if (event.isTrusted) void openWatchLaterTools(); });
+    }
     const count = document.createElement('span'); count.className = 'count'; count.textContent = timeFinished ? 'Time used' : complete ? '4 / 4 watched' : '4 / 4 saved';
     brand.append(mark, label, count);
     const list = document.createElement('nav'); list.setAttribute('aria-label', 'Your saved videos');
@@ -1177,6 +1242,7 @@
     updateHeldPlayer();
     document.documentElement.toggleAttribute('data-vigil-feed-pending', Boolean(feedName() && !state));
     mount();
+    mountWatchLaterMenu();
     updateFinishedScreen();
     void filterNativeFeed();
     if (!document.getElementById('vigil-limits-style')) {
@@ -1425,6 +1491,7 @@
       clearInterval(playbackClock); playbackClock = null;
     }
   }
+  document.addEventListener('click', watchLaterMenuClick, true);
   if (topFrame && isolatedExtension) {
     const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     runtime.onMessage?.addListener(message => {
