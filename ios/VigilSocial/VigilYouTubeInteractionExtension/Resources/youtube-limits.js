@@ -624,6 +624,10 @@
       });
       (popup.querySelector('tp-yt-paper-listbox') || popup).append(entry);
       watchLaterMenuEntry = entry; watchLaterMenuPopup = popup;
+      // YouTube fits its dropdown before this extra row is attached. Notify
+      // the native resizer so the new action is visible and has a hit target.
+      popup.dispatchEvent(new Event('iron-resize', { bubbles: true, composed: true }));
+      popup.closest('tp-yt-iron-dropdown')?.refit?.();
       return;
     }
   }

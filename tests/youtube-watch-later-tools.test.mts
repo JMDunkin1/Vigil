@@ -33,6 +33,8 @@ class Node {
   closest(_selector: string): Node | null { return null; }
   querySelector(): Node | null { return null; }
   getBoundingClientRect() { return { left: 10, top: 10, right: 350, bottom: 200, width: 340, height: 190 }; }
+  dispatched: string[] = [];
+  dispatchEvent(event: Event) { this.dispatched.push(event.type); return true; }
   focus() {}
 }
 function fixture() {
@@ -119,7 +121,7 @@ test('the playlist action is added only to the Watch Later header menu and remov
   const location = new URL('https://www.youtube.com/');
   const api = runInNewContext(`let watchLaterMenuUntil=0,watchLaterMenuEntry=null,watchLaterMenuPopup=null;
     ${menuSource}\n({mountWatchLaterMenu,watchLaterMenuClick,entry:()=>watchLaterMenuEntry})`, {
-    topFrame: true, Element: Node, URL, location, performance: { now: () => 0 },
+    topFrame: true, Element: Node, Event, URL, location, performance: { now: () => 0 },
     document: { querySelectorAll: () => [popup], createElement: (tag: string) => new Node(tag) },
     controlLabel: () => 'Action menu', setTimeout: (fn: () => void) => { fn(); },
     openWatchLaterTools: async () => { opened++; }
@@ -130,6 +132,7 @@ test('the playlist action is added only to the Watch Later header menu and remov
   headerMenu = false; click(); assert.equal(api.entry(), null, 'video menus are not playlist menus');
   headerMenu = true; click(); const entry = api.entry();
   assert.equal(entry.textContent, 'Clear Watch Later…');
+  assert.deepEqual(popup.dispatched, ['iron-resize']);
   entry.handlers.get('click')({ isTrusted: true, preventDefault() {}, stopPropagation() {} }); assert.equal(opened, 1);
   location.href = 'https://www.youtube.com/'; api.mountWatchLaterMenu(); assert.equal(entry.isConnected, false);
 });
