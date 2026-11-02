@@ -2,6 +2,7 @@
   "name": "vigil",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "npm@12.2.1",
   "type": "module",
   "main": "dist/runtime/app/main.js",
   "author": "James Dunkin",
@@ -88,6 +89,14 @@
   "engines": {
     "node": ">=22.6"
   },
+  "overrides": {
+    "eslint": {
+      "minimatch": "11.0.3"
+    },
+    "@eslint/config-array": {
+      "minimatch": "11.0.3"
+    }
+  },
   "build": {
     "appId": "tech.caseline.vigil",
     "productName": "Vigil",
@@ -152,13 +161,13 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/chrome": "^0.2.2",
-    "@types/node": "^26.1.1",
+    "@types/chrome": "^0.3.7",
+    "@types/node": "^26.6.6",
     "@types/web-push": "^3.6.4",
-    "electron": "^42.6.1",
-    "electron-builder": "^26.15.3",
-    "eslint": "^10.7.0",
-    "globals": "^17.4.0",
+    "electron": "^45.2.1",
+    "electron-builder": "^26.18.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "typescript": "^7.0.2"
   },
   "dependencies": {

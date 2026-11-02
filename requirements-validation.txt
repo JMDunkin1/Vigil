@@ -1,0 +1,5 @@
+# Python 3.14.10 is the newest branch with published google-re2 wheels.
+# Python 3.15 validation awaits an upstream google-re2 wheel.
+cryptography==50.0.2
+google-re2==1.1.20251105
+pyiosbackup==0.2.4

@@ -257,7 +257,7 @@ async function ensurePymobiledevice3() {
   await execFileAsync("python3", ["-m", "venv", VENV_DIR], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 256 });
   const pip = join(VENV_DIR, "bin", "python");
   await execFileAsync(pip, ["-m", "pip", "install", "--upgrade", "pip", "wheel"], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
-  await execFileAsync(pip, ["-m", "pip", "install", "pymobiledevice3"], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+  await execFileAsync(pip, ["-m", "pip", "install", "-r", join(ROOT, "requirements-ios-tools.txt")], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
 }
 
 async function resolveUsbDevice(requestedUdid = "") {

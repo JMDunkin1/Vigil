@@ -829,8 +829,7 @@ function configureMenuBarResidency(): void {
   // without terminating enforcement.
   hideVigilDock();
   app.setLoginItemSettings({
-    openAtLogin: true,
-    openAsHidden: true
+    openAtLogin: true
   });
 }
 
@@ -838,7 +837,7 @@ function shouldShowWindowOnLaunch(): boolean {
   if (process.argv.includes(BACKGROUND_LAUNCH_ARG)) return false;
   if (!shouldStayResident()) return true;
   const loginItem = app.getLoginItemSettings();
-  return !loginItem.wasOpenedAtLogin && !loginItem.wasOpenedAsHidden;
+  return !loginItem.wasOpenedAtLogin;
 }
 
 function shouldStayResident(): boolean {

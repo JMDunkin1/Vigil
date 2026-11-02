@@ -20,6 +20,16 @@ export interface AdversarialUrlCase {
 }
 
 export const adversarialQueryCorpus: readonly AdversarialQueryCase[] = [
+  // An exact clinical phrase cannot erase separate explicit intent nearby.
+  ...["oral ulcer porn videos", "oral ulcer nude photos", "oral ulcer oral sex videos", "oral ulcer photographs of naked women", "oral ulcer photographs oral videos", "oral ulcers sex doll photos", "oral-ulcer nude photographs", "oral_ulcer oral videos"].map((query, index) => ({
+    id: `medical-context-explicit-${index}`, query, expectedBlocked: true,
+    expectedMediaBlocked: true, expectedTextBlocked: true, category: "medical-context-explicit",
+    rationale: "Clinical words do not neutralize a separate explicit request in the same query."
+  })),
+  // The media-context helper does not own explicit keyword aliases. Both
+  // navigation and the complete page-text classifier must still reject this.
+  { id: "medical-context-explicit-keyword", query: "oral ulcer hentai", expectedBlocked: true, expectedTextBlocked: true,
+    category: "medical-context-explicit", rationale: "A clinical phrase cannot override an explicit keyword." },
   ...["silicone sex dolls", "love realistic silicone dolls", "sex_doll", "sex dolls medical", "love dolls art", "sex robots", "sex toys", "进口性爱娃娃", "矽膠性愛娃娃", "情趣娃娃商城", "ラブドール販売"].map((query, index) => ({
     id: `adult-product-${index}`, query, expectedBlocked: true, expectedTextBlocked: true,
     category: "adult product discovery", rationale: "Specific adult-product labels remain blocked even on an unknown marketplace."

@@ -93,7 +93,7 @@ async function installBundledIosPythonRuntime() {
     await execFileAsync("python3", ["-m", "venv", VENV_DIR], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 256 });
   }
   await execFileAsync(BUNDLED_PYTHON_PATH, ["-m", "pip", "install", "--upgrade", "pip", "wheel"], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
-  await execFileAsync(BUNDLED_PYTHON_PATH, ["-m", "pip", "install", "pymobiledevice3"], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+  await execFileAsync(BUNDLED_PYTHON_PATH, ["-m", "pip", "install", "-r", join(ROOT, "requirements-ios-tools.txt")], { timeout: INSTALL_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
 }
 
 async function requireSupervisorKeybag(requestedPath = "") {

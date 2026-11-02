@@ -392,7 +392,12 @@ async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
     const profile = recordValue(parsePlist(profileText), "overlap profile");
     assert.ok(Array.isArray(profile.PayloadContent));
     const targets = iosPolicyTargets(secondState);
-    const expectedDenyLists = [targets.deniedUrls, ...targets.supplementalDeniedUrls.length ? [targets.supplementalDeniedUrls] : []];
+    const expectedDenyLists = [targets.deniedUrls];
+    for (let offset = 0; offset < targets.supplementalDeniedUrls.length; offset += 500) {
+      expectedDenyLists.push(targets.supplementalDeniedUrls.slice(offset, offset + 500));
+    }
+    assert.equal(profile.PayloadRemovalDisallowed, secondState.deviceControls.ios.hardenRemoval,
+      "queued publication preserves the fixture's existing removal-hardening setting");
     assert.equal(profile.PayloadContent.length, 2 + expectedDenyLists.length,
       "Personal edition must contain restrictions, every required BuiltIn deny payload, and SafeSearch DNS");
     const payloads = profile.PayloadContent.map((value) => recordValue(value, "overlap payload"));
@@ -400,7 +405,8 @@ async function writeTestUrlFilterService(dataDirectory: string): Promise<void> {
     assert.equal(builtInFilters.length, expectedDenyLists.length);
     for (const [index, filter] of builtInFilters.entries()) {
       assert.equal(filter.AutoFilterEnabled, true);
-      assert.ok(Array.isArray(filter.DenyListURLs) && filter.DenyListURLs.length <= 500);
+      assert.ok(Array.isArray(filter.DenyListURLs) && filter.DenyListURLs.length > 0 && filter.DenyListURLs.length <= 500);
+      assert.equal(new Set(filter.DenyListURLs as string[]).size, filter.DenyListURLs.length);
       assert.deepEqual([...(filter.DenyListURLs as string[])].sort(), [...expectedDenyLists[index]!].sort(),
         "the published policy generation must retain primary and supplemental coverage together");
     }

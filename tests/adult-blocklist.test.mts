@@ -32,6 +32,7 @@ import {
 } from "../src/adultBlocklistPhoneArtifact.js";
 import {
   DEFAULT_ADULT_BLOCKLIST_SOURCE_ID,
+  DEFAULT_EXPLICIT_BLOCKED_SITES,
   MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS,
   SOFT_BLOCK_PROFILE_ID
 } from "../src/defaults.js";
@@ -320,11 +321,19 @@ bad_domain
   assert.equal(explained.reasonCode, "adult-blocklist");
   assert.equal(explained.match?.domain, "exampleadult.test");
 
-  const snapshot = extensionRuleSnapshot(state, now);
+  // Exercise duplicate skipping with an explicit bounded priority fixture.
+  // The growing production baseline can legitimately fill the dynamic budget.
+  const preloadCapacityState = structuredClone(state);
+  preloadCapacityState.profiles.find(profile => profile.id === preloadCapacityState.settings.baselineProfileId)!.blockedSites = [...new Set([...DEFAULT_EXPLICIT_BLOCKED_SITES, "go2offer-1.com", "archive.org", "honeytoon.com"])];
+  const snapshot = extensionRuleSnapshot(preloadCapacityState, now);
+  assert.equal(new Set(snapshot.rules.map(rule => rule.domain)).size, snapshot.rules.length);
+  for (const domain of DEFAULT_EXPLICIT_BLOCKED_SITES) {
+    assert.ok(snapshot.rules.some(rule => rule.domain === domain && rule.reason === "baseline"), `${domain} retains priority over duplicate preload entries`);
+  }
   assert.ok(snapshot.rules.some(rule => rule.domain === "exampleadult.test" && rule.kind === "adult-blocklist"),
     "bulk-source domains use spare capacity even when the preload begins with already-blocked domains");
   assert.equal(snapshot.rules.length <= 1_000, true);
-  const fullCapacityState = structuredClone(state);
+  const fullCapacityState = structuredClone(preloadCapacityState);
   fullCapacityState.profiles.find(profile => profile.id === fullCapacityState.settings.baselineProfileId)!.blockedSites
     .push(...Array.from({ length: 1_000 }, (_, index) => `priority-fixture-${index}.test`));
   const fullCapacitySnapshot = extensionRuleSnapshot(fullCapacityState, now);

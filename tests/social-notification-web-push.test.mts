@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import { createECDH } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import vm from "node:vm";
 import { test } from "node:test";
 import { validateWebPushSubscription } from "../src/socialNotificationRelay.js";
 import { createWebPushSender } from "../src/socialNotificationWebPush.js";
 import webpush from "web-push";
+
+async function receiverWorkerPath(): Promise<string> {
+  for (const root of [process.cwd(), resolve(process.cwd(), "..", "..")]) {
+    const path = join(root, "services", "notifications", "receiver", "worker.js");
+    try { await access(path); return path; } catch { /* try the source checkout */ }
+  }
+  throw new Error("Could not locate the notification receiver worker in the source checkout.");
+}
 
 test("iPhone push subscriptions cannot become arbitrary outbound requests", () => {
   const ecdh = createECDH("prime256v1");
@@ -33,7 +42,7 @@ test("receiver displays generic text and opens only its own service-selection pa
     clients: { openWindow: async (url: string) => { opened.push(url); } },
     addEventListener: (name: string, callback: (event: unknown) => void) => { handlers[name] = callback; }
   } });
-  vm.runInContext(await readFile("services/notifications/receiver/worker.js", "utf8"), context);
+  vm.runInContext(await readFile(await receiverWorkerPath(), "utf8"), context);
   let completion = Promise.resolve() as Promise<unknown>;
   handlers.push({ data: { json: () => ({ service: "snapchat", kind: "message", title: "Private sender", body: "Private content", url: "https://example.test" }) },
     waitUntil: (promise: Promise<unknown>) => { completion = promise; } });

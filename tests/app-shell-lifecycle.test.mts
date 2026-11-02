@@ -63,7 +63,7 @@ assert.match(
 );
 assert.match(
   mainSource,
-  /function shouldShowWindowOnLaunch\(\): boolean \{\s*if \(process\.argv\.includes\(BACKGROUND_LAUNCH_ARG\)\) return false;\s*if \(!shouldStayResident\(\)\) return true;\s*const loginItem = app\.getLoginItemSettings\(\);\s*return !loginItem\.wasOpenedAtLogin && !loginItem\.wasOpenedAsHidden;\s*\}/,
+  /function shouldShowWindowOnLaunch\(\): boolean \{\s*if \(process\.argv\.includes\(BACKGROUND_LAUNCH_ARG\)\) return false;\s*if \(!shouldStayResident\(\)\) return true;\s*const loginItem = app\.getLoginItemSettings\(\);\s*return !loginItem\.wasOpenedAtLogin;\s*\}/,
   "manual launches must open visually while login and updater launches remain windowless"
 );
 assert.match(

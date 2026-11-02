@@ -42,7 +42,7 @@ for (const list of [phoneDenies, macDenies]) {
 for (const query of ["porn+videos", "porn%20photos", "hentai+manga", "xxx+videos", "18%2B+adult+videos"]) {
   assert.ok(phoneDenies.some(pattern => appleLiteralMatch(`https://www.google.com/search?q=${query}`, pattern)), query);
 }
-assert.ok(phone.deniedUrls.length <= 500 && phone.supplementalDeniedUrls.length <= 500);
+assert.ok(phone.deniedUrls.length <= 500, "the primary payload remains within Apple's cap");
 assert.ok(safariFilterDenyMatch(state, "https://www.youtube.com/shorts", now));
 assert.ok(safariFilterDenyMatch(state, "https://www.youtube.com/shorts?id=one", now));
 assert.equal(safariFilterDenyMatch(state, "https://www.youtube.com/shortstop", now), "");
@@ -51,9 +51,17 @@ assert.match(mac, /PayloadRemovalDisallowed<\/key>\s*<true\/>/u);
 assert.match(mac, /useContentFilter<\/key>\s*<true\/>/u);
 const profile = parsePlist(buildIosConfigurationProfile(state, now)) as { PayloadRemovalDisallowed: boolean; PayloadContent: Array<Record<string, unknown>> };
 assert.equal(profile.PayloadRemovalDisallowed, true);
-for (const payload of profile.PayloadContent.filter(value => value.PayloadType === "com.apple.webcontent-filter")) {
+const phoneFilters = profile.PayloadContent.filter(value => value.PayloadType === "com.apple.webcontent-filter");
+assert.equal(phoneFilters.length, 1 + Math.ceil(phone.supplementalDeniedUrls.length / 500));
+assert.equal(new Set(phoneFilters.map(payload => payload.PayloadUUID)).size, phoneFilters.length);
+for (const payload of phoneFilters) {
   assert.equal(payload.FilterType, "BuiltIn"); assert.equal(payload.AutoFilterEnabled, true);
+  const urls = payload.DenyListURLs as string[];
+  assert.ok(urls.length > 0 && urls.length <= 500, "every actual payload respects Apple's cap");
+  assert.equal(new Set(urls).size, urls.length);
 }
+assert.deepEqual([...new Set(phoneFilters.flatMap(payload => payload.DenyListURLs as string[]))].sort(),
+  [...new Set(phoneDenies)].sort(), "overflow payloads retain the complete precise deny set");
 
 // A short authored dictionary does not become automatic merely because it
 // shares a default term or route. Preserve those literal-prefix choices.

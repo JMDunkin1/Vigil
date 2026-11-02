@@ -46,14 +46,18 @@ const profile = parsePlist(buildIosConfigurationProfile(state, now)) as {
 };
 assert.equal(profile.PayloadRemovalDisallowed, true);
 const filters = profile.PayloadContent.filter(payload => payload.PayloadType === "com.apple.webcontent-filter");
-assert.equal(filters.length, 2);
-assert.equal(new Set(filters.map(filter => filter.PayloadUUID)).size, 2);
+assert.equal(filters.length, 1 + Math.ceil(targets.supplementalDeniedUrls.length / 500));
+assert.equal(new Set(filters.map(filter => filter.PayloadUUID)).size, filters.length);
 for (const filter of filters) {
   assert.equal(filter.FilterType, "BuiltIn");
   assert.equal(filter.AutoFilterEnabled, true);
-  assert.ok((filter.DenyListURLs as string[]).length <= 500);
+  const urls = filter.DenyListURLs as string[];
+  assert.ok(urls.length > 0 && urls.length <= 500);
+  assert.equal(new Set(urls).size, urls.length, "each payload spends its quota on distinct targets");
 }
 const delivered = filters.flatMap(filter => filter.DenyListURLs as string[]);
+assert.deepEqual([...new Set(delivered)].sort(), [...new Set([...targets.deniedUrls, ...targets.supplementalDeniedUrls])].sort(),
+  "additive payloads deliver every required target without adding unrelated restrictions");
 for (const site of sites) assert.ok(delivered.includes(`https://${site}/`));
 // Product URL slugs need protection outside a site's declared search route.
 for (const path of ["product/silicone-sex-doll.html", "catalog/love_dolls", "item/sex-toys/123", "product/性爱娃娃/123"]) {

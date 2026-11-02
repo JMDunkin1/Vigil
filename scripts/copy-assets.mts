@@ -24,6 +24,7 @@ const socialIcons = [
 ];
 
 await copyProjectFile("package.json");
+await copyProjectFile("requirements-ios-tools.txt");
 await copyProjectFile("app/preload.cjs");
 await copyProjectFile("scripts/mac-build-version.mjs");
 await copyProjectFile("scripts/mac-signing-identity.mjs");

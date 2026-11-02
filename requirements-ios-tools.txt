@@ -1,0 +1,5 @@
+# Vigil phone tooling. Validated with CPython 3.15.2.
+# Keep the supervisor, pairing records, checkpoints, and device policy outside this environment.
+pymobiledevice3==11.49.1
+cryptography==50.0.2
+pyiosbackup==0.2.4

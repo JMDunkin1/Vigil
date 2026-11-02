@@ -1106,7 +1106,9 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
     blockedUrlPatterns: ["instagram.com/explore", "instagram.com/reels", "reddit.com", "reddit.com/", "https://reddit.com/", "redd.it/"]
   });
   assert.deepEqual(migratedSoftProfile.blockedApps, []);
-  assert.equal(migratedSoftProfile.blockedSites.length, DEFAULT_EXPLICIT_BLOCKED_SITES.length + DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.length + DEFAULT_FILTER_BYPASS_BLOCKED_SITES.length);
+  const expectedSoftDomains = [...new Set([...DEFAULT_EXPLICIT_BLOCKED_SITES, ...DEFAULT_PRIORITY_ADULT_BLOCKED_SITES, ...DEFAULT_FILTER_BYPASS_BLOCKED_SITES])];
+  assert.deepEqual([...migratedSoftProfile.blockedSites].sort(), expectedSoftDomains.sort(),
+    "migration preserves the exact union of required domains without duplicate rules");
   assert.equal(DEFAULT_EXPLICIT_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);
   assert.equal(DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);
   assert.equal(DEFAULT_FILTER_BYPASS_BLOCKED_SITES.every((site) => migratedSoftProfile.blockedSites.includes(site)), true);

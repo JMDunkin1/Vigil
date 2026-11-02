@@ -10,17 +10,30 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: xcode-27
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
+      - name: Use npm
+        run: npm install --global npm@12.2.1 --ignore-scripts
+      - name: Use Python
+        uses: actions/setup-python@v7.0.0
+        with:
+          python-version-file: .python-version
+      - name: Install Python validation dependencies
+        run: python -m pip install --requirement requirements-validation.txt
       - run: npm ci
       - name: Verify tag matches package version
-        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require(\"./package.json\").version')"
-      - run: npm run check
+        run: test "$GITHUB_REF_NAME" = "v$(node -p 'require("./package.json").version')"
+      - name: Validate
+        env:
+          PYIOSBACKUP_PYTHON: python
+        run: npm run check
       - name: Build, notarize, staple, and checksum
         env:
           VIGIL_MAC_BUILD_VERSION: ${{ github.run_number }}

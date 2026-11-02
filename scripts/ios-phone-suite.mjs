@@ -61,6 +61,7 @@ const OBSOLETE_APPS_PROBLEM_PREFIX = "Obsolete phone apps remain installed:";
 const OBSOLETE_LAUNCHER_PROFILE_PROBLEM = "The obsolete Vigil social-launcher profile remains installed; use --replace-legacy to remove its duplicate Home Screen icons.";
 const OBSOLETE_YOUTUBE_WEB_CLIP_PROFILE_PROBLEM = "The obsolete Vigil YouTube Web Clip profile remains installed; use --replace-legacy to remove its duplicate YouTube icon and Safari-opening surface.";
 const PHONE_SOURCE_FILES = [
+  "requirements-ios-tools.txt",
   "extension/google-safe-search.ts",
   "src/contextualExplicitSearch.ts",
   "src/browserStaticProtection.ts",

@@ -6,29 +6,32 @@ on:
 
 jobs:
   checks:
-    # Keep CoreSimulator behavior stable instead of following the rolling
-    # macos-latest migration to macOS 26 mid-runner rollout.
-    runs-on: macos-15
+    # Follow the stable Xcode 27 image; simulator jobs below compile without booting.
+    runs-on: xcode-27
     env:
-      # Safari settings and extension APIs require the iOS 26.2 SDK.
-      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      # The default is stable; the image may also contain newer release candidates.
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7.0.1
 
       - name: Use Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7.1.0
         with:
-          node-version: "24"
+          node-version-file: .node-version
           cache: npm
 
+      - name: Use npm
+        run: npm install --global npm@12.2.1 --ignore-scripts
+
       - name: Use Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7.0.0
         with:
-          python-version: "3.13"
+          # google-re2 publishes wheels for 3.14; 3.15 validation support is pending.
+          python-version-file: .python-version
 
       - name: Install Python validation dependencies
-        run: python -m pip install cryptography google-re2
+        run: python -m pip install --requirement requirements-validation.txt
 
       - name: Install
         run: npm ci
