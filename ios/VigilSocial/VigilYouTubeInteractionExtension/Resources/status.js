@@ -3,6 +3,7 @@ const origins = ['https://youtube.com/*', 'https://www.youtube.com/*', 'https://
 const statusLine = document.getElementById('status');
 const details = document.getElementById('details');
 const allow = document.getElementById('allow');
+const watchLaterTools = document.getElementById('watch-later-tools');
 const timeout = promise => {
   let timer;
   return Promise.race([promise, new Promise((_, reject) => {
@@ -12,6 +13,7 @@ const timeout = promise => {
 async function check() {
   statusLine.textContent = 'Checking this page…';
   details.textContent = '';
+  watchLaterTools.hidden = true;
   try {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
     await prepareHandoff(tab);
@@ -34,6 +36,7 @@ async function check() {
       details.textContent = 'Website access is granted, but the page has no limiter response. Reload the page and check again.';
       return;
     }
+    watchLaterTools.hidden = !health.watchLaterTools;
     statusLine.textContent = health.allowanceLoaded ? 'The limiter is running.' : 'The limiter loaded, but its allowance is unavailable.';
     details.textContent = health.allowanceLoaded ? 'The page script has received its allowance. Shorts blocking is checked separately.' : 'This is a connection or allowance-engine failure, not an extension toggle issue.';
   } catch (error) {
@@ -51,6 +54,14 @@ allow.addEventListener('click', () => {
   }).catch(error => { statusLine.textContent = error.message; });
 });
 document.getElementById('check').addEventListener('click', check);
+watchLaterTools.addEventListener('click', async () => {
+  try {
+    const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
+    const reply = await timeout(browser.tabs.sendMessage(tab.id, { type: 'VIGIL_YOUTUBE_TOOLS' }, { frameId: 0 }));
+    if (!reply?.opened) throw new Error('Open YouTube and reload the page to use Watch Later tools.');
+    window.close();
+  } catch (error) { details.textContent = error.message; }
+});
 void check();
 
 async function prepareHandoff(tab) {

@@ -21,6 +21,7 @@ interface Lease { id: string; client: string; videoId: string; milliseconds: num
 export interface YouTubeDay {
   day: string;
   timezone: string;
+  baselineInitializedAt?: string;
   slots: (YouTubeSlot | null)[];
   played: Record<string, number>;
   usedMs: number;
@@ -78,9 +79,10 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
     // Carry the latest account snapshot across midnight, not yesterday's
     // allowance. Unchanged old playlist entries must not refill today's slots.
     const watchLater = state.youtubeLimits?.watchLater;
+    const baselineInitializedAt = state.youtubeLimits?.baselineInitializedAt;
     state.youtubeLimits = { day: key, timezone, slots: [null, null, null, null], played: {}, usedMs: 0,
       grace: { status: "unused", videoId: null, usedMs: 0 }, feeds: {}, external: [], lease: null,
-      ...(watchLater ? { watchLater } : {}) };
+      ...(watchLater ? { watchLater } : {}), ...(baselineInitializedAt ? { baselineInitializedAt } : {}) };
   }
   const day = state.youtubeLimits;
   if (day.lease && now.getTime() >= day.lease.expiresAt) {

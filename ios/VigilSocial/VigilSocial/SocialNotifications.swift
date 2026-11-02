@@ -528,7 +528,9 @@ final class SocialMessageNotificationBridge: NSObject, WKScriptMessageHandler {
                                             injectionTime: .atDocumentStart, forMainFrameOnly: true)
         // Install before the Snapchat desktop bootstrap, whose inert worker
         // fallback otherwise makes service-worker notification delivery hang.
-        let existing = controller.userScripts
+        // WebKit bridges a live NSArray here. Materialize an owned Swift array
+        // before clearing the controller, or every existing guard disappears.
+        let existing = controller.userScripts.map { $0 }
         controller.removeAllUserScripts()
         controller.addUserScript(WKUserScript(source: "window.__vigilNotificationService = '\(service.rawValue)';",
             injectionTime: .atDocumentStart, forMainFrameOnly: true))

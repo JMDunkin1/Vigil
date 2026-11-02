@@ -2188,7 +2188,9 @@ enum DOMAdapters {
           || (location.port && location.port !== '443')
           || window.__vigilInstagramActivityFeedCompatibility) return;
       let installed = false, skipped = 0, registered = false, timer = 0, deadline = 0;
+      let releaseFactoryHook = () => {};
       window.__vigilInstagramActivityFeedCompatibility = Object.freeze({
+        version: 2,
         get installed() { return installed; },
         get skipped() { return skipped; }
       });
@@ -2214,8 +2216,53 @@ enum DOMAdapters {
         try {
           module.getItemTemplateConfigForSystemEntry = render;
           installed = module.getItemTemplateConfigForSystemEntry === render;
+          if (installed) { stop(); releaseFactoryHook(); }
         } catch (_) {}
       };
+      // requireLazy callbacks and MutationObservers can run after a consumer's
+      // first render, even within the loader's own script task. Use the site's
+      // module-factory hook to wrap just this renderer before it is published.
+      // The accessor survives the loader initializing its hook to null. Keep it
+      // until installation succeeds, including a late SPA visit to Notifications.
+      const hookName = '__onBeforeModuleFactory';
+      const descriptor = Object.getOwnPropertyDescriptor(window, hookName);
+      if (!descriptor || (descriptor.configurable && descriptor.writable && 'value' in descriptor)) {
+        let previous = descriptor?.value, assigned = !!descriptor, callingPrevious = false;
+        const wrappedFactories = new WeakSet();
+        const beforeFactory = function(record, ...args) {
+          let result;
+          if (typeof previous === 'function' && !callingPrevious) {
+            callingPrevious = true;
+            try { result = Reflect.apply(previous, this, [record, ...args]); }
+            finally { callingPrevious = false; }
+          }
+          if (installed || record?.id !== 'PolarisStoryTemplateConfigForSystemEntry'
+              || typeof record.factory !== 'function' || wrappedFactories.has(record.factory)) return result;
+          const factory = record.factory;
+          // A function proxy preserves factory.length, which the loader uses
+          // when deciding how many dependency arguments to supply.
+          const wrapped = new Proxy(factory, { apply(original, receiver, parameters) {
+            const exported = Reflect.apply(original, receiver, parameters);
+            install(exported != null && (typeof exported === 'object' || typeof exported === 'function')
+              ? exported : record.exports);
+            return exported;
+          } });
+          try { record.factory = wrapped; wrappedFactories.add(wrapped); } catch (_) {}
+          return result;
+        };
+        const get = () => beforeFactory;
+        try {
+          Object.defineProperty(window, hookName, { configurable: true, enumerable: descriptor?.enumerable ?? true,
+            get, set(value) { previous = value; assigned = true; } });
+          releaseFactoryHook = () => {
+            if (Object.getOwnPropertyDescriptor(window, hookName)?.get !== get) return;
+            if (assigned) Object.defineProperty(window, hookName, descriptor
+              ? { ...descriptor, value: previous }
+              : { configurable: true, enumerable: true, writable: true, value: previous });
+            else delete window[hookName];
+          };
+        } catch (_) {}
+      }
       const register = () => {
         if (registered || typeof window.requireLazy !== 'function') return;
         // Subscribe before the lazily loaded renderer is used. This does not
@@ -2226,8 +2273,8 @@ enum DOMAdapters {
           stop();
         } catch (_) {}
       };
-      // At document start the module loader may not exist yet. Parser mutations
-      // let us subscribe before the later notification bundle executes.
+      // Fallback for an already initialized renderer or an unfamiliar loader.
+      // Only polling expires; the factory hook above has no timing deadline.
       const observer = new MutationObserver(register);
       observer.observe(document, { childList: true, subtree: true });
       timer = setInterval(register, 50);

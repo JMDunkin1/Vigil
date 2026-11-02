@@ -153,7 +153,9 @@ function accountFixture(options: { signedIn?: boolean; malformed?: boolean; repe
       requests.push({ url, options: fetchOptions });
       return { ok: !(url.includes('browse') && options.failContinuation),
         text: async () => `${options.modern ? "ytcfg.set('EMERGENCY_BASE_URL', '/error_204');" : ''}ytcfg.set(${JSON.stringify(config)});${options.modern ? 'ytcfg.set("initialInnerWidth", window.innerWidth);ytcfg.set({"CSI_SERVICE_NAME":"youtube"});' : ''}window['ytInitialData'] = ${JSON.stringify(options.malformed ? { contents: {} } : initial)};`,
-        json: async () => ({ onResponseReceivedActions: [{ appendContinuationItemsAction: { targetId: 'VLWL', continuationItems: [renderer(options.repeat ? ids[0] : ids[1])] } }] }) };
+        json: async () => JSON.parse(String(fetchOptions.body || '{}')).browseId
+          ? options.malformed ? { contents: {} } : initial
+          : ({ onResponseReceivedActions: [{ appendContinuationItemsAction: { targetId: 'VLWL', continuationItems: [renderer(options.repeat ? ids[0] : ids[1])] } }] }) };
     }
   });
   return { api, requests };
@@ -164,13 +166,15 @@ test('account reconciliation reads every playlist page, excludes recommendations
   const snapshot = await f.api.readWatchLater();
   assert.deepEqual(Array.from(snapshot.cards, (card: { videoId: string }) => card.videoId), ids.slice(0, 2));
   assert.equal(snapshot.accountKey, createHash('sha256').update('same-account-channel').digest('hex'));
-  assert.deepEqual(f.requests.map(request => request.url), ['/playlist?list=WL', '/youtubei/v1/browse']);
+  assert.deepEqual(f.requests.map(request => request.url), ['/playlist?list=WL', '/youtubei/v1/browse', '/youtubei/v1/browse']);
   for (const request of f.requests) {
     assert.equal(request.options.cache, 'no-store');
     assert.equal(request.options.credentials, 'include');
     assert.equal(request.options.redirect, 'error');
   }
-  assert.equal(JSON.parse(f.requests[1].options.body as string).continuation, 'next');
+  assert.equal(JSON.parse(f.requests[1].options.body as string).browseId, 'VLWL');
+  assert.equal(JSON.parse(f.requests[1].options.body as string).params, 'wgYCCAA=');
+  assert.equal(JSON.parse(f.requests[2].options.body as string).continuation, 'next');
 });
 
 test('signed-out pages, unfamiliar structures, duplicate pages and failed continuations never become empty snapshots', async () => {

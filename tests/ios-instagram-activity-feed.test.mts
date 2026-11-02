@@ -84,4 +84,96 @@ assert.equal((unknown.window.__vigilInstagramActivityFeedCompatibility as { inst
 const frozen = fixture();
 assert.doesNotThrow(() => frozen.callbacks[0]!(Object.freeze({ getItemTemplateConfigForSystemEntry() {} })));
 assert.equal((frozen.window.__vigilInstagramActivityFeedCompatibility as { installed: boolean }).installed, false);
-console.log("Instagram Notifications: delayed loader, mixed entries, exact error scope, repeated installation, and foreign-frame boundaries passed.");
+
+// Model the real loader's synchronous factory hook, exports reset, arity-based
+// arguments and consumer-before-requireLazy ordering. No observer/timer runs
+// between loader initialization, factory execution and the first render.
+const factorySetup = `
+  window.fixtureFactoryCalls = 0;
+  window.fixtureReceiver = {};
+  window.fixtureRecord = {
+    id: 'PolarisStoryTemplateConfigForSystemEntry', exports: null,
+    factory: function(global, require, module, exports) {
+      if (this !== window.fixtureReceiver || global !== window || require !== 'dependency'
+          || module !== window.fixtureRecord || exports !== module.exports) throw new Error('Factory contract changed');
+      window.fixtureFactoryCalls++;
+      exports.getItemTemplateConfigForSystemEntry = function(entry) {
+        if (this !== module.exports) throw new Error('Renderer receiver changed');
+        if (entry.bad) throw new Error('Destination is null for activity feed story');
+        return entry;
+      };
+    }
+  };
+  window.fixtureEvaluate = () => {
+    const record = window.fixtureRecord;
+    window.__onBeforeModuleFactory?.(record);
+    if (record.factory.length !== 4) throw new Error('Factory arity changed');
+    record.exports = {};
+    const result = record.factory.call(window.fixtureReceiver, window, 'dependency', record, record.exports);
+    if (result !== undefined) record.exports = result;
+    const renderer = record.exports.getItemTemplateConfigForSystemEntry;
+    const entries = [{id:'before'}, {bad:true}, {id:'after'}];
+    return entries.map(entry => renderer.call(record.exports, entry));
+  };
+`;
+const race = fixture({ late: true });
+vm.runInContext(factorySetup, race.context);
+vm.runInContext("window.__onBeforeModuleFactory = null", race.context);
+assert.equal(JSON.stringify(vm.runInContext("window.fixtureEvaluate()", race.context)), '[{"id":"before"},null,{"id":"after"}]',
+  "The very first same-task render must work, before any lazy callback or mutation observer");
+assert.equal(race.window.fixtureFactoryCalls, 1);
+assert.equal(race.window.__onBeforeModuleFactory, null, "Successful installation restores the site's latest hook");
+assert.equal(race.timers.size, 0);
+
+const lateVisit = fixture({ path: "/direct/inbox/", late: true });
+vm.runInContext(factorySetup, lateVisit.context);
+for (const callback of [...lateVisit.timers.values()]) callback();
+assert.equal(lateVisit.timers.size, 0, "Bootstrap polling is bounded");
+lateVisit.location.pathname = "/notifications/";
+assert.equal(JSON.stringify(vm.runInContext("window.fixtureEvaluate()", lateVisit.context)), '[{"id":"before"},null,{"id":"after"}]',
+  "A first Notifications visit after the polling deadline still installs before rendering");
+assert.equal(Object.hasOwn(lateVisit.window, "__onBeforeModuleFactory"), false, "An unassigned hook is removed after installation");
+
+const chained = fixture({ late: true });
+vm.runInContext(factorySetup + `
+  window.fixtureHookReceiver = false;
+  window.fixtureSiteHook = function(record, marker) {
+    window.fixtureHookReceiver = this === window && marker === 'marker';
+    return 42;
+  };
+  window.__onBeforeModuleFactory = window.fixtureSiteHook;
+  window.fixtureHookResult = window.__onBeforeModuleFactory({id:'OtherModule',factory:window.fixtureRecord.factory}, 'marker');
+`, chained.context);
+assert.equal(chained.window.fixtureHookReceiver, true);
+assert.equal(chained.window.fixtureHookResult, 42, "The site's hook keeps its receiver, arguments and result");
+vm.runInContext("window.fixtureEvaluate()", chained.context);
+assert.equal(chained.window.__onBeforeModuleFactory, chained.window.fixtureSiteHook);
+
+const capturedHook = fixture({ late: true });
+vm.runInContext(factorySetup + `
+  const originalHook = window.__onBeforeModuleFactory;
+  window.fixtureSiteHook = function(record) {return originalHook.call(this, record)};
+  window.__onBeforeModuleFactory = window.fixtureSiteHook;
+  window.fixtureEvaluate();
+`, capturedHook.context);
+assert.equal(capturedHook.window.__onBeforeModuleFactory, capturedHook.window.fixtureSiteHook,
+  "A site hook wrapping the observed hook must not recurse or lose its own installation");
+
+const returned = fixture({ late: true });
+assert.equal(vm.runInContext(`
+  const exported = {getItemTemplateConfigForSystemEntry() {throw new Error('Destination is null for activity feed story')}};
+  const record = {id:'PolarisStoryTemplateConfigForSystemEntry',factory:function() {return exported},exports:{}};
+  window.__onBeforeModuleFactory(record);
+  record.factory() === exported && exported.getItemTemplateConfigForSystemEntry() === null;
+`, returned.context), true, "Factory return-value exports are also wrapped without changing their identity");
+
+const throwing = fixture({ late: true });
+assert.equal(vm.runInContext(`
+  const failure = new Error('Factory failure');
+  const record = {id:'PolarisStoryTemplateConfigForSystemEntry',factory:function() {throw failure},exports:{}};
+  window.__onBeforeModuleFactory(record);
+  let preserved = false; try {record.factory()} catch(error) {preserved = error === failure}
+  preserved;
+`, throwing.context), true, "Factory failures retain their original behavior");
+assert.equal((throwing.window.__vigilInstagramActivityFeedCompatibility as { installed: boolean }).installed, false);
+console.log("Instagram Notifications: first same-task render, late SPA visit, loader hook lifecycle/contracts, mixed entries, exact error scope, and frame boundaries passed.");

@@ -100,9 +100,11 @@ async function playerFixture({
     fetch: async (url: string) => {
       accountRequests.push(url);
       if (accountUnavailable) throw new Error('YouTube is unavailable');
-      if (holdAccountLookup) await new Promise<void>(resolve => { finishAccountLookup = resolve; });
+      if (holdAccountLookup) await new Promise<void>(resolve => { finishAccountLookup = () => { holdAccountLookup = false; resolve(); }; });
       const accountIds = [...new Set([...(accountSaved ? [id] : []), ...accountOtherVideos])];
-      return { ok: true, text: async () => `ytcfg.set({"LOGGED_IN":true,"DATASYNC_ID":"fixture-account"});var ytInitialData = ${JSON.stringify({ contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: accountIds.map(videoId => ({ playlistVideoRenderer: { videoId, title: { simpleText: 'Real Watch Later video' } } })) } } })};` };
+      const data = { contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: accountIds.map(videoId => ({ playlistVideoRenderer: { videoId, title: { simpleText: 'Real Watch Later video' } } })) } } };
+      return { ok: true, text: async () => `ytcfg.set({"LOGGED_IN":true,"DATASYNC_ID":"fixture-account","INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"fixture"}}});var ytInitialData = ${JSON.stringify(data)};`,
+        json: async () => data };
     },
     browser: nativeReply === 'safari' ? { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return delayedAct(message.youtube); } } } : undefined,
     chrome: nativeReply === 'safari' ? undefined : { runtime: { async sendMessage(message: { youtube: YouTubeRequest }) { return delayedAct(message.youtube); } } }
@@ -187,14 +189,14 @@ async function playerFixture({
 
 test('opening a video imports Watch Later selections before Play without allocating playback time or a lease', async () => {
   const f = await playerFixture({ nativeReply: 'safari', ledgerInitiallySaved: false, accountInitiallySaved: true });
-  assert.deepEqual(f.accountRequests, ['/playlist?list=WL']);
+  assert.deepEqual(f.accountRequests, ['/playlist?list=WL', '/youtubei/v1/browse']);
   assert.equal(f.media.paused, true);
   assert.equal(f.state.youtubeLimits!.lease, null);
   assert.equal(f.state.youtubeLimits!.usedMs, 0);
   assert.equal(f.state.youtubeLimits!.slots.filter(Boolean).length, 1);
   await f.click('Play this video');
   assert.equal(f.media.paused, false);
-  assert.equal(f.accountRequests.length, 1, 'Play reuses the lookup completed on opening');
+  assert.equal(f.accountRequests.length, 2, 'Play reuses the complete lookup completed on opening');
   assert.equal(f.state.youtubeLimits!.slots[0]?.videoId, id);
 });
 

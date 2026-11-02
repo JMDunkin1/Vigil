@@ -28,6 +28,7 @@
   let watchLaterSync = null, watchLaterSnapshot = null, watchLaterCheckedAt = -Infinity;
   let watchLaterChanging = false;
   let watchLaterError = '';
+  let watchLaterTools = null, bulkClearRunning = false, bulkClearStopped = false;
   const ownedMedia = new WeakSet();
   let pressedControl = null;
   const playControlSelector = '.ytp-play-button,.ytp-large-play-button,.ytp-cued-thumbnail-overlay,video,button[aria-label="Play"],button[aria-label="Play video"],button[aria-label="Pause"],button[aria-label="Pause video"]';
@@ -268,7 +269,8 @@
   }
   function positionAllowance() {
     if (!panel) return;
-    const desktopHeader = location.hostname !== 'm.youtube.com' && (window.innerWidth || 1024) >= 768
+    const desktopHeader = !document.documentElement.hasAttribute?.('data-vigil-saves-finished')
+      && location.hostname !== 'm.youtube.com' && (window.innerWidth || 1024) >= 768
       ? document.querySelector('ytd-masthead #start') : null;
     panel.toggleAttribute('data-desktop', Boolean(desktopHeader));
     // Keep the mobile strip outside YouTube's transformed/clipped app shell.
@@ -320,9 +322,14 @@
     panel = document.createElement('aside'); panel.id = 'vigil-youtube-limits';
     const shadow = panel.attachShadow({ mode: 'closed' });
     const style = document.createElement('style');
-    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(220px,30vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
+    style.textContent = `:host{display:block;position:fixed;left:max(12px,env(safe-area-inset-left));right:max(12px,env(safe-area-inset-right));bottom:calc(env(safe-area-inset-bottom) + 8px);z-index:2147483645;width:max-content;max-width:calc(100% - 24px);margin:0 auto;padding:7px 12px;box-sizing:border-box;border:1px solid var(--yt-spec-10-percent-layer,#ffffff26);border-radius:10px;background:var(--yt-spec-raised-background,#212121);color:var(--yt-spec-text-primary,#f1f1f1);box-shadow:0 2px 8px #0003;font:13px/1.4 Roboto,Arial,sans-serif;text-align:center;pointer-events:none;overflow-wrap:anywhere}:host([data-desktop]){display:inline-flex;position:relative;inset:auto;z-index:auto;width:auto;margin:0;border:0;border-radius:0;background:transparent;box-shadow:none;text-align:start;flex:0 0 auto;max-width:min(300px,36vw);padding:4px 12px;color:var(--yt-spec-text-secondary,#aaa);line-height:1.4;white-space:normal;overflow-wrap:anywhere}:host([hidden]){display:none!important}strong{font-weight:400}`;
     statusLine = document.createElement('strong'); statusLine.textContent = 'Checking allowance…';
-    shadow.append(style, statusLine);
+    const tools = document.createElement('button'); tools.type = 'button'; tools.textContent = 'Watch Later';
+    tools.setAttribute('aria-label', 'Manage Watch Later');
+    tools.style.cssText = 'pointer-events:auto;touch-action:manipulation;white-space:nowrap;flex:0 0 auto;margin-left:10px;min-height:32px;padding:4px 8px;border:1px solid currentColor;border-radius:7px;background:transparent;color:inherit;font:inherit;cursor:pointer';
+    tools.hidden = !topFrame;
+    tools.addEventListener('click', event => { if (event.isTrusted) void openWatchLaterTools(); });
+    shadow.append(style, statusLine, tools);
     panel.setAttribute('aria-label', 'YouTube daily allowance');
     document.body.append(panel);
     positionAllowance();
@@ -455,7 +462,49 @@
     }
     return cards;
   }
-  function watchLaterPage(data, continuation = false) {
+  function watchLaterRemoval(video) {
+    // Accept only the removal command published by this exact playlist item.
+    // Never construct an endpoint or infer an item identifier from its position.
+    const matches = [];
+    const visit = value => {
+      if (!value || typeof value !== 'object') return;
+      const edit = value.playlistEditEndpoint;
+      const apiUrl = value.commandMetadata?.webCommandMetadata?.apiUrl;
+      if (edit?.playlistId === 'WL' && apiUrl === '/youtubei/v1/browse/edit_playlist'
+          && Array.isArray(edit.actions) && edit.actions.length === 1) {
+        const action = edit.actions[0];
+        const setVideoId = action.setVideoId;
+        const removedVideoId = action.removedVideoId;
+        if (action.action === 'ACTION_REMOVE_VIDEO'
+            && (typeof setVideoId === 'string' && setVideoId.length > 0 && setVideoId.length <= 1024
+              || removedVideoId === video.videoId)
+            && (setVideoId === undefined || typeof setVideoId === 'string' && setVideoId.length > 0 && setVideoId.length <= 1024)
+            && (removedVideoId === undefined || removedVideoId === video.videoId)) {
+          matches.push({ apiUrl, action: { action: 'ACTION_REMOVE_VIDEO',
+            ...(setVideoId ? { setVideoId } : {}), ...(removedVideoId ? { removedVideoId } : {}) } });
+        }
+      }
+      for (const child of Object.values(value)) if (typeof child === 'object') {
+        if (Array.isArray(child)) child.forEach(visit); else visit(child);
+      }
+    };
+    visit(video.menu);
+    const unique = [...new Map(matches.map(item => [JSON.stringify(item), item])).values()];
+    return unique.length === 1 ? unique[0] : null;
+  }
+  function emptyWatchLaterPage(data) {
+    const browse = data?.contents?.twoColumnBrowseResultsRenderer || data?.contents?.singleColumnBrowseResultsRenderer;
+    const selected = browse?.tabs?.filter(tab => tab.tabRenderer?.selected === true);
+    if (selected?.length !== 1) return false;
+    const sections = selected[0].tabRenderer.content?.sectionListRenderer?.contents;
+    if (!Array.isArray(sections) || !sections.length) return false;
+    const entries = sections.flatMap(section => section.itemSectionRenderer?.contents || [section]);
+    // A known empty renderer in the selected playlist tab is positive evidence.
+    // Unknown/error pages, empty objects and recommendations cannot mean empty.
+    return entries.length > 0 && entries.every(entry => entry.messageRenderer
+      && /^No videos in this playlist(?: yet)?[.!]?$/i.test(textOf(entry.messageRenderer.text).trim()));
+  }
+  function watchLaterPage(data, continuation = false, editing = false) {
     const lists = [];
     const visit = value => {
       if (!value || typeof value !== 'object') return;
@@ -467,6 +516,7 @@
       }
     };
     visit(data);
+    if (!continuation && lists.length === 0 && emptyWatchLaterPage(data)) return { cards: [], token: null };
     if (lists.length !== 1) throw new Error('Could not verify the Watch Later playlist. Please try again.');
     const list = lists[0];
     if (list.playlistId && list.playlistId !== 'WL'
@@ -480,7 +530,8 @@
       const video = item.playlistVideoRenderer || item.playlistPanelVideoRenderer;
       if (video) {
         if (!/^[\w-]{11}$/.test(video.videoId || '')) throw new Error('Could not read a Watch Later entry. Please try again.');
-        cards.push({ videoId: video.videoId, title: textOf(video.title).trim().slice(0, 200) || video.videoId });
+        cards.push({ videoId: video.videoId, title: textOf(video.title).trim().slice(0, 200) || video.videoId,
+          ...(editing ? { removal: watchLaterRemoval(video) } : {}) });
       } else if (item.continuationItemRenderer) {
         const next = watchLaterContinuationTokens(item.continuationItemRenderer.continuationEndpoint);
         if (next.length !== 1 || !next[0]) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
@@ -497,7 +548,7 @@
     if (new Set(tokens).size > 1) throw new Error('Could not read the complete Watch Later playlist. Please try again.');
     return { cards, token: tokens[0] || null };
   }
-  async function readWatchLater() {
+  async function readWatchLaterStart() {
     if (!accountFetch || !/^(www\.|m\.)?youtube\.com$/.test(location.hostname) || !topFrame) {
       throw new Error('Open YouTube to check your shared Watch Later.');
     }
@@ -512,15 +563,30 @@
     }
     const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(config.DATASYNC_ID));
     const accountKey = [...new Uint8Array(digest)].map(value => value.toString(16).padStart(2, '0')).join('');
+    return { initial, config, accountKey };
+  }
+  async function readWatchLater(editing = false) {
+    const { config, accountKey } = await readWatchLaterStart();
+    const options = { credentials: 'include', cache: 'no-store', redirect: 'error' };
+    // All surfaces must reconcile identical membership, including unavailable
+    // entries. A desktop-only visible snapshot makes old phone entries look new.
+    // This is the web client's include-unavailable mode, also used by yt-dlp.
+    if (!config.INNERTUBE_CONTEXT) throw new Error('Could not verify the full Watch Later list.');
+    const all = await accountFetch('/youtubei/v1/browse', {
+      ...options, method: 'POST', signal: AbortSignal.timeout(10000), headers: await watchLaterBrowseHeaders(config),
+      body: JSON.stringify({ context: config.INNERTUBE_CONTEXT, browseId: 'VLWL', params: 'wgYCCAA=' })
+    });
+    if (!all.ok) throw new Error('Could not read the complete Watch Later list. Please try again.');
+    const data = await all.json();
     const cards = [], ids = new Set(), tokens = new Set();
-    let page = watchLaterPage(initial);
+    let page = watchLaterPage(data, false, editing);
     for (let i = 0; i < 100; i++) {
       for (const card of page.cards) {
         if (ids.has(card.videoId)) throw new Error('Watch Later changed while checking. Please try again.');
         ids.add(card.videoId); cards.push(card);
       }
       if (cards.length > 5000) throw new Error('Watch Later is too large to verify.');
-      if (!page.token) return { accountKey, cards };
+      if (!page.token) return { accountKey, cards, ...(editing ? { config } : {}) };
       if (tokens.has(page.token) || !config.INNERTUBE_CONTEXT) break;
       tokens.add(page.token);
       const next = await accountFetch('/youtubei/v1/browse', {
@@ -528,10 +594,176 @@
         body: JSON.stringify({ context: config.INNERTUBE_CONTEXT, continuation: page.token })
       });
       if (!next.ok) throw new Error('Could not check Watch Later. Please try again.');
-      page = watchLaterPage(await next.json(), true);
+      page = watchLaterPage(await next.json(), true, editing);
     }
     throw new Error('Could not read the complete Watch Later playlist. Please try again.');
   }
+  // BEGIN WATCH LATER BULK CLEAR
+  async function clearWatchLaterSnapshot(reviewed, stopped, progress) {
+    const fresh = await readWatchLater(true);
+    const roster = snapshot => snapshot.cards.map(card => card.videoId).sort().join(',');
+    if (fresh.accountKey !== reviewed.accountKey || roster(fresh) !== roster(reviewed)) {
+      throw new Error('Watch Later changed. Review the current list before clearing it.');
+    }
+    const checkpoint = await request({ action: 'watch-later-checkpoint' });
+    if (checkpoint.watchLater?.accountKey !== fresh.accountKey) {
+      throw new Error('Use the same YouTube account as your shared Watch Later.');
+    }
+    if (fresh.cards.some(card => !card.removal) || !fresh.config?.INNERTUBE_CONTEXT) {
+      throw new Error('YouTube did not provide a verified removal control for every video. Nothing was cleared.');
+    }
+    let submitted = 0, failure = '';
+    try {
+      for (let offset = 0; offset < fresh.cards.length && !stopped(); offset += 20) {
+        // Recheck the selected account between bounded batches. Session material
+        // stays on YouTube; it is never exported or sent to the companion.
+        const identity = await readWatchLaterStart();
+        if (identity.accountKey !== fresh.accountKey) throw new Error('The YouTube account changed. Clearing stopped.');
+        if (stopped()) break;
+        const batch = fresh.cards.slice(offset, offset + 20);
+        const response = await accountFetch(batch[0].removal.apiUrl, {
+          method: 'POST', credentials: 'include', cache: 'no-store', redirect: 'error',
+          signal: AbortSignal.timeout(15000), headers: await watchLaterBrowseHeaders(identity.config),
+          body: JSON.stringify({ context: identity.config.INNERTUBE_CONTEXT, playlistId: 'WL',
+            actions: batch.map(card => card.removal.action) })
+        });
+        if (!response.ok) throw new Error('YouTube did not accept this batch. Clearing stopped; no automatic retry was made.');
+        const reply = await response.json();
+        if (reply.error || reply.status !== 'STATUS_SUCCEEDED') {
+          throw new Error('YouTube did not confirm this batch. Clearing stopped; check the remaining list.');
+        }
+        submitted += batch.length;
+        progress(submitted, fresh.cards.length);
+        if (offset + 20 < fresh.cards.length && !stopped()) await new Promise(resolve => setTimeout(resolve, 750));
+      }
+    } catch (error) { failure = error.message; }
+    // Verify actual membership even after Stop, a timeout, or a partial failure.
+    // Reconciliation updates the account checkpoint; it never refunds daily slots.
+    const after = await readWatchLater(true);
+    if (after.accountKey !== fresh.accountKey) throw new Error('The account changed. Reopen Watch Later to verify what remains.');
+    const remaining = new Set(after.cards.map(card => card.videoId));
+    const removed = fresh.cards.filter(card => !remaining.has(card.videoId)).length;
+    await reconcileWatchLater(true);
+    if (!failure && !stopped() && removed !== fresh.cards.length) failure = 'Some videos remain in Watch Later. Review the list before trying again.';
+    return { removed, remaining: after.cards.length, stopped: stopped(), failure };
+  }
+  function exportWatchLater(snapshot) {
+    const exported = { exportedAt: new Date().toISOString(), playlist: 'Watch Later',
+      videos: snapshot.cards.map(card => ({ videoId: card.videoId, title: card.title,
+        url: `https://www.youtube.com/watch?v=${card.videoId}` })) };
+    const url = URL.createObjectURL(new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url;
+    link.download = `watch-later-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+  async function openWatchLaterTools() {
+    if (!topFrame || !document.body || !/^(www\.|m\.)?youtube\.com$/.test(location.hostname)) return;
+    if (watchLaterTools?.dialog.open) return;
+    if (!watchLaterTools) {
+      const host = document.createElement('aside'); host.id = 'vigil-watch-later-tools';
+      const dialog = document.createElement('dialog');
+      dialog.setAttribute('aria-label', 'Watch Later tools');
+      const shadow = host.attachShadow({ mode: 'closed' });
+      const style = document.createElement('style');
+      style.textContent = `:host{display:contents}dialog{box-sizing:border-box;width:min(360px,calc(100vw - 32px));max-height:calc(100dvh - 48px);overflow:auto;
+        margin:auto;padding:24px;border:1px solid #ffffff26;border-radius:16px;background:#212121;color:#f1f1f1;
+        font:14px/1.5 Roboto,Arial,sans-serif;box-shadow:0 18px 70px #0006}dialog::backdrop{background:#0009}
+        *{box-sizing:border-box}.header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}
+        h1{margin:0;font-size:22px;line-height:1.25;letter-spacing:-.4px}#summary{min-height:21px;margin:0 0 12px;color:#aaa;font-variant-numeric:tabular-nums}
+        button,.menu-toggle{min-height:44px;border:0;border-radius:9px;background:transparent;color:inherit;font:500 14px/1.3 Roboto,Arial,sans-serif;cursor:pointer;touch-action:manipulation}
+        button:hover,.menu-toggle:hover{background:#ffffff12}button:focus-visible,.menu-toggle:focus-visible{outline:2px solid #3ea6ff;outline-offset:3px}
+        button:disabled{opacity:.45;cursor:default}#clear{background:#c62828;color:#fff;width:100%;margin-top:20px;padding:12px}
+        progress{display:block;width:100%;height:6px;accent-color:#3ea6ff;border:0;border-radius:4px;overflow:hidden}
+        progress::-webkit-progress-bar{background:#ffffff18;border-radius:4px}progress::-webkit-progress-value{background:#3ea6ff;border-radius:4px}
+        details{position:relative;flex:0 0 auto}details[inert]{opacity:.45}.menu-toggle{display:grid;place-items:center;width:40px;font-size:24px;list-style:none}
+        .menu-toggle::-webkit-details-marker{display:none}.menu{position:absolute;right:0;top:48px;z-index:2;min-width:156px;padding:6px;border:1px solid #ffffff26;border-radius:10px;background:#292929;box-shadow:0 6px 22px #0005}
+        .menu button{display:block;width:100%;padding:10px 12px;text-align:left;white-space:nowrap}
+        @media(prefers-color-scheme:light){dialog{background:#fff;color:#181818;border-color:#ddd}#summary{color:#606060}.menu{background:#fff;border-color:#ddd}
+        button:hover,.menu-toggle:hover{background:#00000008}progress::-webkit-progress-bar{background:#00000012}}`;
+      const header = document.createElement('div'); header.className = 'header';
+      const heading = document.createElement('h1'); heading.textContent = 'Watch Later';
+      const options = document.createElement('details');
+      const menuToggle = document.createElement('summary'); menuToggle.className = 'menu-toggle'; menuToggle.textContent = '⋮';
+      menuToggle.setAttribute('aria-label', 'Watch Later options');
+      const menu = document.createElement('div'); menu.className = 'menu';
+      const summary = document.createElement('p'); summary.id = 'summary'; summary.setAttribute('role', 'status'); summary.setAttribute('aria-live', 'polite');
+      const progress = document.createElement('progress'); progress.max = 1; progress.value = 0; progress.setAttribute('aria-label', 'Clear Watch Later progress');
+      const backup = document.createElement('button'); backup.type = 'button'; backup.textContent = 'Export list';
+      const review = document.createElement('button'); review.type = 'button'; review.textContent = 'Refresh page';
+      const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
+      const clear = document.createElement('button'); clear.type = 'button'; clear.id = 'clear'; clear.textContent = 'Clear'; clear.disabled = true;
+      menu.append(backup, review, close); options.append(menuToggle, menu); header.append(heading, options);
+      dialog.append(header, summary, progress, clear); shadow.append(style, dialog);
+      watchLaterTools = { host, dialog, summary, progress, backup, review, clear, close, options, snapshot: null, opener: null, loading: false };
+      const stopOrClose = () => {
+        if (bulkClearRunning) { bulkClearStopped = true; summary.textContent = 'Stopping…'; clear.disabled = true; }
+        else dialog.close();
+      };
+      close.addEventListener('click', stopOrClose);
+      dialog.addEventListener('cancel', event => { event.preventDefault(); if (options.open) options.open = false; else stopOrClose(); });
+      dialog.addEventListener('close', () => watchLaterTools.opener?.focus?.());
+      backup.addEventListener('click', event => {
+        if (event.isTrusted && watchLaterTools.snapshot) exportWatchLater(watchLaterTools.snapshot);
+      });
+      review.addEventListener('click', () => { if (!bulkClearRunning) location.reload(); });
+      clear.addEventListener('click', event => {
+        // No bridge or synthetic page event can start account deletions.
+        if (!event.isTrusted) return;
+        if (bulkClearRunning) stopOrClose();
+        else if (watchLaterTools.snapshot && !watchLaterTools.loading) void runWatchLaterClear();
+      });
+      document.body.append(host);
+    }
+    watchLaterTools.opener = document.activeElement;
+    if (!watchLaterTools.host.isConnected) document.body.append(watchLaterTools.host);
+    watchLaterTools.dialog.showModal();
+    await reviewWatchLaterTools();
+  }
+  async function reviewWatchLaterTools() {
+    const ui = watchLaterTools;
+    if (!ui || ui.loading || bulkClearRunning) return;
+    ui.loading = true; ui.snapshot = null; ui.clear.disabled = true; ui.backup.disabled = true; ui.review.disabled = true;
+    ui.progress.removeAttribute('value'); ui.summary.textContent = 'Checking…';
+    try {
+      await reconcileWatchLater(true);
+      const snapshot = await readWatchLater(true);
+      if (snapshot.accountKey !== watchLaterSnapshot?.accountKey) throw new Error('The YouTube account changed. Refresh the list.');
+      ui.snapshot = snapshot;
+      const count = snapshot.cards.length;
+      ui.summary.textContent = count ? `${count.toLocaleString()} videos` : 'Empty';
+      ui.progress.max = Math.max(1, count); ui.progress.value = 0;
+      ui.clear.textContent = 'Clear'; ui.clear.setAttribute('aria-label', `Clear all ${count.toLocaleString()} videos`);
+      ui.clear.disabled = !count || snapshot.cards.some(card => !card.removal);
+      ui.backup.disabled = !count;
+      if (count && ui.clear.disabled) ui.summary.textContent = 'Removal controls unavailable.';
+    } catch (error) { ui.summary.textContent = error.message; }
+    finally { ui.loading = false; ui.review.disabled = false; }
+  }
+  async function runWatchLaterClear() {
+    const ui = watchLaterTools;
+    if (!ui?.snapshot || watchLaterChanging) return;
+    bulkClearRunning = true; bulkClearStopped = false; watchLaterChanging = true;
+    ui.clear.disabled = false; ui.clear.textContent = 'Stop'; ui.clear.setAttribute('aria-label', 'Stop clearing');
+    ui.review.disabled = true; ui.backup.disabled = true; ui.close.disabled = true; ui.options.open = false; ui.options.inert = true;
+    ui.progress.max = ui.snapshot.cards.length; ui.progress.value = 0; ui.summary.textContent = 'Checking…';
+    try {
+      const result = await clearWatchLaterSnapshot(ui.snapshot, () => bulkClearStopped, (submitted, total) => {
+        ui.progress.value = submitted;
+        if (!bulkClearStopped) ui.summary.textContent = `${submitted.toLocaleString()} / ${total.toLocaleString()}`;
+      });
+      ui.progress.value = result.removed;
+      ui.summary.textContent = result.failure || (result.remaining ? `${result.remaining.toLocaleString()} remaining` : 'Empty');
+      if (!result.stopped && !result.failure) location.reload();
+    } catch (error) { ui.summary.textContent = `${error.message} Refresh the list to check what remains.`; }
+    finally {
+      ui.snapshot = null; bulkClearRunning = false; watchLaterChanging = false;
+      ui.clear.textContent = 'Clear'; ui.clear.setAttribute('aria-label', 'Clear Watch Later'); ui.clear.disabled = true;
+      ui.close.disabled = false; ui.review.disabled = false; ui.options.inert = false;
+      watchLaterCheckedAt = -Infinity;
+    }
+  }
+  // END WATCH LATER BULK CLEAR
   async function reconcileWatchLater(force = false) {
     if (watchLaterSync) {
       // Save confirmation must see a snapshot fetched after YouTube's click.
@@ -953,7 +1185,7 @@
       // Remove the desktop backdrop reserved for the hidden topic row.
       // Keep the native masthead controls and their normal 56px geometry.
       style.textContent += 'html[data-vigil-standard-feed] ytd-masthead #background,html[data-vigil-standard-feed] ytd-app #frosted-glass{height:var(--ytd-masthead-height,56px)!important;min-height:0!important;overflow:hidden!important}html[data-vigil-standard-feed] ytd-rich-grid-renderer #header{display:none!important}';
-      style.textContent += 'html[data-vigil-saves-finished] body>:not(#vigil-youtube-finished):not(#vigil-youtube-limits):not(#vigil-youtube-notice):not(style):not(script){display:none!important}html[data-vigil-saves-full] :is(ytd-watch-flexy #secondary,ytd-watch-next-secondary-results-renderer,ytm-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,.ytp-pause-overlay,.ytp-suggestion-set){display:none!important}';
+      style.textContent += 'html[data-vigil-saves-finished] body>:not(#vigil-youtube-finished):not(#vigil-youtube-limits):not(#vigil-youtube-notice):not(#vigil-watch-later-tools):not(style):not(script){display:none!important}html[data-vigil-saves-full] :is(ytd-watch-flexy #secondary,ytd-watch-next-secondary-results-renderer,ytm-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,.ytp-pause-overlay,.ytp-suggestion-set){display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
       // The mobile topic bar is fixed, but its wrapper still reserves 50–62px
@@ -1116,6 +1348,7 @@
     syncPlaybackClock();
   };
   document.addEventListener('keydown', event => {
+    if (watchLaterTools?.dialog.open) return;
     if (!event.isTrusted || ![' ', 'k'].includes(event.key) || /INPUT|TEXTAREA|SELECT/.test(event.target?.tagName || '') || event.target?.isContentEditable) return;
     if (!currentID()) return;
     event.preventDefault(); event.stopImmediatePropagation();
@@ -1126,11 +1359,12 @@
     } else togglePlayback();
   }, true);
   document.addEventListener('keyup', event => {
+    if (watchLaterTools?.dialog.open) return;
     if (!event.isTrusted || event.key !== ' ' || !spacePress) return;
     event.preventDefault(); event.stopImmediatePropagation(); releaseSpace(true);
   }, true);
   window.addEventListener('blur', () => releaseSpace());
-  window.addEventListener('pagehide', () => { releaseSpace(); intent = ''; void stop().catch(() => {}); });
+  window.addEventListener('pagehide', () => { bulkClearStopped = true; releaseSpace(); intent = ''; void stop().catch(() => {}); });
   const playbackTick = () => {
     if (spacePress && !spacePress.holding && performance.now() - spacePress.started >= 350 && lease && playing === spacePress.media && !playing.paused && performance.now() < deadline) {
       sample(); spacePress.holding = true; playing.playbackRate = 2; previousRate = 2;
@@ -1194,8 +1428,12 @@
   if (topFrame && isolatedExtension) {
     const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     runtime.onMessage?.addListener(message => {
+      if (message?.type === 'VIGIL_YOUTUBE_TOOLS') {
+        void openWatchLaterTools();
+        return Promise.resolve({ opened: true });
+      }
       if (message?.type !== 'VIGIL_YOUTUBE_HEALTH') return undefined;
-      return Promise.resolve({ loaded: true, allowanceLoaded: Boolean(state) });
+      return Promise.resolve({ loaded: true, allowanceLoaded: Boolean(state), watchLaterTools: true });
     });
   }
   setInterval(() => {

@@ -38,3 +38,56 @@ Deployment is pending: the permanent update stopped before installation when
 the USB device became unavailable to Xcode. The original supervised policy
 `7d0ab7c4016d` remained installed. The temporary phone-session repair is not a
 verified permanent deployment or a cold-document bootstrap check.
+
+## Recurrence: native script loss and verified permanent repair
+
+The 6:32 PM recurrence followed a completed combined update, so missing source
+delivery was no longer an adequate explanation. Live inspection of the updated
+app showed both activity-feed and outgoing-unread document-start compatibility
+objects absent, while the document-end guards were present.
+
+`SocialMessageNotificationBridge.install` retained `controller.userScripts`,
+cleared the controller, then prepended its notification scripts and re-added the
+retained list. WebKit exposes a live bridged NSArray: a native reproduction
+reported two saved scripts before removal and zero afterward. Adding scripts
+before iterating that live view can also make the loop append to its own input.
+The installer now materializes an owned Swift array with `map` before removal,
+preserving the existing scripts, their order, timing, frame scope and worlds.
+
+An independent startup race was also reproduced. Mutation observers and
+`requireLazy` callbacks can run after the first renderer consumer. The activity
+repair now uses Instagram's module-factory hook to wrap only the exact system
+entry module before its exports reach a consumer. It preserves factory arity,
+arguments, receiver, return exports and errors, chains existing hooks, and
+restores the site's hook after installation. Its factory subscription survives
+the polling deadline for a later SPA visit. The exact destination exception and
+Notifications-only scope remain unchanged.
+
+Validation:
+
+- The previous activity repair fails the same-task first-render fixture; the
+  correction passes with Instagram's captured real module loader.
+- The WebKit regression compiles the production native bridge installation
+  method, injects the full Instagram startup script, and checks the first cold
+  render, consumer-before-lazy ordering and a first SPA visit after 16 seconds.
+  All three pass. The old native bridge fails this test; fixture script
+  additions are bounded so the broken live-array loop cannot exhaust memory.
+- Eighteen focused runtime test results pass. Repository lint, runtime build,
+  whitespace checks and the iOS Simulator app/test build pass. A native XCTest
+  additionally covers initial script preservation, two document recreations and
+  isolated-world protection; it was compiled, not run on an iOS Simulator.
+- The normal combined updater installed Vigil Social 0.3.241 (244), phone suite
+  0.3.262 (265), verified signing, all protected service launches and the exact
+  live supervised policy `7d0ab7c4016d`.
+- On the physical phone, Home → Notifications rendered the list with 113
+  visible profile links and skipped three malformed entries. A full page reload
+  independently installed the compatibility repair, skipped two malformed
+  entries and rendered the list again. Both checks showed the Notifications
+  heading, no error page, no fatal renderer errors, and the policy/single-item
+  guards present; restricted Reels navigation remained absent.
+
+Meta's logger still emits its destination diagnostic before throwing; the
+exact compatibility catch prevents that malformed entry from crashing the list.
+This is distinct from the absence of an error boundary and fatal render errors.
+Ignored verification logs are `/tmp/vigil-notifications-v3-*`; no session-only
+JavaScript repair was injected during the physical acceptance checks.

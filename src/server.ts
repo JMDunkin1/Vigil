@@ -2,6 +2,7 @@ import { retiredFeaturePath, SETTINGS_CLEANUP_VERSION } from "./retiredFeatures.
 import { completeSketchySiteLookup, lookupDomainRegistration } from "./sketchySites.js";
 import type { RegistrationLookup } from "./sketchySites.js";
 import { ensureYouTubeConnection, youtubeTokenMatches } from "./youtubeConnection.js";
+import { initializeYouTubeBaseline } from "./youtubeInitialBaseline.js";
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
@@ -229,6 +230,13 @@ export async function startVigilRuntime(options: ServerOptions = {}): Promise<Vi
     instanceSecret = await getInstanceSecret(DATA_DIR);
     invalidateStateDiagnostics();
     mutationCoordinator = new RuntimeMutationCoordinator(state, usage, runtimeOutbox);
+    await mutationCoordinator.run(async ({ state: draftState, requestPersistence }) => {
+      if (initializeYouTubeBaseline(draftState.youtubeLimits)) {
+        addEvent(draftState, "youtube_initial_baseline", { day: draftState.youtubeLimits!.day,
+          playlistCount: draftState.youtubeLimits!.watchLater!.videoIds.length });
+        requestPersistence();
+      }
+    });
     monitor = startMonitor({
       state,
       usage,

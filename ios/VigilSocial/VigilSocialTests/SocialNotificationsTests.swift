@@ -77,6 +77,51 @@ final class SocialNotificationsTests: XCTestCase {
     }
 
     @MainActor
+    func testInitialBridgeInstallationPreservesProtectionScriptsAndWorlds() async throws {
+        let controller = WKUserContentController()
+        let required = [
+            WKUserScript(source: DOMAdapters.documentStartScript(for: .instagram,
+                unclassifiedMediaPolicy: .revealUnclassified, audioEnabled: true, contentSafetyEnabled: false),
+                injectionTime: .atDocumentStart, forMainFrameOnly: false),
+            WKUserScript(source: DOMAdapters.installedFrameRoutePolicyGuard(for: .instagram),
+                injectionTime: .atDocumentEnd, forMainFrameOnly: false),
+            WKUserScript(source: "window.fixtureProtectedStart = true;",
+                injectionTime: .atDocumentStart, forMainFrameOnly: true),
+            WKUserScript(source: "globalThis.fixtureIsolatedProtection = true;",
+                injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .defaultClient)
+        ]
+        for script in required { controller.addUserScript(script) }
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController = controller
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        SocialMessageNotificationBridge.install(on: webView, service: .instagram, policyAllows: { false })
+        let installed = controller.userScripts.map { $0 }
+        XCTAssertEqual(installed.count, required.count + 2)
+        for (expected, actual) in zip(required, installed.dropFirst(2)) {
+            XCTAssertEqual(actual.source, expected.source)
+            XCTAssertEqual(actual.injectionTime, expected.injectionTime)
+            XCTAssertEqual(actual.isForMainFrameOnly, expected.isForMainFrameOnly)
+        }
+        for number in 1...2 {
+            webView.loadHTMLString("""
+                <html><body><script>
+                  window.fixtureFirstParserSawProtection = window.fixtureProtectedStart === true;
+                  window.fixtureColdDocument = \(number);
+                </script></body></html>
+                """, baseURL: SocialService.instagram.homeURL)
+            try await waitForAlertCondition("window.fixtureColdDocument === \(number)", in: webView)
+            let firstRender = try await webView.evaluateJavaScript("window.fixtureFirstParserSawProtection") as? Bool
+            XCTAssertEqual(firstRender, true)
+            let isolated = try await webView.callAsyncJavaScript("return globalThis.fixtureIsolatedProtection === true;",
+                arguments: [:], in: nil, contentWorld: .defaultClient) as? Bool
+            XCTAssertEqual(isolated, true)
+            let pageCannotSeeIsolated = try await webView.evaluateJavaScript("window.fixtureIsolatedProtection === undefined") as? Bool
+            XCTAssertEqual(pageCannotSeeIsolated, true)
+        }
+    }
+
+    @MainActor
     func testWebAlertPermissionSurvivesDocumentRecreationAndPreservesOtherScripts() async throws {
         let controller = WKUserContentController()
         let capture = WebAlertActivityCapture()
