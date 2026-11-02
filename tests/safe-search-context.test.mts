@@ -1,5 +1,21 @@
 import assert from "node:assert/strict";
-import { hasSafeSearchContributor, isSafeSearchLimitedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
+import { hasSafeSearchContributor, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
+
+for (const text of [
+  "SafeSearch is locked to Filter by safety settings applied to this browser. Learn more",
+  "SafeSearch is locked to filter by your network, browser, or device. Learn more",
+  "SafeSearch is locked to filter by your network, browser or device.",
+  "SafeSearch is locked to filter by your network,\nbrowser, or device. Learn more"
+]) {
+  assert.equal(isSafeSearchLockedNotice(text), true, text);
+  assert.equal(isSafeSearchLimitedNotice(text), false, "a locked setting does not establish removed results or seed subject evidence");
+}
+for (const text of [
+  "SafeSearch is on", "SafeSearch is locked", "SafeSearch is not locked to filter by your network, browser, or device.",
+  "If SafeSearch is locked to filter by your network, browser, or device.",
+  'Help: "SafeSearch is locked to filter by your network, browser, or device."',
+  "SafeSearch is locked to filter by your network, browser, or device is an example notification."
+]) assert.equal(isSafeSearchLockedNotice(text), false, text);
 
 for (const text of ["Explicit results filtered with SafeSearch. Learn more", "Some results have been limited by SafeSearch", "Results have been removed by SafeSearch", "SafeSearch has filtered explicit results", "Some results have been limited by SafeSearch. Manage your settings", "Results are blurred by SafeSearch. Learn more about SafeSearch"]) {
   assert.equal(isSafeSearchLimitedNotice(text), true, text);

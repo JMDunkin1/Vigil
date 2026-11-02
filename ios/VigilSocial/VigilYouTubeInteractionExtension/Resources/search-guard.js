@@ -791,7 +791,7 @@ function isSafeSearchLockedNotice(value) {
     const text = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
     if (text.length > 300)
         return false;
-    return /^safe\s?search is locked to filter by safety settings applied to this browser\.?\s*(?:learn more\.?\s*)?$/iu.test(text);
+    return /^safe\s?search is locked to filter by (?:safety settings applied to this browser|your network, browser,? or device)\.?\s*(?:learn more\.?\s*)?$/iu.test(text);
 }
 // These already-ambiguous media, exposure and search markers do not become
 // standalone bans. A real limited-results notice supplies the missing context.
@@ -1190,7 +1190,6 @@ const SAFE_SEARCH_SUBJECT_KEY_PREFIX = `${SAFE_SEARCH_EVIDENCE_KEY}:`;
 const SAFE_SEARCH_EVIDENCE_LIFETIME_MS = 30 * 60 * 1000;
 const safeSearchSubjects = new Map();
 const permanentBlockedDomains = new Set(browserPermanentBlockedDomains());
-const hiddenSafeSearchElements = new Map();
 const hiddenBlockedSearchResults = new Map();
 let safeSearchEvidenceUrl = "";
 let safeSearchEvidenceAt = 0;
@@ -1390,52 +1389,29 @@ function sharedFileUrlsInText(value) {
     return [...files];
 }
 function elementExposesSharedFileLink(element) {
-    return (element instanceof HTMLAnchorElement && Boolean(sharedFileDestination(element.href, location.href)))
+    return (element instanceof HTMLAnchorElement && (Boolean(sharedFileDestination(element.href, location.href))
+        || googleSearchResultDestinations(element).some(url => sharedFileDestination(url))))
         || readerFileDestinations([element]).length > 0;
 }
 function googleResultCardWithSharedFileLinks(element) {
-    const results = document.querySelector("#rso");
-    if (!results || !results.contains(element))
-        return null;
-    let resultCard = null;
-    for (let candidate = element, depth = 0; candidate && candidate !== results && depth < 10; candidate = candidate.parentElement, depth += 1) {
-        if (candidate instanceof HTMLElement && candidate.querySelectorAll("h3").length === 1
-            && readerFileDestinations([candidate]).length > 0)
-            resultCard = candidate;
-    }
-    return resultCard;
+    const card = googleSearchResultContainer(element);
+    return card && readerFileDestinations([card]).length > 0 ? card : null;
 }
-function restoreSafeSearchResultCards() {
-    for (const [element, previous] of hiddenSafeSearchElements) {
-        if (element.style.getPropertyValue("display") === "none" && element.style.getPropertyPriority("display") === "important") {
-            if (previous.display)
-                element.style.setProperty("display", previous.display, previous.priority);
-            else
-                element.style.removeProperty("display");
-        }
-    }
-    hiddenSafeSearchElements.clear();
-}
-function hideGoogleResultsWithSharedFileLinks() {
-    if (!hasCurrentSafeSearchLock()) {
-        restoreSafeSearchResultCards();
-        return;
-    }
+function googleResultsWithSharedFileLinks() {
+    const matchingElements = new Set();
+    if (!hasCurrentSafeSearchLock())
+        return matchingElements;
     const body = document.body;
     if (!body)
-        return;
-    const results = document.querySelector("#rso");
-    const matchingElements = new Set();
-    if (results) {
-        for (const heading of results.querySelectorAll("h3")) {
-            const card = googleResultCardWithSharedFileLinks(heading);
-            if (card)
-                matchingElements.add(card);
-        }
+        return matchingElements;
+    for (const heading of document.querySelectorAll("h3")) {
+        const card = googleResultCardWithSharedFileLinks(heading);
+        if (card)
+            matchingElements.add(card);
     }
     for (const anchor of document.querySelectorAll("a[href]")) {
         if (elementExposesSharedFileLink(anchor))
-            matchingElements.add(anchor);
+            matchingElements.add(googleSearchResultContainer(anchor) || anchor);
     }
     const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
@@ -1443,29 +1419,9 @@ function hideGoogleResultsWithSharedFileLinks() {
         if (!parent || parent.closest("a[href], script, style, noscript, [hidden], [aria-hidden='true']"))
             continue;
         if (sharedFileUrlsInText(node.textContent || "").length > 0)
-            matchingElements.add(parent);
+            matchingElements.add(googleSearchResultContainer(parent) || parent);
     }
-    for (const element of matchingElements) {
-        if (!hiddenSafeSearchElements.has(element)) {
-            hiddenSafeSearchElements.set(element, {
-                display: element.style.getPropertyValue("display"),
-                priority: element.style.getPropertyPriority("display")
-            });
-        }
-        element.style.setProperty("display", "none", "important");
-    }
-    for (const element of [...hiddenSafeSearchElements.keys()]) {
-        if (matchingElements.has(element))
-            continue;
-        const previous = hiddenSafeSearchElements.get(element);
-        if (previous && element.style.getPropertyValue("display") === "none" && element.style.getPropertyPriority("display") === "important") {
-            if (previous.display)
-                element.style.setProperty("display", previous.display, previous.priority);
-            else
-                element.style.removeProperty("display");
-        }
-        hiddenSafeSearchElements.delete(element);
-    }
+    return matchingElements;
 }
 function googleResultContainsSharedFileLink(anchor) {
     return hasCurrentSafeSearchLock()
@@ -1506,12 +1462,14 @@ function redirectAfterSearchWarning(target, navigation = "replace") {
     });
 }
 function hideBlockedGoogleResultCards() {
-    const matches = new Set();
+    // Share one display owner across static, SafeSearch and contextual blocks so
+    // a result matching several rules cannot be restored by another rule's pass.
+    const matches = googleResultsWithSharedFileLinks();
     if (isGoogleSearchResultsPage()) {
         for (const anchor of document.querySelectorAll("a[href]")) {
             const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
             if (!googleSearchResultDestinations(anchor).some(url => explicitSearchBlockRedirect(url))
-                && !containsExplicitMediaLabel(label))
+                && !containsExplicitMediaLabel(label) && !contextualLinkIsBlocked(anchor))
                 continue;
             const card = googleSearchResultContainer(anchor);
             if (card)
@@ -1523,7 +1481,8 @@ function hideBlockedGoogleResultCards() {
             hiddenBlockedSearchResults.set(card, {
                 display: card.style.getPropertyValue("display"), priority: card.style.getPropertyPriority("display")
             });
-        card.setAttribute("data-vigil-search-result", "blocked");
+        if (card.getAttribute("data-vigil-search-result") !== "blocked")
+            card.setAttribute("data-vigil-search-result", "blocked");
         if (card.style.getPropertyValue("display") !== "none" || card.style.getPropertyPriority("display") !== "important") {
             card.style.setProperty("display", "none", "important");
         }
@@ -1542,9 +1501,8 @@ function hideBlockedGoogleResultCards() {
     }
 }
 function scanSafeSearchContext() {
-    hideBlockedGoogleResultCards();
     observeSafeSearchNotice();
-    hideGoogleResultsWithSharedFileLinks();
+    hideBlockedGoogleResultCards();
     // Cached evidence can arrive after the initial URL/control checks on any
     // search provider, including pages whose URLs do not change afterward.
     const redirect = explicitSearchBlockRedirect(location.href);

@@ -22,7 +22,7 @@ export function isSafeSearchLimitedNotice(value: string): boolean {
 export function isSafeSearchLockedNotice(value: string): boolean {
   const text = value.normalize("NFKC").replace(/\s+/gu, " ").trim();
   if (text.length > 300) return false;
-  return /^safe\s?search is locked to filter by safety settings applied to this browser\.?\s*(?:learn more\.?\s*)?$/iu.test(text);
+  return /^safe\s?search is locked to filter by (?:safety settings applied to this browser|your network, browser,? or device)\.?\s*(?:learn more\.?\s*)?$/iu.test(text);
 }
 
 // These already-ambiguous media, exposure and search markers do not become
