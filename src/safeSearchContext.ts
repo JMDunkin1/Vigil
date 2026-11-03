@@ -67,6 +67,7 @@ export function sharedFileDestination(value: string, baseUrl?: string): string |
   const onHost = (domain: string) => host === domain || host.endsWith(`.${domain}`);
   if ((onHost("mega.nz") || onHost("mega.io")) && /^\/(?:folder|file)\//u.test(url.pathname)) return url.href;
   if (onHost("gofile.io") && /^\/d\//u.test(url.pathname)) return url.href;
+  if ((onHost("link-center.net") || onHost("direct-link.net")) && /^\/\d+\/[^/]/u.test(url.pathname)) return url.href;
   if (onHost("drive.google.com") && /^\/(?:file\/d|drive\/folders)\//u.test(url.pathname)) return url.href;
   if (onHost("dropbox.com") && /^\/(?:s|sh|scl)\//u.test(url.pathname)) return url.href;
   if (["pixl.li", "cyberdrop.me", "cyberdrop.to", "bunkr.is", "bunkr.si", "bunkr.ru", "erome.com"].some(onHost)

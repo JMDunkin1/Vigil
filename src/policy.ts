@@ -755,9 +755,11 @@ export function matchBlockedUrlPattern(profile: Profile | null | undefined, valu
       hostname: normalizeHost(parsed.hostname), url: parsed.toString()
     };
   }
-  if (explicitSearchProtection && matchSemanticExplicitUrl(parsed)) {
+  const semanticUrl = explicitSearchProtection ? matchSemanticExplicitUrl(parsed) : null;
+  if (semanticUrl) {
     return {
-      pattern: "semantic-explicit-url", label: "Explicit content in hostname or route",
+      pattern: "semantic-explicit-url", label: semanticUrl.term === "reported-link"
+        ? "Reported link blocked" : "Explicit content in hostname or route",
       hostname: normalizeHost(parsed.hostname), url: parsed.toString()
     };
   }

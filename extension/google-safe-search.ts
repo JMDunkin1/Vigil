@@ -162,7 +162,7 @@ function observeSafeSearchNotice(): void {
   if (!query) return;
   const excludedText = "#rso, article, h3, pre, code, blockquote, q, figcaption";
   const candidates = new Set(document.querySelectorAll("[role='alert'], [role='status'], [role='dialog'], [aria-live], #taw, #taw *, #topstuff, #topstuff *, #botstuff, #botstuff *"));
-  for (const link of document.querySelectorAll("a[href*='safesearch' i]")) {
+  for (const link of document.querySelectorAll("a[href*='safesearch' i], a[href*='support.google.com/websearch/answer/510']")) {
     let parent: Element | null = link;
     for (let depth = 0; parent && depth < 4; depth += 1, parent = parent.parentElement) candidates.add(parent);
   }
@@ -243,7 +243,9 @@ function elementExposesSharedFileLink(element: Element): boolean {
 
 function googleResultCardWithSharedFileLinks(element: Element): HTMLElement | null {
   const card = googleSearchResultContainer(element);
-  return card && readerFileDestinations([card]).length > 0 ? card : null;
+  // Google can split a snippet URL across bold query matches and text nodes.
+  return card && (sharedFileUrlsInText(card.textContent || "").length > 0
+    || readerFileDestinations([card]).length > 0) ? card : null;
 }
 
 function googleResultsWithSharedFileLinks(): Set<HTMLElement> {

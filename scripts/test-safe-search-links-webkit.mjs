@@ -16,6 +16,9 @@ const html = `<!doctype html><meta charset="utf-8"><title>Jane Example - Google 
 <div class="MjjYud" id="paste"><a href="https://rentry.co/fixture"><h3>Copy and paste link below</h3></a><p>https://gofile.io/d/fixture. Copy and paste link below</p></div>
 <div class="MjjYud" id="reddit"><a href="https://www.reddit.com/r/example/comments/fixture"><h3>Ordinary title</h3></a><p>Link: https://gofile.io/d/another-fixture. Other text</p></div>
 <div class="MjjYud" id="justpaste"><a href="https://justpaste.it/fixture"><h3>Shared notes</h3></a><p>https://mega.nz/folder/fixture#key</p></div>
+<div class="MjjYud" id="split"><a href="https://example.org/files"><h3>Shared notes</h3></a><p>Link: https://<b>gofile</b>.io/d/split. Other text</p></div>
+<div class="MjjYud" id="redirector"><a href="https://example.org/paste"><h3>Shared links</h3></a><p>Link: https://link-center.net/12345/fixture. Other text</p></div>
+<div class="MjjYud" id="reported"><a href="https://justpaste.it/jarvisx"><h3>Shared notes</h3></a><p>Reported destination.</p></div>
 <div class="MjjYud" id="wrapped"><a href="https://www.google.com/url?q=https%3A%2F%2Fgofile.io%2Fd%2Fwrapped-fixture"><h3>Download</h3></a><p>WRAPPED FILE DESCRIPTION</p></div>
 <div class="MjjYud" id="group"><div class="MjjYud" id="group-file"><a href="https://example.org/collection"><h3>Files</h3></a><p>https://drive.google.com/file/d/fixture/view</p></div><div class="MjjYud" id="group-safe"><a href="https://example.org/library"><h3>Library</h3></a><p>Keep neighboring result.</p></div></div>
 <div class="unknown-card" id="fallback" style="display:grid"><div><a href="https://example.org/notes"><h3>Notes</h3></a></div><p>https://dropbox.com/s/fixture/book.pdf</p></div>
@@ -30,11 +33,12 @@ const checks = `(async()=>{
   const rows=[]; const check=(value,label)=>rows.push({passed:!!value,label});
   const shown=id=>document.getElementById(id).getBoundingClientRect().height>0;
   const wait=()=>new Promise(resolve=>setTimeout(resolve,350));
-  const files=['paste','reddit','justpaste','wrapped','group-file','fallback'];
+  const files=['paste','reddit','justpaste','split','redirector','wrapped','group-file','fallback'];
   const notice=document.getElementById('topstuff');
   const banner=text=>notice.innerHTML='<div role="status">'+text+' <a href="https://www.google.com/safesearch">Learn more</a></div>';
   await wait();
   for(const id of files)check(shown(id),id+' needs SafeSearch context');
+  check(!shown('reported'),'reported destination hidden without a banner');
   banner('SafeSearch is locked to filter by your network, browser, or device.');
   await wait();
   for(const id of files)check(!shown(id),'whole '+id+' hidden with current iPhone banner');
@@ -56,7 +60,8 @@ const checks = `(async()=>{
   await wait();for(const id of files)check(shown(id),id+' restored on unrelated search');
   notice.innerHTML='<div class="MjjYud"><a href="https://example.org/help"><h3>Help article</h3></a><p role="status">SafeSearch is locked to filter by your network, browser, or device. Learn more</p></div>';
   await wait();check(shown('paste'),'banner quoted inside a result supplies no evidence');
-  banner('SafeSearch is locked to Filter by safety settings applied to this browser.');
+  notice.replaceChildren();
+  notice.insertAdjacentHTML('afterend','<div id="desktop-notice">SafeSearch is locked to filter by safety settings applied to this browser. <a href="https://support.google.com/websearch/answer/510">Learn more</a></div>');
   await wait();check(!shown('paste'),'older banner remains protected');
   location.href='https://www.google.com/search?q=Jane+Example&safe=active';
   banner('Some results have been limited by SafeSearch.');

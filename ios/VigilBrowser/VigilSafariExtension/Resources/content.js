@@ -408,6 +408,15 @@ function containsContextualExplicitMedia(value) {
 }
 
 
+// Exact reported destinations and the outbound links visible in the results.
+const reportedLinkRoutes = [
+    ["reddit.com", /^\/(?:r\/motorsportsreplays\/)?comments\/1kh7n1g(?:\/|$)/iu],
+    ["redd.it", /^\/1kh7n1g(?:\/|$)/iu],
+    ["justpaste.it", /^\/jarvisx(?:\/|$)/iu],
+    ["gofile.io", /^\/d\/fvWOq3(?:\/|$)/u],
+    ["link-center.net", /^\/196350\/adx(?:\/|$)/iu],
+    ["direct-link.net", /^\/196350\/arx(?:\/|$)/iu]
+];
 /** Shared by the native policy and the generated browser guards. */
 function matchSemanticExplicitUrl(value) {
     let url;
@@ -460,6 +469,11 @@ function matchSemanticExplicitUrl(value) {
             }
         }
         return output;
+    }
+    const host = url.hostname.toLowerCase().replace(/\.$/u, "");
+    const path = decode(url.pathname);
+    if (reportedLinkRoutes.some(([domain, route]) => (host === domain || host.endsWith(`.${domain}`)) && route.test(path))) {
+        return { component: "path", term: "reported-link", normalizedText: path };
     }
     // Browser URL objects expose IDNs as punycode. Decode one bounded DNS label
     // before evaluating words; never scan the arbitrary xn-- payload as prose.

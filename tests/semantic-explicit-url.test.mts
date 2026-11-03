@@ -62,4 +62,23 @@ assert.equal(shouldBlockUrl({ ...profile, blockedUrlPatterns: [] }, blocked[0]),
   "the helper belongs to profiles with explicit content protection");
 assert.equal(shouldBlockUrl({ ...profile, blockedUrlPatterns: ["token=xxx"] }, "https://ordinary.example/?token=xxx"), true,
   "an explicit custom rule still inspects its selected query component");
+for (const url of [
+  "https://old.reddit.com/r/MotorsportsReplays/comments/1kh7n1g/title/?ref=search",
+  "https://www.reddit.com/comments/1kh7n1g/",
+  "https://redd.it/1kh7n1g",
+  "https://justpaste.it/%6aarvisx",
+  "https://gofile.io/d/fvWOq3",
+  "https://link-center.net/196350/adx",
+  "https://direct-link.net/196350/arx"
+]) {
+  assert.equal(matchSemanticExplicitUrl(url)?.term, "reported-link", url);
+  assert.equal(shouldBlockUrl(profile, url), true, url);
+}
+for (const url of [
+  "https://reddit.com/r/MotorsportsReplays/comments/another",
+  "https://justpaste.it/jarvisxyz",
+  "https://gofile.io/d/another",
+  "https://justpaste.it.example.org/jarvisx",
+  "https://scribd.com/document/123/Canadian-Human-Resource-Management"
+]) assert.equal(shouldBlockUrl(profile, url), false, url);
 console.log(`${blocked.length} semantic URL blocks and ${allowed.length} benign/opaque controls passed.`);
