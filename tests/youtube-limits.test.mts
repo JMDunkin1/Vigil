@@ -129,15 +129,15 @@ test('ending exactly at the base boundary does not allow replay grace', () => {
   state.youtubeLimits!.usedMs = YOUTUBE_BASE_MS - 1; play(ids[0], 1, true);
   assert.equal(act({ action: 'start', videoId: ids[0] }).ok, false);
 });
-test('feeds freeze twenty unique IDs independently across restart and other accounts', () => {
+test('feeds freeze eighteen unique IDs independently across restart and other accounts', () => {
   const { act, state } = setup(); const cards = ids.map(videoId => ({ videoId, title: `Title for ${videoId}` }));
   act({ action: 'feed', feed: 'home', cards: [...cards, ...cards] });
   act({ action: 'feed', feed: 'subscriptions', cards: cards.slice().reverse() });
   act({ action: 'feed', feed: 'home', cards: cards.slice().reverse() });
-  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 20));
+  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 18));
   assert.equal(state.youtubeLimits!.feeds.subscriptions![0].videoId, ids[29]);
   const restored = structuredClone(state);
-  assert.equal(youtubeAction(restored, { action: 'status' }, new Date('2026-09-07T17:00:00Z')).feeds.home!.length, 20);
+  assert.equal(youtubeAction(restored, { action: 'status' }, new Date('2026-09-07T17:00:00Z')).feeds.home!.length, 18);
 });
 test('day reset uses persisted authority timezone and cannot roll backwards', () => {
   const { act, state } = setup(); act({ action: 'save', videoId: ids[0] });
@@ -168,16 +168,16 @@ test('renewals retain ownership and charge each cumulative interval only once', 
   assert.equal(act({ action: 'settle', leaseId: renewed.id, playedMs: 2500 }).ok, false);
 });
 
-test('a partial feed fills to twenty without replacing its first IDs and repairs timestamp titles', () => {
+test('a partial feed fills to eighteen without replacing its first IDs and repairs timestamp titles', () => {
   const { act, state } = setup();
   act({ action: 'feed', feed: 'home', cards: ids.slice(0, 4).map(videoId => ({ videoId, title: `Title ${videoId}` })) });
   state.youtubeLimits!.feeds.home![0].title = '6:15';
   act({ action: 'save', videoId: ids[0], title: '6:15' });
   act({ action: 'feed', feed: 'home', cards: ids.map(videoId => ({ videoId, title: `Correct ${videoId}` })) });
-  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 20));
+  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 18));
   assert.equal(state.youtubeLimits!.slots[0]!.title, `Correct ${ids[0]}`);
   act({ action: 'feed', feed: 'home', cards: ids.slice().reverse().map(videoId => ({ videoId, title: `Title ${videoId}` })) });
-  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 20));
+  assert.deepEqual(state.youtubeLimits!.feeds.home!.map(card => card.videoId), ids.slice(0, 18));
 });
 
  test('searched videos use time with all save slots occupied and retain time enforcement', () => {

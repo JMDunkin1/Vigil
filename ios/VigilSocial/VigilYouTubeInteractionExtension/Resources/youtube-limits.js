@@ -929,6 +929,7 @@
     finally { watchLaterChanging = false; }
   }
   function feedName() { return ['/', '/feed/recommended'].includes(location.pathname) ? 'home' : location.pathname === '/feed/subscriptions' ? 'subscriptions' : ''; }
+  const feedLimit = 18;
   const nativeCardSelector = 'ytm-rich-item-renderer,ytm-video-with-context-renderer,ytd-rich-item-renderer,ytd-rich-grid-media,ytm-rich-grid-media,ytd-video-renderer,ytm-compact-video-renderer,ytd-grid-video-renderer,yt-lockup-view-model,ytm-lockup-view-model';
   // Feed sections are discovery modules, even when they contain ordinary watch
   // links. Reject the entire module without depending on its translated heading.
@@ -997,7 +998,7 @@
     if (!lists.length) return data;
     for (const list of lists) for (const item of list) {
       const card = standardFeedItem(item);
-      if (card && cached.items.length < 20
+      if (card && cached.items.length < feedLimit
           && !cached.items.some(old => old.card.videoId === card.videoId)) cached.items.push({ card, item });
     }
     // Reuse YouTube's own renderer models. YouTube continues to render every
@@ -1005,7 +1006,7 @@
     let inserted = false;
     const rendered = append ? new Set(domCards().map(card => card.videoId)) : new Set();
     for (const list of lists) {
-      const other = cached.items.length < 20 ? list.filter(item => item.continuationItemRenderer) : [];
+      const other = cached.items.length < feedLimit ? list.filter(item => item.continuationItemRenderer) : [];
       list.splice(0, list.length, ...(inserted ? [] : cached.items.filter(entry => !rendered.has(entry.card.videoId)).map(entry => entry.item)), ...other);
       inserted = true;
     }
@@ -1088,7 +1089,7 @@
     for (const card of domCards()) if (!cards.some(old => old.videoId === card.videoId)) cards.push(card);
     const key = `${state.day}:${name}`;
     const selected = websiteCards.get(key) || [];
-    for (const card of cards) if (selected.length < 20 && !selected.includes(card.videoId)) selected.push(card.videoId);
+    for (const card of cards) if (selected.length < feedLimit && !selected.includes(card.videoId)) selected.push(card.videoId);
     websiteCards.set(key, selected);
     const allowed = new Set(selected);
     const visible = new Set();
@@ -1102,9 +1103,9 @@
       card.toggleAttribute('data-vigil-feed-hidden', !showCard);
       if (showCard) { visible.add(id); last = card; }
     }
-    document.documentElement.toggleAttribute('data-vigil-feed-complete', allowed.size === 20);
-    if (allowed.size === 20 && last) {
-      if (!feedEnd) { feedEnd = document.createElement('p'); feedEnd.id = 'vigil-feed-end'; feedEnd.textContent = 'You’ve reached the end of these 20 videos.'; feedEnd.style.cssText = 'grid-column:1/-1;text-align:center;padding:24px 12px;font:14px Roboto,Arial,sans-serif;color:inherit'; }
+    document.documentElement.toggleAttribute('data-vigil-feed-complete', allowed.size === feedLimit);
+    if (allowed.size === feedLimit && last) {
+      if (!feedEnd) { feedEnd = document.createElement('p'); feedEnd.id = 'vigil-feed-end'; feedEnd.textContent = `You’ve reached the end of these ${feedLimit} videos.`; feedEnd.style.cssText = 'grid-column:1/-1;text-align:center;padding:24px 12px;font:14px Roboto,Arial,sans-serif;color:inherit'; }
       if (last.nextElementSibling !== feedEnd) last.after(feedEnd);
     }
   }

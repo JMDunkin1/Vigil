@@ -85,6 +85,10 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
       ...(watchLater ? { watchLater } : {}), ...(baselineInitializedAt ? { baselineInitializedAt } : {}) };
   }
   const day = state.youtubeLimits;
+  const feedLimit = 18;
+  for (const cards of Object.values(day.feeds)) {
+    if (cards.length > feedLimit) cards.length = feedLimit;
+  }
   if (day.lease && now.getTime() >= day.lease.expiresAt) {
     // Unsettled credit stays spent after a crash. Never mint replacement time.
     charge(day, day.lease.videoId, day.lease.milliseconds - day.lease.settledMs);
@@ -187,7 +191,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
           const metadata = { title, channel: String(item.channel || "").slice(0, 150), duration: String(item.duration || "").slice(0, 30) };
           // Repair metadata without changing the persistent daily IDs or order.
           if (existing) Object.assign(existing, metadata);
-          else if (cards.length < 20) cards.push({ videoId: id, ...metadata });
+          else if (cards.length < feedLimit) cards.push({ videoId: id, ...metadata });
           for (const saved of day.slots) if (saved?.videoId === id) saved.title = title;
         }
       }

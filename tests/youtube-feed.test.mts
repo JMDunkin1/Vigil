@@ -6,7 +6,7 @@ const source = await readFile(new URL('../extension/youtube-limits.js', import.m
 const helpers = source.slice(source.indexOf('  // Feed metadata'), source.indexOf('  function feedName()'));
 const ids = Array.from({ length: 25 }, (_, i) => `video${String(i).padStart(6, '0')}`);
 const renderer = (id: string, i: number) => ({ videoWithContextRenderer: { videoId: id, headline: { runs: [{ text: `Full video title ${i}` }] }, lengthText: { simpleText: '6:15' } } });
-const nativeHelpers = source.slice(source.indexOf('  const nativeCardSelector'), source.indexOf('  // Page-world optimizations'));
+const nativeHelpers = source.slice(source.indexOf('  const feedLimit'), source.indexOf('  // Page-world optimizations'));
 function nativeFixture(initialCache: unknown = null, selected: unknown[] = []) {
   const cache = new Map<string, string>();
   if (initialCache) cache.set('vigil-native-feed:home', JSON.stringify(initialCache));
@@ -37,12 +37,12 @@ test('incoming watch documents are preserved when YouTube has not updated the fe
   }
 });
 
-test('the app chooses a fresh twenty after reload and ignores both old UI caches and daily feed IDs', () => {
+test('the app chooses a fresh eighteen after reload and ignores both old UI caches and daily feed IDs', () => {
   const selected = ids.slice(0, 20).map(videoId => ({ videoId, title: videoId }));
   const old = { schemaVersion: 2, day: '2026-10-08', items: ids.slice(0, 20).map((videoId, i) => ({ card: { videoId }, item: renderer(videoId, i) })) };
   const first = nativeFixture(old, selected);
   const page = first.api.nativeFeedData({ richGridRenderer: { contents: ids.slice().reverse().map(renderer) } });
-  assert.deepEqual(Array.from(page.richGridRenderer.contents, (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice().reverse().slice(0, 20));
+  assert.deepEqual(Array.from(page.richGridRenderer.contents, (item: { videoWithContextRenderer: { videoId: string } }) => item.videoWithContextRenderer.videoId), ids.slice().reverse().slice(0, 18));
   const reload = nativeFixture(old, selected);
   const next = reload.api.nativeFeedData({ richGridRenderer: { contents: ids.map(renderer) } });
   assert.equal(next.richGridRenderer.contents[0].videoWithContextRenderer.videoId, ids[0]);
@@ -96,8 +96,8 @@ test('iPhone escaped initial data yields full feed metadata without evaluating J
   assert.equal(api.videoCards(parsed).cards.length, 20);
   assert.equal(api.videoCards(parsed).cards[0].title, 'Full video title 0');
 });
-test('native feed retains YouTube renderer models, thumbnails, and a stable twenty-item set', () => {
-  const begin = source.indexOf('  const nativeCardSelector');
+test('native feed retains YouTube renderer models, thumbnails, and a stable eighteen-item set', () => {
+  const begin = source.indexOf('  const feedLimit');
   const end = source.indexOf('  // Page-world optimizations', begin);
   const cache = new Map<string, string>();
   const api = runInNewContext(`${helpers}\n${source.slice(begin, end)}\n({nativeFeedData})`, {
@@ -107,13 +107,13 @@ test('native feed retains YouTube renderer models, thumbnails, and a stable twen
   const items = ids.map((id, i) => ({ ...renderer(id, i), thumbnail: { source: `original-${i}` } }));
   const first = api.nativeFeedData({ contents: { richGridRenderer: { contents: items } } });
   const firstItems = first.contents.richGridRenderer.contents;
-  assert.equal(firstItems.length, 20);
+  assert.equal(firstItems.length, 18);
   assert.equal(firstItems[0].thumbnail.source, 'original-0');
   const reopened = api.nativeFeedData({ contents: { richGridRenderer: { contents: items.slice().reverse() } } });
   assert.equal(reopened.contents.richGridRenderer.contents[0].videoWithContextRenderer.videoId, ids[0]);
 });
 
-test('desktop and mobile feeds discard whole music, featured, topic, and unknown modules before selecting twenty standard videos', () => {
+test('desktop and mobile feeds discard whole music, featured, topic, and unknown modules before selecting eighteen standard videos', () => {
   for (const kind of ['richGridRenderer', 'itemSectionRenderer']) {
     const { api } = nativeFixture();
     const featured = { richSectionRenderer: { content: { brandVideoSingletonRenderer: { title: { simpleText: 'Are there Angels Among Us?' }, video: renderer('featured001', 0) } } } };
@@ -123,7 +123,7 @@ test('desktop and mobile feeds discard whole music, featured, topic, and unknown
       ...ids.map((id, i) => ({ richItemRenderer: { content: renderer(id, i) } })),
       { continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: 'more' } } } }];
     const result = api.nativeFeedData({ contents: { [kind]: { contents: items } } }).contents[kind].contents;
-    assert.deepEqual(Array.from(result, (item: { richItemRenderer: { content: { videoWithContextRenderer: { videoId: string } } } }) => item.richItemRenderer.content.videoWithContextRenderer.videoId), ids.slice(0, 20));
+    assert.deepEqual(Array.from(result, (item: { richItemRenderer: { content: { videoWithContextRenderer: { videoId: string } } } }) => item.richItemRenderer.content.videoWithContextRenderer.videoId), ids.slice(0, 18));
     assert.equal(api.standardFeedItem(featured), null);
     assert.equal(api.standardFeedItem(music), null);
   }
@@ -139,14 +139,14 @@ test('ordinary modern video lockups remain usable while playlists and Shorts can
   assert.equal(api.standardFeedItem({ reelShelfRenderer: { items: [renderer('shorts00001', 0)] } }), null);
 });
 
-test('a promotion-only feed keeps its continuation so ordinary videos can fill all twenty slots', () => {
+test('a promotion-only feed keeps its continuation so ordinary videos can fill all eighteen slots', () => {
   const { api } = nativeFixture();
   const continuation = { continuationItemRenderer: { continuationEndpoint: { continuationCommand: { token: 'ordinary-page' } } } };
   const page = api.nativeFeedData({ richGridRenderer: { contents: [{ brandVideoShelfRenderer: { items: [renderer('featured001', 0)] } }, continuation] } });
   assert.equal(page.richGridRenderer.contents.length, 1);
   assert.equal(page.richGridRenderer.contents[0], continuation);
   const next = api.nativeFeedData({ onResponseReceivedActions: [{ appendContinuationItemsAction: { continuationItems: ids.map(renderer) } }] }, true);
-  assert.equal(next.onResponseReceivedActions[0].appendContinuationItemsAction.continuationItems.length, 20);
+  assert.equal(next.onResponseReceivedActions[0].appendContinuationItemsAction.continuationItems.length, 18);
 });
 
 test('old UI caches cannot reintroduce a featured shelf into the standard feed', () => {
@@ -169,7 +169,7 @@ test('a missing allowance response holds the homepage feed instead of leaving it
   assert.equal(attributes.get('data-vigil-feed-pending'), true);
 });
 
-test('all surfaces cap native cards at twenty per page and can choose a fresh twenty after reload', async () => {
+test('all surfaces cap native cards at eighteen per page and can choose a fresh eighteen after reload', async () => {
   const begin = source.indexOf('  let lastFilteredFeed');
   const end = source.indexOf('  function clean()',begin);
   function page(offset: number) {
@@ -177,7 +177,7 @@ test('all surfaces cap native cards at twenty per page and can choose a fresh tw
     const cards = ids.map((_,i)=>({videoId:`fresh${String(i+offset).padStart(6,'0')}`,title:`Title ${i}`}));
     const nodes=cards.map(card=>({hidden:false,querySelector:()=>({href:`https://m.youtube.com/watch?v=${card.videoId}`}),toggleAttribute(_name:string,hidden:boolean){this.hidden=hidden;},nextElementSibling:null as unknown,after(node:unknown){this.nextElementSibling=node;moves++;}}));
     const filter=runInNewContext(`let feedEnd;${source.slice(begin,end)};filterNativeFeed`,{
-      state:{day:'2026-09-14',feeds:{home:[{videoId:ids[0]}]}},feedName:()=> 'home',websiteFeed:true,websiteCards:selected,
+      feedLimit:18,state:{day:'2026-09-14',feeds:{home:[{videoId:ids[0]}]}},feedName:()=> 'home',websiteFeed:true,websiteCards:selected,
       nativeCardSelector:'native',standardFeedCard:()=>true,domCards:()=>cards,idFrom:(url:string)=>new URL(url).searchParams.get('v'),
       request:()=>assert.fail('website cards must not replace the protected app feed'),
       document:{documentElement:{toggleAttribute:(name:string,value:boolean)=>attributes.set(name,value)},querySelectorAll:()=>nodes,createElement:()=>({style:{cssText:''}})}
@@ -185,15 +185,15 @@ test('all surfaces cap native cards at twenty per page and can choose a fresh tw
     return {filter,nodes,cards,attributes,get moves(){return moves;}};
   }
   const first=page(0); await first.filter(); await first.filter();
-  assert.equal(first.nodes.filter(node=>!node.hidden).length,20);
+  assert.equal(first.nodes.filter(node=>!node.hidden).length,18);
   assert.equal(first.attributes.get('data-vigil-feed-complete'),true);
   assert.equal(first.moves,1,'an unchanged feed must not keep moving its end marker and retriggering page observers');
   const reload=page(100); await reload.filter();
-  assert.equal(reload.nodes.filter(node=>!node.hidden).length,20);
+  assert.equal(reload.nodes.filter(node=>!node.hidden).length,18);
   assert.notEqual(first.cards[0].videoId,reload.cards[0].videoId);
 });
 
-test('DOM filtering excludes featured videos from the twenty slots, hides duplicate cards, and removes non-video rich items', async () => {
+test('DOM filtering excludes featured videos from the eighteen slots, hides duplicate cards, and removes non-video rich items', async () => {
   const begin = source.indexOf('  let lastFilteredFeed');
   const end = source.indexOf('  function clean()', begin);
   const attributes = new Map<string, boolean>();
@@ -226,12 +226,12 @@ test('DOM filtering excludes featured videos from the twenty slots, hides duplic
   await filter();
   assert.equal(attributes.get('data-vigil-standard-feed'), true);
   assert.equal(attributes.get('data-vigil-feed-complete'), true);
-  assert.deepEqual(Array.from(selected.get('2026-10-08:home')), ids.slice(0, 20));
+  assert.deepEqual(Array.from(selected.get('2026-10-08:home')), ids.slice(0, 18));
   assert.equal(extra[0].hidden, true, 'featured campaign cannot add an extra video');
   assert.equal(extra[1].hidden, true, 'a shelf cannot display even an allowed ordinary ID');
   assert.equal(extra[2].hidden, true, 'mobile music shelf cannot add an extra video');
   assert.equal(extra[4].hidden, true, 'a rich item without a standard video is hidden');
-  assert.equal(nodes.filter(node => !node.hidden && !node.parentElement.closest()).length, 20);
+  assert.equal(nodes.filter(node => !node.hidden && !node.parentElement.closest()).length, 18);
   assert.equal(regular[0].hidden, true, 'duplicate video cards do not extend the visible feed');
 });
 
