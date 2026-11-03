@@ -10504,7 +10504,7 @@ enum DOMAdapters {
         // Account carousels are often plain divs, outside any feed article.
         // Revisit enclosing wrappers when React inserts only a heading, card,
         // or text node, and clear our marker when a wrapper is recycled.
-        const boundary = 'html, body, main, nav, header, footer, article, form, [role="main"], [role="navigation"], [role="article"], [role="dialog"], [aria-modal="true"]';
+        const boundary = 'html, body, main, nav, footer, article, form, [role="banner"], [role="main"], [role="navigation"], [role="article"], [role="dialog"], [aria-modal="true"]';
         let scope = root;
         if (root instanceof Element) {
           scope = root.closest('[data-vigil-instagram-suggestions]') || root;
@@ -10520,23 +10520,27 @@ enum DOMAdapters {
         marked.forEach(node => node.removeAttribute('data-vigil-instagram-suggestions'));
         if (featureState('suggested') === 'available') return;
         const labels = new Set(['suggestions for you', 'suggested for you', 'suggested accounts']);
-        const selector = 'h1, h2, h3, h4, span, div, a';
+        const selector = 'h1, h2, h3, h4, [role="heading"], span, div, a';
+        const normalizedLabel = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
         const candidates = [
           ...(scope.matches?.(selector) ? [scope] : []), ...scope.querySelectorAll(selector)
         ];
         for (const label of candidates) {
-          if (label.children.length || !labels.has(String(label.textContent || label.getAttribute('aria-label') || '')
-              .replace(/\s+/g, ' ').trim().toLowerCase())
-              || label.closest('nav, header, footer, form, [role="navigation"], [role="dialog"], [aria-modal="true"]')) continue;
+          if (label.children.length && !label.matches('h1, h2, h3, h4, [role="heading"], span')) continue;
+          if (!labels.has(normalizedLabel(label.textContent))
+              && !labels.has(normalizedLabel(label.getAttribute('aria-label')))) continue;
+          if (label.closest('nav, footer, form, [role="banner"], [role="navigation"], [role="dialog"], [aria-modal="true"]')) continue;
+          if (label.matches(boundary)) continue;
           let target = label;
           for (let parent = label.parentElement, depth = 0; parent && depth < 8;
               parent = parent.parentElement, depth += 1) {
             // Never consume the surrounding feed, Stories, post, or composer.
             if (parent.matches(boundary) || parent.querySelector(
-              'article, [role="article"], nav, [role="navigation"], input, textarea, video, a[href^="/p/"], a[href^="/reel/"], a[href^="/stories/"]'
+              'article, [role="article"], nav, [role="navigation"], [role="banner"], input, textarea, video, a[href^="/p/"], a[href^="/reel/"], a[href^="/stories/"]'
             )) break;
             const follows = [...parent.querySelectorAll('button, [role="button"], a')].some(control =>
-              /^follow$/i.test(String(control.textContent || control.getAttribute('aria-label') || '').trim())
+              normalizedLabel(control.textContent) === 'follow'
+              || normalizedLabel(control.getAttribute('aria-label')) === 'follow'
             );
             if (follows) { target = parent; break; }
           }

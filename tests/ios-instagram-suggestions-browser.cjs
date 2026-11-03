@@ -18,8 +18,8 @@ async function main() {
   const run = code => win.webContents.executeJavaScript(code);
   const settle = () => run('new Promise(resolve => setTimeout(resolve, 150))');
   const hidden = id => run(`!!document.getElementById(${JSON.stringify(id)}).closest('[data-vigil-hidden-feature], [data-vigil-instagram-suggestions]')`);
-  const moduleHTML = '<div id="suggestions"><div><span id="heading">Suggestions for you</span><a href="/explore/people/">See all</a></div><div id="carousel"><div><a href="/stranger/">stranger</a><button>Follow</button></div><button aria-label="Next">Next</button></div></div>';
-  await win.loadURL('https://www.instagram.com/viewer/');
+  const moduleHTML = '<div id="suggestions"><header><div role="heading" id="heading">Suggestions <strong>for you</strong></div><a href="/explore/people/">See all</a></header><div id="carousel"><div><a href="/stranger/">stranger</a><button>Follow</button></div><button aria-label="Next">Next</button></div></div>';
+  await win.loadURL('https://www.instagram.com/');
   await run(`window.__vigilBridge=()=>{};window.fetch=async()=>({ok:false,status:429});
     document.body.innerHTML=${JSON.stringify('<nav id="nav"><a href="/">Home</a><a href="/direct/inbox/">Messages</a></nav><main><div id="stories"><a href="/stories/friend/1/">Friend story</a></div>' + moduleHTML + '<article id="post"><a href="/friend/">friend</a><p>Ordinary post</p><button>Follow</button></article><div role="dialog" id="message"><span>Suggestions for you</span><button>Follow</button></div></main>')}`);
   await run(stable);
@@ -28,11 +28,11 @@ async function main() {
   for (const id of ['nav', 'stories', 'post', 'message']) assert.equal(await hidden(id), false, `preserve ${id}`);
   assert.equal(await run("getComputedStyle(document.getElementById('suggestions')).display"), 'none');
 
-  await run("document.getElementById('heading').firstChild.data='Friends';");
+  await run("document.getElementById('heading').textContent='Friends';");
   await settle();
   assert.equal(await hidden('suggestions'), false, 'recycled ordinary module is released');
   for (const label of ['Suggested for you', 'Suggestions for you', 'Suggested accounts']) {
-    await run(`document.getElementById('heading').firstChild.data=${JSON.stringify(label)}`);
+    await run(`document.getElementById('heading').textContent=${JSON.stringify(label)}`);
     await settle();
     assert.equal(await hidden('suggestions'), true, label);
   }
