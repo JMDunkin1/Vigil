@@ -9590,23 +9590,34 @@ final class VigilSocialTests: XCTestCase {
               <main><div id="rail"><div id="track" role="list">
                 <div class="slot" id="own-slot"><div><button aria-label="Your story"><img alt="viewer's profile picture"></button></div></div>
                 <div class="slot" id="other-slot" style="transform:translateX(100px)"><div><button aria-label="other's story"><img alt="other's profile picture"></button></div></div>
-                <div class="slot" id="friend-slot" style="transform:translateX(200px)"><div><button aria-label="friend's story"><img alt="friend's profile picture"></button></div></div>
                 <div id="spacer" style="width:1300px;flex-shrink:0"></div>
               </div></div></main>
-            </body></html>
+            <script>
+              const rail = document.getElementById('rail');
+              rail.addEventListener('scroll', () => {
+                if (rail.scrollLeft <= 0 || document.getElementById('friend-slot')) return;
+                window.mountedByScroll = true;
+                window.deniedConcealedDuringScroll =
+                  getComputedStyle(document.querySelector('#other-slot img')).visibility === 'hidden';
+                document.getElementById('spacer').insertAdjacentHTML('beforebegin', `<div class="slot" id="friend-slot" style="transform:translateX(200px)"><div><button aria-label="friend's story"><img alt="friend's profile picture"></button></div></div>`);
+              });
+            </script></body></html>
             """#, baseURL: URL(string: "https://www.instagram.com/")!)
         await fulfillment(of: [loaded], timeout: 5)
         try await Task.sleep(nanoseconds: 250_000_000)
         let layout = try await webView.evaluateJavaScript(#"""
             (() => {
               const own = document.getElementById('own-slot').getBoundingClientRect();
-              const friend = document.getElementById('friend-slot').getBoundingClientRect();
+              const friend = document.getElementById('friend-slot')?.getBoundingClientRect();
               const rail = document.getElementById('rail');
               rail.scrollLeft = 9999;
-              return { gap: friend.left - own.right, scroll: rail.scrollLeft,
-                overflow: rail.scrollWidth - rail.clientWidth };
+              return { gap: friend ? friend.left - own.right : -1, scroll: rail.scrollLeft,
+                overflow: rail.scrollWidth - rail.clientWidth, mountedByScroll: Number(window.mountedByScroll === true),
+                deniedConcealed: Number(window.deniedConcealedDuringScroll === true) };
             })()
             """#) as? [String: Double]
+        XCTAssertEqual(layout?["mountedByScroll"], 1, "The watched batch must mount without a user swipe")
+        XCTAssertEqual(layout?["deniedConcealed"], 1, "Pagination must not expose a denied portrait")
         XCTAssertEqual(layout?["gap"], 0, "Hidden outer slots must not leave gaps between visible Stories")
         XCTAssertEqual(layout?["scroll"], 0, "Two 100px stories fit; there is no extra row to scroll into")
         XCTAssertEqual(layout?["overflow"], 0)
@@ -9835,63 +9846,61 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(sameCreator?["path"] as? String, "/stories/friendone/2/")
         XCTAssertEqual(sameCreator?["visible"] as? Bool, true)
         XCTAssertTrue(probe.paths.isEmpty)
-        _ = try await webView.evaluateJavaScript(#"""
-            document.getElementById('next').onclick = () => history.pushState({}, '', '/stories/other/1/');
-            document.getElementById('next').click();
-            """#)
-        try await Task.sleep(nanoseconds: 250_000_000)
-        try await Task.sleep(nanoseconds: 500_000_000)
-        XCTAssertEqual(probe.paths.last, "/stories/friendtwo", "Advance must skip the filtered account, not close all Stories")
-        let deniedHidden = try await webView.evaluateJavaScript("getComputedStyle(document.body).visibility === 'hidden'") as? Bool
-        XCTAssertEqual(deniedHidden, true, "The skipped account must never be revealed")
-        let navigationsBeforeUnmountedAccount = probe.paths.count
-        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/unmountedother/1/');")
-        try await Task.sleep(nanoseconds: 750_000_000)
-        XCTAssertGreaterThan(probe.paths.count, navigationsBeforeUnmountedAccount)
-        XCTAssertEqual(probe.paths.last, "/stories/friendtwo", "An unmounted filtered account must resume after the active friend")
-
-        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendtwo/1/');")
-        for _ in 0..<20 {
-            let active = try await webView.evaluateJavaScript(
-                "JSON.parse(sessionStorage.getItem('vigil.instagram.mutual-friendships.v1:session:story-order')).active"
-            ) as? String
-            if active == "friendtwo" { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/other/1/');")
-        for _ in 0..<20 {
-            if probe.paths.last == "/stories/friendone" { break }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        XCTAssertEqual(probe.paths.last, "/stories/friendone", "Backward traversal must skip in the opposite direction")
-        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendone/3/');")
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let cachedRouteHidden = try await webView.evaluateJavaScript(#"""
+        let advanced = try await webView.evaluateJavaScript(#"""
             (() => {
-              window.cachedStoryPushState.call(history, {}, '', '/stories/other/2/');
-              return getComputedStyle(document.body).visibility === 'hidden';
+              const next = document.getElementById('next');
+              next.onclick = () => {
+                if (location.pathname.startsWith('/stories/friendone/')) {
+                  window.cachedStoryPushState.call(history, {}, '', '/stories/other/1/');
+                  window.deniedHidden = getComputedStyle(document.body).visibility === 'hidden';
+                } else history.pushState({}, '', '/stories/friendtwo/1/');
+              };
+              next.click();
+              return true;
             })()
             """#) as? Bool
-        XCTAssertEqual(cachedRouteHidden, true, "Autoplay's cached router must use the same prepaint verification as manual Next")
-        try await Task.sleep(nanoseconds: 750_000_000)
-        XCTAssertEqual(probe.paths.last, "/stories/friendtwo")
+        XCTAssertEqual(advanced, true)
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let forward = try await webView.evaluateJavaScript(
+            "({path: location.pathname, deniedHidden})"
+        ) as? [String: Any]
+        XCTAssertEqual(forward?["path"] as? String, "/stories/friendtwo/1/")
+        XCTAssertEqual(forward?["deniedHidden"] as? Bool, true, "Cached History must conceal the rejected creator before paint")
+        XCTAssertTrue(probe.paths.isEmpty)
 
-        // Instagram can close directly to Home instead of visiting the hidden
-        // account. Next must retain the friend sequence before Home resets it.
-        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendone/4/');")
-        try await Task.sleep(nanoseconds: 100_000_000)
-        let beforeHomeAdvance = probe.paths.count
         _ = try await webView.evaluateJavaScript(#"""
-            document.getElementById('next').onclick = () => history.pushState({}, '', '/');
+            (() => {
+              const previous = document.createElement('button');
+              previous.setAttribute('aria-label', 'Previous story');
+              previous.textContent = 'Previous';
+              previous.onclick = () => history.pushState({}, '', '/stories/friendone/3/');
+              document.querySelector('main').appendChild(previous);
+              history.pushState({}, '', '/stories/other/2/');
+              return true;
+            })()
+            """#)
+        try await Task.sleep(nanoseconds: 250_000_000)
+        let backward = try await webView.evaluateJavaScript("location.pathname") as? String
+        XCTAssertEqual(backward, "/stories/friendone/3/")
+        XCTAssertTrue(probe.paths.isEmpty)
+
+        _ = try await webView.evaluateJavaScript(#"""
+            document.getElementById('next').onclick = () => {
+              history.pushState({}, '', '/');
+              document.querySelector('main').insertAdjacentHTML('beforeend',
+                '<a id="mounted" href="/stories/friendtwo/42/">Friend Story</a>');
+              document.getElementById('mounted').onclick = (event) => {
+                event.preventDefault();
+                history.pushState({}, '', '/stories/friendtwo/42/');
+              };
+            };
             document.getElementById('next').click();
             true;
             """#)
-        try await Task.sleep(nanoseconds: 700_000_000)
-        XCTAssertEqual(probe.paths.count, beforeHomeAdvance + 1, "A Next that lands on Home must continue exactly once")
-        XCTAssertEqual(probe.paths.last, "/stories/friendtwo")
-
-        _ = try await webView.evaluateJavaScript("history.replaceState({}, '', '/stories/friendone/5/');")
-        try await Task.sleep(nanoseconds: 100_000_000)
+        try await Task.sleep(nanoseconds: 800_000_000)
+        let continued = try await webView.evaluateJavaScript("location.pathname") as? String
+        XCTAssertEqual(continued, "/stories/friendtwo/42/")
+        XCTAssertTrue(probe.paths.isEmpty, "A Home continuation must use Instagram's exact mounted Story")
         let beforeClose = probe.paths.count
         _ = try await webView.evaluateJavaScript(#"""
             const close = document.createElement('button');
@@ -10090,17 +10099,32 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(state?["visible"] as? Bool, true)
         XCTAssertTrue(probe.paths.isEmpty, "Skipping must retain the SPA viewer without loading a new document")
         _ = try await webView.evaluateJavaScript(#"""
-            history.pushState({}, '', '/');
             const viewer = document.getElementById('viewer');
-            viewer.removeAttribute('role');
-            viewer.innerHTML = '<article id="home-friend"><header><a href="/friendtwo/">friendtwo</a></header>Friend</article><article id="home-other"><header><a href="/other/">other</a></header>Other</article>';
+            document.getElementById('next').remove();
+            const close = document.createElement('button');
+            close.innerHTML = '<svg aria-label="Close"></svg>';
+            close.onclick = () => {
+              history.pushState({}, '', '/');
+              viewer.removeAttribute('role');
+              viewer.innerHTML = '<article id="home-friend"><header><a href="/friendtwo/">friendtwo</a></header>Friend</article><article id="home-other"><header><a href="/other/">other</a></header>Other</article>';
+            };
+            viewer.appendChild(close);
+            // Autoplay from the final allowed Story enters a denied author.
+            history.pushState({}, '', '/stories/other/2/');
             true;
             """#)
         try await Task.sleep(nanoseconds: 250_000_000)
         let home = try await webView.evaluateJavaScript(#"""
-            ({friend:getComputedStyle(document.getElementById('home-friend')).visibility !== 'hidden',
-              other:getComputedStyle(document.getElementById('home-other')).display === 'none'})
+            (() => {
+              const friend = document.getElementById('home-friend');
+              const other = document.getElementById('home-other');
+              return { onHome: location.pathname === '/',
+                friend: !!friend && getComputedStyle(friend).visibility !== 'hidden',
+                other: !!other && getComputedStyle(other).display === 'none' };
+            })()
             """#) as? [String: Bool]
+        XCTAssertEqual(home?["onHome"], true)
+        XCTAssertTrue(probe.paths.isEmpty, "Ending the allowed queue must close via Instagram's router")
         XCTAssertEqual(home?["friend"], true)
         XCTAssertEqual(home?["other"], true, "A reused viewer must resume Home filtering without exposing non-friends")
         webView.navigationDelegate = nil
@@ -10550,7 +10574,7 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testInstagramStorySequenceSurvivesFullDocumentNavigation() async throws {
+    func testInstagramColdStoryWithoutNativeControlsReturnsHome() async throws {
         let controller = WKUserContentController()
         controller.addUserScript(WKUserScript(
             source: DOMAdapters.documentStartScript(for: .instagram, unclassifiedMediaPolicy: .revealUnclassified,
@@ -10586,8 +10610,8 @@ final class VigilSocialTests: XCTestCase {
         let probe = StoryAdvanceNavigationProbe()
         webView.navigationDelegate = probe
         _ = try await webView.evaluateJavaScript("history.pushState({}, '', '/stories/other/1/');")
-        try await Task.sleep(nanoseconds: 200_000_000)
-        XCTAssertEqual(probe.paths.last, "/stories/friendtwo")
+        try await Task.sleep(nanoseconds: 350_000_000)
+        XCTAssertEqual(probe.paths.last, "/", "A cold denied viewer must not guess a creator URL")
         let hidden = try await webView.evaluateJavaScript("getComputedStyle(document.body).visibility === 'hidden'") as? Bool
         XCTAssertEqual(hidden, true)
         webView.navigationDelegate = nil

@@ -4590,7 +4590,7 @@ enum DOMAdapters {
           visibility: hidden !important;
         }
         html[data-vigil-instagram-home-filter="true"] main
-          :is(ul, [role="list"], [aria-label="Stories" i])
+          :is(ul, [role="list"], [aria-label="Stories" i], [data-vigil-instagram-story-probing="true"])
           :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
             article *, nav *, [role="navigation"] *
           ):not([aria-label="Profile" i]):not([aria-label="Your profile" i]):not(
@@ -4600,7 +4600,16 @@ enum DOMAdapters {
           ):not([data-vigil-instagram-story-relationship="self"]) {
           visibility: hidden !important;
         }
-        [data-vigil-instagram-story-relationship="pending"] {
+        [data-vigil-instagram-story-probing="true"] [data-vigil-instagram-story-relationship]:not(
+          [data-vigil-instagram-story-relationship="self"], [data-vigil-instagram-story-relationship="friend"]
+        ),
+        [data-vigil-instagram-story-probing="true"] [data-vigil-instagram-story-relationship]:not(
+          [data-vigil-instagram-story-relationship="self"], [data-vigil-instagram-story-relationship="friend"]
+        ) * {
+          visibility: hidden !important;
+          pointer-events: none !important;
+        }
+        [data-vigil-instagram-story-relationship="pending"]:not([data-vigil-instagram-story-probing="true"] *) {
           display: none !important;
         }
         [data-vigil-instagram-story-relationship="refreshing"],
@@ -4634,7 +4643,7 @@ enum DOMAdapters {
           visibility: hidden !important;
           pointer-events: none !important;
         }
-        [data-vigil-instagram-story-relationship="other"] {
+        [data-vigil-instagram-story-relationship="other"]:not([data-vigil-instagram-story-probing="true"] *) {
           display: none !important;
         }
         html[data-vigil-instagram-story-gate="pending"] body {
@@ -4645,7 +4654,7 @@ enum DOMAdapters {
           visibility: hidden !important;
           pointer-events: none !important;
         }
-        [data-vigil-instagram-story-relationship="unavailable"] {
+        [data-vigil-instagram-story-relationship="unavailable"]:not([data-vigil-instagram-story-probing="true"] *) {
           display: none !important;
         }
         [data-vigil-instagram-story-rail="true"] {
@@ -4656,7 +4665,7 @@ enum DOMAdapters {
           overflow-x: auto !important;
           overflow-anchor: none !important;
         }
-        [data-vigil-instagram-story-track="true"] {
+        [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-probing="true"], [data-vigil-instagram-story-probing="true"] *) {
           display: flex !important;
           flex-flow: row nowrap !important;
           justify-content: flex-start !important;
@@ -4669,18 +4678,18 @@ enum DOMAdapters {
           padding: 0 !important;
           transition: none !important;
         }
-        [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-rail="true"]),
-        [data-vigil-instagram-story-carrier="true"] {
+        [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-rail="true"], [data-vigil-instagram-story-probing="true"] *),
+        [data-vigil-instagram-story-carrier="true"]:not([data-vigil-instagram-story-probing="true"] *) {
           width: max-content !important;
           min-width: 0 !important;
           max-width: none !important;
           transform: none !important;
           translate: none !important;
         }
-        [data-vigil-instagram-story-track="true"] > :not([data-vigil-instagram-story-slot]) {
+        [data-vigil-instagram-story-track="true"] > :not([data-vigil-instagram-story-slot], [data-vigil-instagram-story-probing="true"] *) {
           display: none !important;
         }
-        [data-vigil-instagram-story-slot] {
+        [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-probing="true"] *) {
           overflow: visible !important;
           position: relative !important;
           inset: auto !important;
@@ -4697,7 +4706,7 @@ enum DOMAdapters {
           :has([data-vigil-instagram-profile-control="true"]),
           :has([aria-label="Your profile" i])
         ) { order: -1 !important; }
-        [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
+        [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"], [data-vigil-instagram-story-probing="true"] *) {
           display: none !important;
         }
         [data-vigil-instagram-story-slot] img { max-width: 100% !important; }
@@ -9321,7 +9330,7 @@ enum DOMAdapters {
             visibility: hidden !important;
           }
           html[data-vigil-instagram-home-filter="true"] main
-            :is(ul, [role="list"], [aria-label="Stories" i])
+            :is(ul, [role="list"], [aria-label="Stories" i], [data-vigil-instagram-story-probing="true"])
             :is(button, [role="button"]):has(img[alt*="profile picture" i]):not(
               article *, nav *, [role="navigation"] *
             ):not([aria-label="Profile" i]):not([aria-label="Your profile" i]):not(
@@ -9331,7 +9340,16 @@ enum DOMAdapters {
             ):not([data-vigil-instagram-story-relationship="self"]) {
             visibility: hidden !important;
           }
-          [data-vigil-instagram-story-relationship="pending"] {
+          [data-vigil-instagram-story-probing="true"] [data-vigil-instagram-story-relationship]:not(
+            [data-vigil-instagram-story-relationship="self"], [data-vigil-instagram-story-relationship="friend"]
+          ),
+          [data-vigil-instagram-story-probing="true"] [data-vigil-instagram-story-relationship]:not(
+            [data-vigil-instagram-story-relationship="self"], [data-vigil-instagram-story-relationship="friend"]
+          ) * {
+            visibility: hidden !important;
+            pointer-events: none !important;
+          }
+          [data-vigil-instagram-story-relationship="pending"]:not([data-vigil-instagram-story-probing="true"] *) {
             display: none !important;
           }
           [data-vigil-instagram-story-relationship="refreshing"],
@@ -9365,7 +9383,7 @@ enum DOMAdapters {
             visibility: hidden !important;
             pointer-events: none !important;
           }
-          [data-vigil-instagram-story-relationship="other"] {
+          [data-vigil-instagram-story-relationship="other"]:not([data-vigil-instagram-story-probing="true"] *) {
             display: none !important;
           }
           html[data-vigil-instagram-story-gate="pending"] body {
@@ -9376,7 +9394,7 @@ enum DOMAdapters {
             visibility: hidden !important;
             pointer-events: none !important;
           }
-          [data-vigil-instagram-story-relationship="unavailable"] {
+          [data-vigil-instagram-story-relationship="unavailable"]:not([data-vigil-instagram-story-probing="true"] *) {
             display: none !important;
           }
           [data-vigil-instagram-story-rail="true"] {
@@ -9387,7 +9405,7 @@ enum DOMAdapters {
             overflow-x: auto !important;
             overflow-anchor: none !important;
           }
-          [data-vigil-instagram-story-track="true"] {
+          [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-probing="true"], [data-vigil-instagram-story-probing="true"] *) {
             display: flex !important;
             flex-flow: row nowrap !important;
             justify-content: flex-start !important;
@@ -9400,18 +9418,18 @@ enum DOMAdapters {
             padding: 0 !important;
             transition: none !important;
           }
-          [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-rail="true"]),
-          [data-vigil-instagram-story-carrier="true"] {
+          [data-vigil-instagram-story-track="true"]:not([data-vigil-instagram-story-rail="true"], [data-vigil-instagram-story-probing="true"] *),
+          [data-vigil-instagram-story-carrier="true"]:not([data-vigil-instagram-story-probing="true"] *) {
             width: max-content !important;
             min-width: 0 !important;
             max-width: none !important;
             transform: none !important;
             translate: none !important;
           }
-          [data-vigil-instagram-story-track="true"] > :not([data-vigil-instagram-story-slot]) {
+          [data-vigil-instagram-story-track="true"] > :not([data-vigil-instagram-story-slot], [data-vigil-instagram-story-probing="true"] *) {
             display: none !important;
           }
-          [data-vigil-instagram-story-slot] {
+          [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-probing="true"] *) {
             overflow: visible !important;
             position: relative !important;
             inset: auto !important;
@@ -9428,7 +9446,7 @@ enum DOMAdapters {
             :has([data-vigil-instagram-profile-control="true"]),
             :has([aria-label="Your profile" i])
           ) { order: -1 !important; }
-          [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"]) {
+          [data-vigil-instagram-story-slot]:not([data-vigil-instagram-story-slot="visible"], [data-vigil-instagram-story-probing="true"] *) {
             display: none !important;
           }
           [data-vigil-instagram-story-slot] img { max-width: 100% !important; }
@@ -11412,6 +11430,33 @@ enum DOMAdapters {
         });
         storyRailClampFrames.set(rail, frame);
       };
+      let storyRailProbes = new WeakSet();
+      const primeHomeStoryRail = (rail, controls) => {
+        if (!(rail instanceof HTMLElement) || storyRailProbes.has(rail) || controls.length < 2
+            || Math.abs(rail.scrollLeft) > 1) return false;
+        const relationships = controls.map(control => control.dataset.vigilInstagramStoryRelationship);
+        if (relationships.includes('friend') || !relationships.some(state => state === 'other' || state === 'unavailable')) return false;
+        storyRailProbes.add(rail);
+        // Compacting an unread batch of denied accounts can remove all
+        // scroll range before Instagram mounts its watched batch. Give the
+        // native scroller a bounded pass over its leading viewport first.
+        rail.dataset.vigilInstagramStoryProbing = 'true';
+        const distance = Math.min(rail.clientWidth, rail.scrollWidth - rail.clientWidth);
+        const direction = getComputedStyle(rail).direction === 'rtl' ? -1 : 1;
+        const start = rail.scrollLeft;
+        if (distance > 0) rail.scrollTo({ left: start + direction * distance, behavior: 'instant' });
+        // WebKit can defer scroll events for a retained or offscreen tray.
+        // Notify its listener with the measured offset before restoring it.
+        rail.dispatchEvent(new Event('scroll'));
+        setTimeout(() => {
+          if (!touchingStoryRails.has(rail) && instagramRoute() === 'feed') {
+            rail.scrollTo({ left: start, behavior: 'instant' });
+          }
+          delete rail.dataset.vigilInstagramStoryProbing;
+          if (instagramRoute() === 'feed') reconcileFriendsFeed();
+        }, 50);
+        return true;
+      };
       const normalizeHomeStoryRail = (controls = homeStoryControls()) => {
         const isFeed = instagramRoute() === 'feed';
         // Home commonly survives behind Stories; keep its compact layout and
@@ -11421,7 +11466,8 @@ enum DOMAdapters {
         // Do not collapse/rebuild native slots under WebKit's active touch or
         // momentum. Recycled authors are concealed immediately by the classifier;
         // the existing slot geometry lasts until the rail settles.
-        if (rail && movingStoryRails.has(rail)) return;
+        if (rail && (movingStoryRails.has(rail) || rail.dataset.vigilInstagramStoryProbing === 'true')) return;
+        if (primeHomeStoryRail(rail, controls)) return;
         const viewportState = rail instanceof HTMLElement
           ? (Math.abs(rail.scrollLeft) <= 1 ? { atStart: true, scrollLeft: rail.scrollLeft }
             : storyRailViewportStates.get(rail) || lastStoryRailViewportState)
@@ -11511,6 +11557,7 @@ enum DOMAdapters {
           rail.addEventListener('touchend', release, { passive: true });
           rail.addEventListener('touchcancel', release, { passive: true });
           rail.addEventListener('scroll', () => {
+            if (rail.dataset.vigilInstagramStoryProbing === 'true') return;
             rememberStoryRailViewport(rail);
             // WebKit owns momentum and bounds. Writing scrollLeft from every
             // scroll event fights its compositor at the leading edge.
@@ -11676,51 +11723,75 @@ enum DOMAdapters {
       };
       let storySkipTimer = 0;
       let storySkipActivation = false;
-      const navigateVerifiedStory = (path, sequence = readStoryOrder(), deferHome = true) => {
-        clearTimeout(storySkipTimer);
-        const source = location.pathname;
-        const username = validInstagramUsername(path.split('/').filter(Boolean)[1]);
-        const backwards = sequence && sequence.order.indexOf(username) < sequence.order.indexOf(sequence.active);
-        // Use the site's mounted SPA handler, including its exact story ID.
-        // Bare /stories/user/ document reloads can bounce back to Home.
-        let control = username ? [...document.querySelectorAll(
-          'a[href^="/stories/"], [data-vigil-instagram-story-author]'
-        )].find((node) => storyAuthor(node) === username && !node.closest('nav')) : null;
-        if (!control && instagramRoute() === 'story') {
-          const labels = backwards ? ['previous', 'previous story', 'previous photo'] : ['next', 'next story', 'next photo'];
-          control = [...document.querySelectorAll('button, [role="button"]')].find((node) => {
-            if (node.closest('nav, [aria-hidden="true"], [data-vigil-instagram-feed-region], [data-vigil-instagram-story-rail]')
-                || node.matches(':disabled, [aria-disabled="true"]')) return false;
-            const rect = node.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0 && [node, ...node.querySelectorAll('[aria-label]')]
-              .some((label) => labels.includes(String(label.getAttribute('aria-label') || '').trim().toLowerCase()));
-          });
-        }
-        if (control instanceof HTMLElement) {
+      const storyViewerControl = (labels) => {
+        for (const label of document.querySelectorAll('[aria-label]')) {
+          if (!labels.includes(label.getAttribute('aria-label').trim().toLowerCase())) continue;
+          const control = label.closest('button, [role="button"], a[href]');
+          if (!(control instanceof HTMLElement)
+              || control.closest('nav, [aria-hidden="true"], [data-vigil-instagram-feed-region], [data-vigil-instagram-story-rail]')
+              || control.matches(':disabled, [aria-disabled="true"]')) continue;
           const rect = control.getBoundingClientRect();
-          storySkipActivation = true;
-          try {
-            control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window,
-              clientX: rect.left + rect.width * (backwards ? 0.25 : 0.75), clientY: rect.top + rect.height / 2 }));
-          } finally { storySkipActivation = false; }
-          // Give asynchronous router effects a chance to acknowledge the
-          // activation. The pending gate continues concealing rejected media.
-          storySkipTimer = setTimeout(() => {
-            if (location.pathname !== source) return;
-            try { location.replace(path); } catch (_) {}
-          }, 600);
-          return;
+          // The route gate hides the whole body while checking a Story, so
+          // visibility cannot tell us whether its native controls are mounted.
+          if (rect.width > 0 && rect.height > 0) return control;
         }
-        if (instagramRoute() === 'feed' && deferHome && username) {
-          // Home's virtual tray can mount after the route changes. Wait for
-          // its native controls before falling back to a document navigation.
-          document.documentElement.dataset.vigilInstagramStoryGate = 'pending';
-          storySkipTimer = setTimeout(() => {
-            if (location.pathname === source) navigateVerifiedStory(path, sequence, false);
-          }, 600);
-          return;
+        return null;
+      };
+      const activateStoryControl = (control, backwards = false) => {
+        const rect = control.getBoundingClientRect();
+        storySkipActivation = true;
+        // Let Instagram's handler run, but suppress an anchor's default
+        // document navigation if the SPA handler ignores the synthetic click.
+        const cancelDefault = (event) => event.preventDefault();
+        window.addEventListener('click', cancelDefault, { once: true });
+        try {
+          control.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window,
+            clientX: rect.left + rect.width * (backwards ? 0.25 : 0.75), clientY: rect.top + rect.height / 2 }));
+        } finally {
+          window.removeEventListener('click', cancelDefault);
+          storySkipActivation = false;
         }
-        try { location.replace(path); } catch (_) {}
+      };
+      const leaveFilteredStory = () => {
+        cancelStoryContinuation();
+        const close = storyViewerControl(['close', 'close story', 'close stories']);
+        const home = document.querySelector('nav a[href="/"], a[href="/"]:has(svg[aria-label="Home" i])');
+        const source = location.href;
+        if (close) activateStoryControl(close);
+        if (location.href !== source) return;
+        // A mounted Home link can recover even if Instagram has already
+        // removed the Story viewer. A cold deep link has no SPA exit to invoke.
+        storySkipTimer = setTimeout(() => {
+          if (location.href !== source) return;
+          if (home instanceof HTMLElement && home.isConnected) home.click();
+          else {
+            try { location.replace('/'); } catch (_) {}
+          }
+        }, close ? 500 : 0);
+      };
+      const skipFilteredStory = (username) => {
+        const sequence = readStoryOrder();
+        clearTimeout(storySkipTimer);
+        const source = location.href;
+        const current = sequence?.order.indexOf(username) ?? -1;
+        const backwards = current >= 0 && current < sequence.order.indexOf(sequence.active);
+        const labels = backwards ? ['previous', 'previous story', 'previous photo'] : ['next', 'next story', 'next photo'];
+        const advance = (waitForViewer) => {
+          if (location.href !== source) return;
+          const control = storyViewerControl(labels);
+          if (!control && waitForViewer) {
+            storySkipTimer = setTimeout(() => advance(false), 150);
+            return;
+          }
+          if (!control) { leaveFilteredStory(); return; }
+          activateStoryControl(control, backwards);
+          // Every actual route reached by Instagram is checked independently.
+          // Never construct a creator URL when the native player stalls.
+          storySkipTimer = setTimeout(() => {
+            if (location.href === source) leaveFilteredStory();
+          }, 600);
+        };
+        advance(true);
       };
       const reconcileStoryPanels = () => {
         const active = instagramRoute() === 'story'
@@ -11788,19 +11859,32 @@ enum DOMAdapters {
           return pending;
         } catch (_) { return null; }
       };
-      const resumeStoryContinuation = async () => {
+      const resumeStoryContinuation = () => {
         if (instagramRoute() !== 'feed') return;
         const pending = readStoryContinuation();
         if (!pending) return;
         cancelStoryContinuation();
         const generation = storyContinuationGeneration;
-        const next = await nextVerifiedStoryPath('', pending);
-        if (!next || generation !== storyContinuationGeneration || instagramRoute() !== 'feed') return;
-        // The Home scan may already have reset active; retain this traversal
-        // snapshot across the full-document hop to the next verified account.
-        saveStoryOrder({ viewer: pending.viewer, order: pending.order,
-          active: pending.active, savedAt: Date.now() });
-        navigateVerifiedStory(next, pending);
+        const upcoming = pending.order.slice(pending.order.indexOf(pending.active) + 1);
+        if (!upcoming.length) return;
+        // Keep Home visible while its native tray hydrates. A creator name
+        // alone does not identify a playable Story or its next unread frame.
+        const activateMounted = (retry) => {
+          if (generation !== storyContinuationGeneration || instagramRoute() !== 'feed') return;
+          const mounted = new Map(homeStoryControls().filter(node =>
+            node.dataset.vigilInstagramStoryRelationship === 'friend'
+          ).map(node => [storyAuthor(node), node]));
+          for (const username of upcoming) {
+            const control = mounted.get(username);
+            if (control instanceof HTMLElement
+                && (isInformationalAccount(username) || friendshipCache.get(username) === true)) {
+              activateStoryControl(control);
+              return;
+            }
+          }
+          if (retry) storyContinuationTimer = setTimeout(() => activateMounted(false), 600);
+        };
+        activateMounted(true);
       };
       const armStoryContinuation = () => {
         if (window.__vigilInstagramSharedItem?.isPinnedStory()) return;
@@ -11881,25 +11965,6 @@ enum DOMAdapters {
         if (!saved || !saved.order.includes(username) || saved.active === username) return;
         saved.active = username;
         saveStoryOrder(saved);
-      };
-      const nextVerifiedStoryPath = async (username, sequence = null) => {
-        const saved = sequence || readStoryOrder();
-        if (!saved) return '';
-        const current = saved.order.indexOf(username);
-        const previous = saved.order.indexOf(saved.active);
-        if (previous < 0 || current === previous) return '';
-        // Instagram may advance to an account outside the mounted virtual row.
-        // In that case resume after the last verified account we actually saw.
-        const direction = current >= 0 && current < previous ? -1 : 1;
-        const start = current >= 0 ? current : previous;
-        for (let index = start + direction; index >= 0 && index < saved.order.length; index += direction) {
-          const path = `/stories/${saved.order[index]}/`;
-          // Sequence membership is never permission. Only the existing
-          // viewer-scoped mutual-friend verifier can authorize a destination.
-          if (hasKnownStoryAccess(new URL(path, location.href))) return path;
-          if (await canViewAccount(saved.order[index]) === true) return path;
-        }
-        return '';
       };
       const homeFeedRegionHeights = new WeakMap();
       const homeFeedRegionMembers = new WeakMap();
@@ -12107,14 +12172,13 @@ enum DOMAdapters {
           delete document.documentElement.dataset.vigilInstagramStoryGate;
           return;
         }
-        const nextPath = await nextVerifiedStoryPath(username);
-        if (generation !== storyAccessGeneration || location.pathname.toLowerCase() !== path) return;
         redirectedStoryPath = path;
-        navigateVerifiedStory(nextPath || '/');
+        skipFilteredStory(username);
       };
       const reconcileFriendsFeed = () => withHomeScrollAnchor(() => {
         const isFeed = instagramRoute() === 'feed';
         if (!isFeed) {
+          if (document.documentElement.dataset.vigilInstagramHomeFilter === 'true') storyRailProbes = new WeakSet();
           clearTimeout(storyRelationshipFlushTimer);
           storyRelationshipFlushTimer = 0;
           // Classified Home cards remain fail-closed on the nodes themselves

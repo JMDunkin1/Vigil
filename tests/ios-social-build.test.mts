@@ -401,12 +401,12 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const reconcileStoryRoute[\s\S]*?vigilInstagramStoryGate = 'pending'[\s\S]*?canViewAccount\(username\)[\s\S]*?generation !== storyAccessGeneration[\s\S]*?navigateVerifiedStory\(nextPath \|\| '\/'\)/u,
+  /const reconcileStoryRoute[\s\S]*?vigilInstagramStoryGate = 'pending'[\s\S]*?canViewAccount\(username\)[\s\S]*?generation !== storyAccessGeneration[\s\S]*?skipFilteredStory\(username\)/u,
   "Stories must remain concealed until the route author is self, a confirmed mutual friend, or an explicitly allowed informational account"
 );
 assert.match(instagramStableAdapterSource,
-  /const nextVerifiedStoryPath[\s\S]*?current < previous \? -1 : 1[\s\S]*?hasKnownStoryAccess\(new URL\(path, location.href\)\)/u,
-  "Story traversal must skip filtered accounts in the navigation direction without authorizing them");
+  /const skipFilteredStory[\s\S]*?const backwards = current >= 0 && current < sequence.order.indexOf\(sequence.active\)[\s\S]*?activateStoryControl\(control, backwards\)/u,
+  "Story traversal must use Instagram's native controls in the navigation direction");
 assert.match(instagramStableAdapterSource,
   /data-vigil-instagram-feed-region="closed"[\s\S]*?content-visibility: hidden !important[\s\S]*?const reconcileHomeFeedRegions[\s\S]*?protectedControls[\s\S]*?if \(hasVerifiedPost\)[\s\S]*?vigilInstagramFeedRegion = 'open'[\s\S]*?vigilInstagramFeedRegion = 'refreshing'[\s\S]*?vigilInstagramFeedRegion = 'closed'/u,
   "empty feed containers must remain collapsed across recycled posts while keeping profile/story controls outside");
@@ -440,7 +440,7 @@ assert.match(instagramStableAdapterSource,
   /const storyForwardControl[\s\S]*?hasKnownStoryAccess[\s\S]*?root === dialog[\s\S]*?storyFrameKey\(touch.media\) !== touch.frameKey[\s\S]*?clientX: rect.left \+ rect.width \* 0.75/u,
   "right-side Story taps must activate the foreground native Next once with real right-side coordinates");
 assert.match(instagramStableAdapterSource,
-  /data-vigil-instagram-story-relationship="pending"\] \{\s*display: none !important/u,
+  /data-vigil-instagram-story-relationship="pending"\]:not\([^\n]+\) \{\s*display: none !important/u,
   "unresolved Stories must not create invisible scrollable gaps");
 assert.match(instagramStableAdapterSource,
   /home-filter="true"\] :is\(article, \[role="article"\]\)[\s\S]*?const homeCards[\s\S]*?homeCards\(\)\.forEach\(classifyHomeCard\)/u,
