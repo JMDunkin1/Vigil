@@ -950,7 +950,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func reload(_ service: SocialService) {
         health[service] = .loading
         setSurface(.unknown, for: service)
-        webView(for: service).reload()
+        let webView = webView(for: service)
+        if service == .youtube {
+            webView.reloadFromOrigin()
+        } else {
+            webView.reload()
+        }
     }
 
     func retry(_ service: SocialService) {

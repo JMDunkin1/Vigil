@@ -10,15 +10,20 @@ const root = existsSync(join(runtimeRoot, 'ios')) ? runtimeRoot : resolve(runtim
 const source = await readFile(join(root,'ios/VigilSocial/VigilSocial/DOMAdapters.swift'),'utf8');
 const begin=source.indexOf('      const healthContentSelector = [');
 const end=source.indexOf('      const elementsWithin',begin);
-function fixture(pathname='/') {
+function fixture(pathname='/', playerControlsVisible = false) {
   let now=10000, gated=true, visible=true;
   const reports:{type:string;state?:string;detail?:string;blocksRefresh?:boolean;refreshEligible?:boolean}[]=[];
   const root={dataset:{},hasAttribute:()=>gated,getAttribute:()=>null};
   const screen={};
+  const controls={};
   const api=runInNewContext(source.slice(begin,end)+'\n({reportHealth,reportSurface})',{
-    document:{documentElement:root,body:{innerText:''},fullscreenElement:null,querySelectorAll:(selector:string)=>selector.includes('#vigil-youtube-finished')?[screen]:[]},
+    document:{documentElement:root,body:{innerText:''},fullscreenElement:null,querySelectorAll:(selector:string)=>{
+      if (selector.includes('#vigil-youtube-finished')) return [screen];
+      if (selector.includes('.html5-video-player .ytp-large-play-button')) return [controls];
+      return [];
+    }},
     location:{pathname,search:''},Date:{now:()=>now},
-    visibleElement:()=>visible,mainVideo:()=>null,
+    visibleElement:(element:object)=>element === controls ? playerControlsVisible : visible,mainVideo:()=>null,
     window:{__vigilBridge:(report:typeof reports[number])=>reports.push(report)},
     setTimeout:()=>1,clearTimeout:()=>{}
   });
@@ -46,4 +51,15 @@ test('a completion screen appearing after the blank-page error clears the recove
   assert.equal(f.reports.at(-1)?.state,'degraded');
   f.show();f.api.reportHealth();
   assert.equal(f.reports.at(-1)?.state,'ready');
+});
+
+test('visible watch controls are usable while the video is concealed', () => {
+  for (const controlsVisible of [true, false]) {
+    const f = fixture('/watch', controlsVisible);
+    f.leave();
+    f.api.reportHealth();
+    f.advance();
+    f.api.reportHealth();
+    assert.equal(f.reports.at(-1)?.state, controlsVisible ? 'ready' : 'degraded');
+  }
 });

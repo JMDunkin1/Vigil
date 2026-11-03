@@ -8943,9 +8943,14 @@ enum DOMAdapters {
         'ytm-watch, ytd-watch-flexy, [page-subtype="watch"]';
       const youtubePlayerSelector =
         'ytm-player, ytd-player, #player-container-id, #player';
+      // Mobile YouTube can render its controls in the player independently
+      // of the watch container and the video awaiting a safety verdict.
+      const youtubePlayerControlsSelector =
+        '.html5-video-player .ytp-chrome-bottom, .html5-video-player .ytp-large-play-button, '
+        + 'ytm-player-control-overlay-renderer';
       const healthVisibilitySelector = `${healthContentSelector}, `
         + `${youtubeTopbarSelector}, ${youtubeNavigationSelector}, `
-        + `${youtubeWatchSelector}, ${youtubePlayerSelector}, `
+        + `${youtubeWatchSelector}, ${youtubePlayerSelector}, ${youtubePlayerControlsSelector}, `
         + '#vigil-youtube-finished, a[href*="accounts.google.com"], a[href*="ServiceLogin"], a[href*="/signin"]';
       const firstVisibleYouTubeElement = (selector, maximum = 96) => {
         let inspected = 0;
@@ -9029,6 +9034,7 @@ enum DOMAdapters {
           ? mainVideo()
             || firstVisibleYouTubeElement(youtubePlayerSelector)
             || firstVisibleYouTubeElement(youtubeWatchSelector)
+            || firstVisibleYouTubeElement(youtubePlayerControlsSelector)
           : firstVisibleYouTubeElement(healthContentSelector);
         const usableEmptyBrowseShell = (
           route === 'subscriptions'
