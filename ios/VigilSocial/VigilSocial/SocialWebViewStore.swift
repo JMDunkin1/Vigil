@@ -221,7 +221,7 @@ final class SocialContainerStore: ObservableObject {
         guard migrationReady, service != .instagram, !preferences.isBlocked(for: service),
               id == nil || accounts(for: service).contains(where: { $0.id == id }),
               id != selectedAccountID(for: service) else { return }
-        stores[service]?.suspendAllMedia(relinquishExternalPlayback: true)
+        stores[service]?.leaveService(relinquishExternalPlayback: true)
         preferences.selectAccount(id, for: service)
         stores.removeValue(forKey: service)
         // Cookie containers change; the single YouTube ledger remains shared.
@@ -276,7 +276,7 @@ final class SocialContainerStore: ObservableObject {
         guard migrationReady else { return }
         guard isCombined || service == initialService else { return }
         guard !preferences.isBlocked(for: service) else { enforceRestrictions(); return }
-        if let previous = selectedService, previous != service { stores[previous]?.suspendAllMedia(relinquishExternalPlayback: false) }
+        if let previous = selectedService, previous != service { stores[previous]?.leaveService() }
         let next = store(for: service)
         next.requestFreshServiceAccessReceipt()
         selectedService = service
@@ -295,7 +295,7 @@ final class SocialContainerStore: ObservableObject {
 
     func showHome() {
         guard isCombined else { return }
-        stores.values.forEach { $0.suspendAllMedia(relinquishExternalPlayback: false) }
+        stores.values.forEach { $0.leaveService() }
         InstagramExternalPlaybackPolicy.relinquish()
         selectedService = nil
         finishLaunchHandoff()
@@ -1002,6 +1002,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     func pauseAllMedia() {
         stopYouTubeExternalPlayback()
         managedWebViews.forEach { $0.evaluateJavaScript("window.__vigilPauseAllMedia?.();") }
+    }
+
+    func leaveService(relinquishExternalPlayback: Bool = false) {
+        suspendAllMedia(relinquishExternalPlayback: relinquishExternalPlayback)
+        // Invalidate any scene or focus work waiting on the outgoing page.
+        playbackServiceIsVisible = false
+        sceneActivityGeneration &+= 1
+        for webView in managedWebViews {
+            webView.endEditing(true)
+            webView.closeAllMediaPresentations(completionHandler: nil)
+        }
     }
 
     func suspendAllMedia(relinquishExternalPlayback: Bool = true) {

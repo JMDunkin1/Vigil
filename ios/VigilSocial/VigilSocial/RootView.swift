@@ -290,6 +290,7 @@ struct SocialLaunchScreen: View {
             mark
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Opening \(service.displayName)")
         .accessibilityIdentifier("social-splash-\(service.rawValue)")
