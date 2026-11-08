@@ -462,6 +462,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var snapchatStickerInProgress = false
     private var snapchatStickerLibrary: SnapchatStickerLibrary?
     private(set) var linkedInApplePopup: LinkedInApplePopupController?
+    private var instagramCallPopup: InstagramCallPopupController?
+    private var instagramCallAccessMonitor: Task<Void, Never>?
     var openSocialLink: ((URL) -> Void)?
     var accessRestriction: (() -> Bool)?
     private let mediaClassificationDeadlineNanoseconds: UInt64
@@ -482,7 +484,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var permittedYouTubeVideoFrameCheckTimes: [String: TimeInterval] = [:]
 
     private var managedWebViews: [WKWebView] {
-        Array(webViews.values)
+        Array(webViews.values) + (instagramCallPopup.map { [$0.webView] } ?? [])
     }
 
     private static let maximumConcurrentMediaClassifications = 4
@@ -832,6 +834,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
         } else if service == .x {
             configuration.applicationNameForUserAgent = XWebCompatibility.safariApplicationNameSuffix
+        } else if service == .instagram {
+            // WKWebView omits Safari's token; Meta's call capability detector
+            // recognizes Mobile Safari explicitly. Keep the real mobile UA.
+            configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
         }
 
         let webView = service == .instagram
@@ -945,6 +951,9 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         defaults.set(enabled, forKey: audioPreferenceKey(service))
         let literal = enabled ? "true" : "false"
         webViews[service]?.evaluateJavaScript("window.__vigilSetAudioPreference?.(\(literal));")
+        if service == .instagram {
+            instagramCallPopup?.webView.evaluateJavaScript("window.__vigilSetAudioPreference?.(\(literal));")
+        }
     }
 
     func reload(_ service: SocialService) {
@@ -1005,6 +1014,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func leaveService(relinquishExternalPlayback: Bool = false) {
+        instagramCallPopup?.close()
         suspendAllMedia(relinquishExternalPlayback: relinquishExternalPlayback)
         // Invalidate any scene or focus work waiting on the outgoing page.
         playbackServiceIsVisible = false
@@ -1016,6 +1026,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func suspendAllMedia(relinquishExternalPlayback: Bool = true) {
+        instagramCallPopup?.suspendCapture()
+        if accessRestriction?() == true || !playbackServiceIsVisible
+            || instagramSuggestedReelsBlocked
+            || UIApplication.shared.applicationState == .background {
+            instagramCallPopup?.close()
+        }
         managedWebViews.forEach { SocialNotifications.shared.invalidateWebAlerts(in: $0) }
         stopYouTubeExternalPlayback()
         externalPlaybackMayRelinquish = SocialMediaSuspensionPolicy.relinquishesGlobalAudio(
@@ -1097,6 +1113,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         managedWebViews.forEach { webView in
             webView.setAllMediaPlaybackSuspended(false) { [weak self, weak webView] in
                 guard let self, let webView, !self.mediaPlaybackIsSuspended else { return }
+                if self.instagramCallPopup?.webView === webView { self.instagramCallPopup?.resumeCapture() }
                 webView.evaluateJavaScript("window.__vigilResumeSuspendedMedia?.();")
             }
         }
@@ -2652,6 +2669,13 @@ extension SocialWebViewStore: WKNavigationDelegate {
         let isIncomingInstagramShare = service == .instagram
             && navigationAction.navigationType == .other && instagramPendingIncomingURL == url
 
+        if service == .instagram, navigationAction.targetFrame == nil,
+           navigationAction.sourceFrame.isMainFrame,
+           InstagramCallPolicy.allowsPopupStart(url, from: webView.url) {
+            decisionHandler(.allow, preferences)
+            return
+        }
+
         if service == .linkedin, navigationAction.targetFrame == nil,
            navigationAction.sourceFrame.isMainFrame,
            LinkedInAppleAuthentication.allowsPopupStart(url, from: webView.url) {
@@ -3130,6 +3154,12 @@ extension SocialWebViewStore: WKUIDelegate {
         for navigationAction: WKNavigationAction,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
+        if service(for: webView) == .instagram, navigationAction.targetFrame == nil,
+           navigationAction.sourceFrame.isMainFrame,
+           let url = navigationAction.request.url,
+           InstagramCallPolicy.allowsPopupStart(url, from: webView.url) {
+            return makeInstagramCallPopup(configuration: configuration, opener: webView)
+        }
         if service(for: webView) == .linkedin, navigationAction.targetFrame == nil,
            navigationAction.sourceFrame.isMainFrame,
            let url = navigationAction.request.url,
@@ -3151,6 +3181,73 @@ extension SocialWebViewStore: WKUIDelegate {
         return nil
     }
 
+    private func makeInstagramCallPopup(configuration: WKWebViewConfiguration, opener: WKWebView) -> WKWebView? {
+        guard fixedService == .instagram, instagramCallPopup == nil,
+              instagramCallsAllowed, let origin = opener.url?.host?.lowercased(),
+              var presenter = opener.window?.rootViewController else { return nil }
+        while let presented = presenter.presentedViewController { presenter = presented }
+        let popup = InstagramCallPopupController(configuration: configuration, originHost: origin,
+                                               audioEnabled: audioEnabled(for: .instagram))
+        popup.accessAllowed = { [weak self] in self?.instagramCallsAllowed == true }
+        popup.onClose = { [weak self] in
+            self?.instagramCallAccessMonitor?.cancel()
+            self?.instagramCallAccessMonitor = nil
+            self?.instagramCallPopup = nil
+        }
+        instagramCallPopup = popup
+        monitorInstagramCall(popup)
+        presenter.present(popup, animated: true)
+        // Return the actual child window: Meta asynchronously assigns its call
+        // URL and exchanges initialization with window.opener.
+        return popup.webView
+    }
+
+    private func monitorInstagramCall(_ popup: InstagramCallPopupController) {
+        instagramCallAccessMonitor?.cancel()
+        instagramCallAccessMonitor = Task { @MainActor [weak self, weak popup] in
+            while !Task.isCancelled {
+                guard let self, let popup, self.instagramCallPopup === popup else { return }
+                guard self.playbackServiceIsVisible, self.accessRestriction?() != true,
+                      !self.instagramSuggestedReelsBlocked,
+                      UIApplication.shared.applicationState != .background else {
+                    popup.close(); return
+                }
+                if UIApplication.shared.applicationState == .active {
+                    if self.playbackIsBackgrounded {
+                        await self.handleSceneActivity(true, isServiceVisible: true)
+                    }
+                    // A full-screen UIKit child may cover the SwiftUI view
+                    // that normally refreshes access. Keep that same live
+                    // policy probe fresh throughout the call independently.
+                    let age = ProcessInfo.processInfo.systemUptime - (self.lastConfirmedServiceAccess ?? 0)
+                    if self.mediaPlaybackIsSuspended || age >= 5 {
+                        let allowed = await self.confirmServiceAccess()
+                        guard !Task.isCancelled, self.instagramCallPopup === popup else { return }
+                        guard UIApplication.shared.applicationState == .active,
+                              self.playbackServiceIsVisible, !self.playbackIsBackgrounded else {
+                            self.suspendAllMedia(relinquishExternalPlayback: false)
+                            continue
+                        }
+                        guard allowed, self.accessRestriction?() != true else {
+                            self.suspendAllMedia(relinquishExternalPlayback: false)
+                            popup.close(); return
+                        }
+                        self.resumeSuspendedMedia()
+                    }
+                } else {
+                    self.suspendAllMedia(relinquishExternalPlayback: false)
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
+
+    private var instagramCallsAllowed: Bool {
+        fixedService == .instagram && playbackServiceIsVisible && !playbackIsBackgrounded
+            && !mediaPlaybackIsSuspended && hasRecentConfirmedAccess
+            && !instagramSuggestedReelsBlocked && accessRestriction?() != true
+    }
+
     func makeLinkedInApplePopup(configuration: WKWebViewConfiguration, opener: WKWebView, url: URL) -> WKWebView? {
         guard fixedService == .linkedin, linkedInApplePopup == nil,
               LinkedInAppleAuthentication.allowsPopupStart(url, from: opener.url),
@@ -3163,6 +3260,157 @@ extension SocialWebViewStore: WKUIDelegate {
         // WebKit loads the supplied request itself and retains window.opener.
         // Replaying it in the main web view loses Apple's web_message reply.
         return popup.webView
+    }
+}
+
+@MainActor
+final class InstagramCallPopupController: UIViewController, WKNavigationDelegate, WKUIDelegate {
+    let webView: WKWebView
+    private let originHost: String
+    var accessAllowed: (() -> Bool)?
+    var onClose: (() -> Void)?
+    private var closing = false
+    private var enteredCall = false
+    private var documentGeneration: UInt64 = 0
+    private var resumeMicrophone = false
+    private var resumeCamera = false
+
+    init(configuration: WKWebViewConfiguration, originHost: String, audioEnabled: Bool) {
+        self.originHost = originHost
+        // Use WebKit's configuration and data store to retain the opener and
+        // signed-in session. This confined window has no native message bridge.
+        let scripts = WKUserContentController()
+        scripts.addUserScript(WKUserScript(source: DOMAdapters.instagramCallAudioBootstrap
+            + DOMAdapters.instagramCallPresentation + DOMAdapters.instagramCallMediaControls(audioEnabled: audioEnabled),
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
+        configuration.userContentController = scripts
+        configuration.allowsInlineMediaPlayback = true
+        configuration.allowsAirPlayForMediaPlayback = false
+        configuration.allowsPictureInPictureMediaPlayback = false
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.defaultWebpagePreferences.preferredContentMode = .mobile
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init(nibName: nil, bundle: nil)
+        webView.navigationDelegate = self
+        webView.uiDelegate = self
+        webView.allowsLinkPreview = false
+        modalPresentationStyle = .fullScreen
+        isModalInPresentation = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .systemBackground
+        let bar = UINavigationBar()
+        let item = UINavigationItem(title: "Instagram call")
+        item.rightBarButtonItem = UIBarButtonItem(title: "End call", style: .plain, target: self, action: #selector(close))
+        bar.items = [item]
+        for child in [bar, webView] { child.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(child) }
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: view.leadingAnchor), bar.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: bar.bottomAnchor), webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor), webView.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor)
+        ])
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard !closing, accessAllowed?() == true, let url = action.request.url,
+              action.targetFrame?.isMainFrame == true else { decisionHandler(.cancel); return }
+        if !enteredCall && url.absoluteString == "about:blank" { decisionHandler(.allow); return }
+        guard InstagramCallPolicy.isCallURL(url), url.host?.lowercased() == originHost else {
+            decisionHandler(.cancel); return
+        }
+        enteredCall = true
+        decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        documentGeneration &+= 1
+    }
+
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                 decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        let document = webView.url
+        let generation = documentGeneration
+        guard !closing, accessAllowed?() == true, frame.isMainFrame,
+              origin.protocol == "https", origin.port == 0 || origin.port == 443,
+              origin.host.lowercased() == originHost,
+              document?.host?.lowercased() == originHost,
+              InstagramCallPolicy.isCallURL(document), frame.request.url == document else {
+            decisionHandler(.deny); return
+        }
+        Task { [weak self, weak webView] in
+            let permitted = await SnapchatMediaPolicy.authorizeCapture(type,
+                status: { AVCaptureDevice.authorizationStatus(for: $0) },
+                request: { await AVCaptureDevice.requestAccess(for: $0) })
+            // A system permission sheet temporarily inactivates the scene.
+            // Wait for the existing foreground policy check to finish rather
+            // than granting while suspended or rejecting a successful prompt.
+            if permitted {
+                for _ in 0..<50 {
+                    guard let self, let webView, !self.closing, webView.url == document,
+                          self.documentGeneration == generation,
+                          UIApplication.shared.applicationState != .background else { break }
+                    if self.accessAllowed?() == true { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+            }
+            guard permitted, let self, let webView, !self.closing,
+                  self.accessAllowed?() == true, webView.url == document,
+                  self.documentGeneration == generation else {
+                decisionHandler(.deny); return
+            }
+            decisionHandler(.grant)
+        }
+    }
+
+    func webViewDidClose(_ webView: WKWebView) { close() }
+
+    func suspendCapture() {
+        if webView.microphoneCaptureState == .active {
+            resumeMicrophone = true
+            webView.setMicrophoneCaptureState(.muted, completionHandler: nil)
+        }
+        if webView.cameraCaptureState == .active {
+            resumeCamera = true
+            webView.setCameraCaptureState(.muted, completionHandler: nil)
+        }
+    }
+
+    func resumeCapture() {
+        guard !closing, accessAllowed?() == true else { return }
+        if resumeMicrophone, webView.microphoneCaptureState == .muted {
+            webView.setMicrophoneCaptureState(.active, completionHandler: nil)
+        }
+        if resumeCamera, webView.cameraCaptureState == .muted {
+            webView.setCameraCaptureState(.active, completionHandler: nil)
+        }
+        resumeMicrophone = false
+        resumeCamera = false
+    }
+
+    @objc func close() {
+        guard !closing else { return }
+        closing = true
+        webView.setMicrophoneCaptureState(.none, completionHandler: nil)
+        webView.setCameraCaptureState(.none, completionHandler: nil)
+        webView.setAllMediaPlaybackSuspended(true, completionHandler: nil)
+        webView.stopLoading()
+        webView.evaluateJavaScript("window.close()") { [webView] _, _ in
+            // Tear down the document even when the site could not close its
+            // window. The confined navigation delegate must not cancel this
+            // native cleanup and retain the peer connection after dismissal.
+            webView.navigationDelegate = nil
+            webView.uiDelegate = nil
+            webView.loadHTMLString("", baseURL: nil)
+        }
+        dismiss(animated: true)
+        onClose?()
     }
 }
 

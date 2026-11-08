@@ -11,6 +11,7 @@ struct SnapchatCallScenario: Decodable {
         let focus: Bool?
     }
     let name: String
+    let baseURL: String?
     let html: String
     let steps: [Step]
 }
@@ -49,10 +50,15 @@ struct SnapchatCallScenario: Decodable {
                 window.title = "Vigil · local Snapchat call regression"
                 window.isReleasedWhenClosed = false
                 window.contentView = page
-                window.makeKeyAndOrderFront(nil)
+                // WebKit needs an ordered window for animation/layout, but
+                // automation must neither appear nor acquire keyboard focus.
+                window.alphaValue = 0
+                window.ignoresMouseEvents = true
+                window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+                window.orderBack(nil)
                 await withCheckedContinuation { continuation in
                     self.continuation = continuation
-                    page.loadHTMLString(scenario.html, baseURL: URL(string: "https://www.snapchat.com/web/")!)
+                    page.loadHTMLString(scenario.html, baseURL: URL(string: scenario.baseURL ?? "https://www.snapchat.com/web/")!)
                 }
                 for (index, step) in scenario.steps.enumerated() {
                     if let width = step.width {
@@ -60,11 +66,8 @@ struct SnapchatCallScenario: Decodable {
                         page.frame.size = NSSize(width: width, height: step.height ?? 780)
                     }
                     if step.focus == true {
-                        NSApplication.shared.activate(ignoringOtherApps: true)
-                        window.makeKeyAndOrderFront(nil)
-                        window.makeFirstResponder(page)
-                        try await Task.sleep(for: .milliseconds(50))
-                        _ = try await page.evaluateJavaScript("document.querySelector('[contenteditable]')?.focus(); true")
+                        throw NSError(domain: "VigilBackgroundTest", code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "Interactive focus tests require a separate, explicitly requested run"])
                     }
                     if let action = step.action { _ = try await page.evaluateJavaScript(action + ";true") }
                     if let condition = step.condition {

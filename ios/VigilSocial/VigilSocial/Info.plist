@@ -44,7 +44,7 @@
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>NSCameraUsageDescription</key>
-    <string>Use the camera when you choose to capture a photo or video in $(SOCIAL_APP_NAME).</string>
+    <string>Use the camera when you choose to capture a photo or video, or join a video call in $(SOCIAL_APP_NAME).</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Use the microphone when you choose voice search, recording, or calling in $(SOCIAL_APP_NAME).</string>
     <key>NSPhotoLibraryUsageDescription</key>

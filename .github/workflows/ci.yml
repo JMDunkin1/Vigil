@@ -77,6 +77,10 @@ jobs:
         timeout-minutes: 3
         run: node scripts/test-snapchat-calls-webkit.mjs
 
+      - name: Test Instagram call media, audio controls, and confinement
+        timeout-minutes: 3
+        run: node scripts/test-instagram-calls-webkit.mjs
+
       - name: Test Snapchat received video playback and source changes
         timeout-minutes: 3
         run: node scripts/test-snapchat-video-webkit.mjs

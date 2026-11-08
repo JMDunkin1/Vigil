@@ -11,7 +11,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = await readFile(process.argv[2] || join(root, 'ios/VigilSocial/VigilSocial/DOMAdapters.swift'), 'utf8');
 const tests = await readFile(join(root, 'ios/VigilSocial/VigilSocialTests/VigilSocialTests.swift'), 'utf8');
 const extract = (s,n) => s.match(new RegExp(`(?:private )?static let ${n} = #"""([\\s\\S]*?)"""#`))?.[1];
-const html = extract(tests,'snapchatMobileShellFixture') + extract(tests,'snapchatCallFixture');
+// Silence physical output without muting the production preference/gate path.
+// The receiver analyser still measures actual decoded WebRTC samples.
+const html = (extract(tests,'snapchatMobileShellFixture') + extract(tests,'snapchatCallFixture'))
+  .replace('media.autoplay=true;', 'media.autoplay=true;media.volume=0;')
+  .replace("video.srcObject=stream;await video.play()", "video.volume=0;video.srcObject=stream;await video.play()");
 const adapter = extract(source,'snapchatMobileLayout');
 assert.ok(adapter && html.includes('fixtureOpenCall'));
 const gate=source.match(/static func earlyMediaGate\([\s\S]*?return #"""([\s\S]*?)"""#/u)?.[1];
@@ -38,10 +42,26 @@ for(const width of [320,390,430]) for(const kind of ['hpge3','Rnl06','PvwWu']) {
 }
 steps.push({action:'fixtureCloseCall();fixtureOpenCall("Rnl06");fixtureStartLoopback().then(()=>fixtureLoopbackResult()).then(r=>window.loopbackResult=r).catch(e=>window.loopbackError=String(e))',
   condition:'window.loopbackResult?.energy>.005 && !loopbackResult.paused && !loopbackResult.muted && loopbackResult.videoWidth===320 && loopbackResult.videoHeight===480',snapshot:'call-phone'});
+steps.push({action:`window.fixtureContinuity={pauses:0,waiting:0};
+  fixtureLoopback.media.addEventListener('pause',()=>fixtureContinuity.pauses++);
+  fixtureLoopback.media.addEventListener('waiting',()=>fixtureContinuity.waiting++);
+  window.fixtureMoveDone=false;
+  (async()=>{for(let i=0;i<8;i++){
+    const shell=document.createElement('div');document.body.append(shell);
+    shell.append(fixtureLoopback.media);
+    await new Promise(r=>setTimeout(r,80));
+    document.body.append(fixtureLoopback.media);shell.remove();
+    await new Promise(r=>setTimeout(r,80));
+  }fixtureMoveDone=true;})()`,
+  condition:'fixtureMoveDone && fixtureContinuity.pauses===0 && !fixtureLoopback.media.paused && !fixtureLoopback.media.muted'});
 steps.push({action:'__vigilEarlyMediaGate.setAudioPreference(false)',
   condition:'fixtureLoopback.media.muted && fixtureLoopback.context.state==="suspended"'});
 steps.push({action:'__vigilEarlyMediaGate.setAudioPreference(true)',
   condition:'!fixtureLoopback.media.muted && fixtureLoopback.context.state==="running"'});
+steps.push({action:'fixtureCallPolicy="blocked";document.body.append(fixtureLoopback.media)',
+  condition:'fixtureLoopback.media.paused && fixtureLoopback.media.muted && fixtureLoopback.context.state==="suspended"'});
+steps.push({action:'fixtureCallPolicy="safe";fixtureLoopback.media.play();fixtureLoopback.context.resume()',
+  condition:'!fixtureLoopback.media.paused && !fixtureLoopback.media.muted && fixtureLoopback.context.state==="running"'});
 steps.push({action:'fixtureCallPolicy="blocked";__vigilEarlyMediaGate.hold(fixtureLoopback.media,false,true);__vigilEarlyMediaGate.suspendAudioContexts(true);fixtureLoopback.media.play();fixtureLoopback.context.resume()',
   condition:'fixtureLoopback.media.paused && fixtureLoopback.media.muted && fixtureLoopback.context.state==="suspended"'});
 steps.push({action:'fixtureStopLoopback();document.querySelector("._XMCw").style.gridTemplateRows="minmax(0,1fr) minmax(0,1fr)"',condition:'fixtureCallGeometry().height>=779'});

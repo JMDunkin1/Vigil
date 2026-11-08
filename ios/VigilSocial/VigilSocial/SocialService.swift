@@ -77,6 +77,32 @@ enum TikTokWebCompatibility {
     }
 }
 
+enum InstagramCallPolicy {
+    // Meta's XPolarisCallControllerRouteBuilder owns this URL and all call
+    // parameters. Vigil never manufactures signalling IDs or call requests.
+    static func isCallURL(_ url: URL?) -> Bool {
+        guard let url, let parts = secureComponents(url) else { return false }
+        return parts.percentEncodedPath == "/call/"
+    }
+
+    static func allowsPopupStart(_ url: URL, from opener: URL?) -> Bool {
+        guard let opener, let parts = secureComponents(opener),
+              parts.percentEncodedPath.hasPrefix("/direct/") else { return false }
+        if url.absoluteString == "about:blank" { return true }
+        guard secureComponents(url)?.host?.lowercased() == parts.host?.lowercased() else { return false }
+        return isCallURL(url)
+    }
+
+    private static func secureComponents(_ url: URL) -> URLComponents? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme?.lowercased() == "https", parts.port == nil || parts.port == 443,
+              parts.user == nil, parts.password == nil,
+              ["instagram.com", "www.instagram.com"].contains(parts.host?.lowercased() ?? ""),
+              !parts.percentEncodedPath.contains("%"), !parts.percentEncodedPath.contains("\\") else { return nil }
+        return parts
+    }
+}
+
 enum SnapchatWebCompatibility {
     static let loginURL = URL(string: "https://accounts.snapchat.com/v2/login?continue=https%3A%2F%2Fwww.snapchat.com%2Fweb%2F")!
     // Snapchat for Web is intentionally desktop-only even though its web app

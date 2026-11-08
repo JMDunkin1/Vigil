@@ -72,7 +72,7 @@ enum DOMAdapters {
             + documentIdentityBootstrap
             + (service == .instagram && ProcessInfo.processInfo.environment["VIGIL_WEB_INSPECT"] == "1"
                 ? "window.__vigilInstagramDiagnostics = true;" : "")
-            + (service == .instagram ? instagramActivityFeedCompatibility + instagramOutgoingUnreadCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
+            + (service == .instagram ? instagramCallingCompatibility + instagramActivityFeedCompatibility + instagramOutgoingUnreadCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -143,6 +143,105 @@ enum DOMAdapters {
       addEventListener('pagehide', () => { clearTimeout(timer); release(); });
     })();
     """#
+
+    static var instagramCallAudioBootstrap: String {
+        snapchatCallBootstrap
+            .replacingOccurrences(of: "['www.snapchat.com', 'web.snapchat.com', 'snapchat.com']",
+                                  with: "['www.instagram.com', 'instagram.com']")
+            .replacingOccurrences(of: #"/^\/web(?:\/|$)/"#, with: #"/^\/call\/$/"#)
+            .replacingOccurrences(of: "__vigilSnapchatCallsInstalled", with: "__vigilInstagramCallsInstalled")
+            .replacingOccurrences(of: "__vigilPublishSnapchatRenderState", with: "__vigilPublishInstagramCallState")
+    }
+
+    private static let instagramCallingCompatibility = #"""
+    (() => {
+      if (window !== window.top || location.protocol !== 'https:'
+          || (location.port && location.port !== '443')
+          || !['www.instagram.com', 'instagram.com'].includes(location.hostname)
+          || window.__vigilInstagramCallWindowsInstalled) return;
+      window.__vigilInstagramCallWindowsInstalled = true;
+      const open = window.open;
+      window.open = function(url, ...args) {
+        // Meta's Safari opener uses the bare hostname as a temporary URL.
+        // Start blank so its async initializer can navigate the real child
+        // window to /call/ while retaining window.opener and the chat.
+        const initial = /^\/direct\//.test(location.pathname) && url === location.hostname
+          ? 'about:blank' : url;
+        return open.call(this, initial, ...args);
+      };
+    })();
+    """#
+
+    static let instagramCallPresentation = #"""
+    (() => {
+      if (window !== window.top || location.protocol !== 'https:'
+          || (location.port && location.port !== '443')
+          || !['www.instagram.com', 'instagram.com'].includes(location.hostname)
+          || location.pathname !== '/call/') return;
+      const install = () => {
+        let viewport = document.querySelector('meta[name="viewport"]');
+        if (!viewport) { viewport = document.createElement('meta'); viewport.name = 'viewport'; document.head.append(viewport); }
+        viewport.content = 'width=device-width,initial-scale=1,viewport-fit=cover';
+        const inline = () => document.querySelectorAll('video').forEach(video => {
+          if (!video.playsInline) video.playsInline = true;
+        });
+        new MutationObserver(inline).observe(document.documentElement, {childList:true,subtree:true});
+        inline();
+      };
+      if (document.head) install();
+      else document.addEventListener('DOMContentLoaded', install, {once:true});
+    })();
+    """#
+
+    static func instagramCallMediaControls(audioEnabled: Bool) -> String {
+        earlyMediaGate(audioEnabled: audioEnabled) + #"""
+        (() => {
+          let suspended = false;
+          const origin = location.origin;
+          const media = () => [...document.querySelectorAll('audio,video')];
+          const gate = window.__vigilEarlyMediaGate;
+          const trustedCall = () => location.origin === origin && location.protocol === 'https:'
+            && (!location.port || location.port === '443')
+            && ['www.instagram.com', 'instagram.com'].includes(location.hostname)
+            && location.pathname === '/call/';
+          const allowed = () => !suspended && trustedCall() && document.visibilityState !== 'hidden';
+          gate.setEligibilityResolver(allowed);
+          gate.setAudioContextEligibilityResolver(allowed);
+          const refresh = () => {
+            if (!allowed()) return;
+            media().forEach(element => gate.allow(element, true));
+            gate.refreshAudioContexts();
+          };
+          window.__vigilSetAudioPreference = enabled => gate.setAudioPreference(enabled);
+          window.__vigilSuspendAllMedia = () => {
+            suspended = true;
+            media().forEach(element => gate.hold(element, true));
+            gate.suspendAudioContexts();
+          };
+          window.__vigilPauseAllMedia = window.__vigilSuspendAllMedia;
+          window.__vigilResumeSuspendedMedia = () => { suspended = false; refresh(); };
+          for (const name of ['pushState', 'replaceState']) {
+            const original = history[name];
+            history[name] = function(state, title, url) {
+              if (url != null) {
+                const destination = new URL(url, location.href);
+                if (destination.origin !== origin || destination.pathname !== '/call/'
+                    || destination.username || destination.password) {
+                  throw new DOMException('Call window navigation is confined', 'SecurityError');
+                }
+              }
+              return original.apply(this, arguments);
+            };
+          }
+          addEventListener('popstate', () => {
+            if (!trustedCall()) { window.__vigilSuspendAllMedia(); window.close(); }
+          });
+          new MutationObserver(refresh).observe(document, {childList:true,subtree:true});
+          document.addEventListener('visibilitychange', refresh);
+          refresh();
+        })();
+        """#
+    }
 
     private static let snapchatDesktopIdentityBootstrap = #"""
     (() => {
@@ -1353,7 +1452,13 @@ enum DOMAdapters {
         const mediaElements = root instanceof HTMLMediaElement
           ? [root]
           : [...root.querySelectorAll('video, audio')];
-        mediaElements.forEach((media) => hold(media, media.autoplay || !media.paused));
+        mediaElements.forEach((media) => {
+          // React can move an existing call player when its layout changes.
+          // Preserve its grant only while the live policy/source still agrees;
+          // pausing every insertion produces audible gaps in remote speech.
+          if (stateFor(media).allowed && isEligible(media)) return;
+          hold(media, media.autoplay || !media.paused);
+        });
       };
       const observeMediaRoot = (root) => {
         if (!root?.addEventListener || mediaRoots.has(root)) return;
