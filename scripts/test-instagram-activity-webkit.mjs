@@ -11,7 +11,7 @@ const run = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = await readFile(process.argv[2] ? resolve(process.argv[2])
   : join(root, "ios/VigilSocial/VigilSocial/DOMAdapters.swift"), "utf8");
-const scriptNames = ["documentIdentityBootstrap", "instagramActivityFeedCompatibility", "instagramOutgoingUnreadCompatibility",
+const scriptNames = ["documentIdentityBootstrap", "instagramActivityFeedCompatibility", "instagramOutgoingUnreadCompatibility", "instagramInboxBadgeBootstrap",
   "instagramReferenceSearchGuard", "instagramSingleReelGuard", "instagramStableDocumentStartStyle"];
 const script = scriptNames.map(name => {
   const value = source.match(new RegExp(`static let ${name} = #"""([\\s\\S]*?)"""#`, "u"))?.[1];

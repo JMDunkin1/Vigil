@@ -37,7 +37,8 @@ function safeSearchWords(value: string): string[] {
 }
 
 export function hasSafeSearchContributor(value: string): boolean {
-  return safeSearchWords(value).some(word => SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word)));
+  return safeSearchWords(value).some(word => SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word)))
+    || hasSharedFileSearchResultText(value);
 }
 
 export function hasOrdinarySafeSearchContext(value: string): boolean {
@@ -48,7 +49,9 @@ export function hasOrdinarySafeSearchContext(value: string): boolean {
 // search. Strip only media/navigation qualifiers, never part of a person's name.
 export function safeSearchSubject(value: string): string {
   if (hasOrdinarySafeSearchContext(value)) return "";
-  const withoutSites = value.replace(/\bsite:\S+/giu, "");
+  const withoutSites = value.replace(/\bsite:\S+/giu, "")
+    .replace(SHARED_FILE_SEARCH_URL_TEXT, candidate => sharedFileSearchTextDestination(candidate) ? " " : candidate)
+    .replace(SHARED_FILE_SEARCH_NAMES_FOR_SUBJECT, " ");
   const words = safeSearchWords(withoutSites).filter(word => !SAFE_SEARCH_CONTRIBUTORS.test(normalizeExplicitVocabulary(word))
     && !/^(?:a|an|the|and|of|for|in|on|with|free|full|hd|official|nz|io|com|it)$/u.test(word));
   return words.length >= 1 && words.length <= 6 && words.join(" ").length >= 4 ? words.join(" ") : "";
@@ -67,13 +70,61 @@ export function sharedFileDestination(value: string, baseUrl?: string): string |
   const onHost = (domain: string) => host === domain || host.endsWith(`.${domain}`);
   if ((onHost("mega.nz") || onHost("mega.io")) && /^\/(?:folder|file)\//u.test(url.pathname)) return url.href;
   if (onHost("gofile.io") && /^\/d\//u.test(url.pathname)) return url.href;
+  if (onHost("gofile.today") && /^\/l\/d\//u.test(url.pathname)) return url.href;
   if ((onHost("link-center.net") || onHost("direct-link.net")) && /^\/\d+\/[^/]/u.test(url.pathname)) return url.href;
   if (onHost("drive.google.com") && /^\/(?:file\/d|drive\/folders)\//u.test(url.pathname)) return url.href;
   if (onHost("dropbox.com") && /^\/(?:s|sh|scl)\//u.test(url.pathname)) return url.href;
-  if (["pixl.li", "cyberdrop.me", "cyberdrop.to", "bunkr.is", "bunkr.si", "bunkr.ru", "erome.com"].some(onHost)
+  if (SHARED_ALBUM_DOMAINS.some(onHost)
     && /^\/(?:a|album|f|v)\//u.test(url.pathname)) return url.href;
   if (["t.me", "telegram.me", "telegram.dog"].includes(host) && /^\/[^/]/u.test(url.pathname)) return url.href;
   return null;
+}
+
+// Search results often expose only a service homepage, paste/index page, or
+// shortened citation. This category is used only with a verified SafeSearch
+// notice on the current results page; it is not a whole-site/content ban and
+// must not count homepages as shared files in reader link collections.
+const SHARED_ALBUM_DOMAINS = ["pixl.li", "cyberdrop.me", "cyberdrop.to", "bunkr.is", "bunkr.si", "bunkr.ru", "bunkr.cr", "erome.com"];
+// Verified service sources and migration evidence:
+// research/2026-11-07-shared-file-search-services.md
+export const SHARED_FILE_SEARCH_DOMAINS = [
+  "mega.nz", "mega.io", "gofile.io", "gofile.today", "drive.google.com", "dropbox.com",
+  "mediafire.com", "4shared.com", "link-center.net", "direct-link.net",
+  ...SHARED_ALBUM_DOMAINS, "bunkr-albums.io", "balbums.st",
+  "pixeldrain.com", "catbox.moe", "send.now", "swisstransfer.com", "filebin.net",
+  "sendvid.com", "imgbox.com", "streamable.com", "wetransfer.com", "we.tl",
+  "onedrive.live.com", "1drv.ms", "pcloud.com",
+  "justpaste.it", "pastebin.com", "paste.ee", "rentry.co", "rentry.org", "telegra.ph"
+] as const;
+// Distinctive service names only. Generic words such as "drive", "send now",
+// "streamable", "box", "mega" and "litterbox" need a known domain/name phrase.
+const SHARED_FILE_SEARCH_NAMES = /(?:^|[^\p{L}\p{N}_./@-])(?:gofile|mediafire|4shared|dropbox|pixeldrain|catbox|cyberdrop|bunkr(?:[\s_-]+albums)?|balbums|sendvid|imgbox|wetransfer|swisstransfer|filebin|onedrive|pcloud|rentry|pastebin|justpaste|google[\s_-]+drive)(?=$|[^\p{L}\p{N}_./@-])/iu;
+const SHARED_FILE_SEARCH_NAMES_FOR_SUBJECT = new RegExp(SHARED_FILE_SEARCH_NAMES.source, "giu");
+const SHARED_FILE_SEARCH_URL_TEXT = /\b(?:https?:\/\/)?(?:[a-z0-9-]+\.)+[a-z0-9-]+(?::\d+)?(?:[/?#@][^\s<>"']*)?/giu;
+// Declared sharing/index surfaces cover a new provider before it is named in
+// the inventory. Ordinary words like "file" or "download" alone do not.
+const SHARED_FILE_SEARCH_CATEGORY = /(?:^|[^\p{L}\p{N}])(?:file[\s_-]+(?:shar(?:e|ing)|host(?:ing)?|index(?:es)?)|(?:shared|public)[\s_-]+(?:files|folders|albums)|(?:download|folder|album|mirror)[\s_-]+links)(?=$|[^\p{L}\p{N}])/iu;
+
+function sharedFileSearchTextDestination(candidate: string): boolean {
+  return isSharedFileSearchDestination(/^https?:\/\//iu.test(candidate) ? candidate : `https://${candidate}`);
+}
+
+export function isSharedFileSearchDestination(value: string, baseUrl?: string): boolean {
+  let url: URL;
+  try { url = new URL(value, baseUrl); } catch { return false; }
+  if (!["https:", "http:"].includes(url.protocol)) return false;
+  const host = url.hostname.toLowerCase().replace(/\.$/u, "");
+  return SHARED_FILE_SEARCH_DOMAINS.some(domain => host === domain || host.endsWith(`.${domain}`))
+    || Boolean(sharedFileDestination(url.href));
+}
+
+export function hasSharedFileSearchResultText(value: string): boolean {
+  const text = value.normalize("NFKC").replace(/\p{Cf}/gu, "");
+  // Parse the entire hostname so gofile.io.example.org cannot match gofile.io.
+  for (const candidate of text.match(SHARED_FILE_SEARCH_URL_TEXT) || []) {
+    if (sharedFileSearchTextDestination(candidate)) return true;
+  }
+  return SHARED_FILE_SEARCH_NAMES.test(text) || SHARED_FILE_SEARCH_CATEGORY.test(text);
 }
 
 export function isAdultMediaDestination(value: string): boolean {

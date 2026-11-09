@@ -53,6 +53,10 @@ jobs:
         timeout-minutes: 2
         run: node scripts/test-instagram-activity-webkit.mjs
 
+      - name: Test Instagram unread DM badge on cold Home startup
+        timeout-minutes: 2
+        run: node scripts/test-instagram-inbox-badge-webkit.mjs
+
       - name: Test Instagram comments interaction and dismissal
         timeout-minutes: 3
         run: node scripts/test-instagram-comments-webkit.mjs

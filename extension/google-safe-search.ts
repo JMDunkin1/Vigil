@@ -1,6 +1,6 @@
 import { checkSearchBreakBeforeNavigation } from "./search-break.js";
 import { containsContextualExplicitSearch, containsExplicitXxxSearchText, containsExplicitMediaLabel, matchContextualExplicitSearchUrl, isMediaDiscoverySearchUrl, MEDIA_DISCOVERY_NAMES } from "../src/contextualExplicitSearch.js";
-import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
+import { hasSafeSearchContributor, hasOrdinarySafeSearchContext, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection, isSharedFileSearchDestination, hasSharedFileSearchResultText } from "../src/safeSearchContext.js";
 import { searchQueries, looksLikeSearchRoute, decodeSearchQueryValue, isProtectedSearchParameter } from "../src/searchQueryContext.js";
 import { containsExplicitSearchKeyword, normalizeExplicitMediaText } from "../src/explicitMediaContext.js";
 import { browserPermanentBlockedDomains } from "../src/browserStaticProtection.js";
@@ -120,6 +120,10 @@ function hasCurrentSafeSearchLock(): boolean {
   return Boolean(currentGoogleSearchQuery()) && safeSearchLockObservedUrl === location.href;
 }
 
+function hasCurrentSharedFileSearchRestriction(): boolean {
+  return hasCurrentSafeSearchLock() || hasCurrentSafeSearchEvidence();
+}
+
 function sameSafeSearchQuery(first: string, second: string): boolean {
   const normalize = (value: string) => decodeNestedSearchValue(value).normalize("NFKC")
     .replace(/\+/gu, " ").replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "").replace(/\s+/gu, " ").trim().toLowerCase();
@@ -236,21 +240,21 @@ function sharedFileUrlsInText(value: string): string[] {
 }
 
 function elementExposesSharedFileLink(element: Element): boolean {
-  return (element instanceof HTMLAnchorElement && (Boolean(sharedFileDestination(element.href, location.href))
-    || googleSearchResultDestinations(element).some(url => sharedFileDestination(url))))
+  return (element instanceof HTMLAnchorElement && (isSharedFileSearchDestination(element.href, location.href)
+    || googleSearchResultDestinations(element).some(url => isSharedFileSearchDestination(url))))
     || readerFileDestinations([element]).length > 0;
 }
 
 function googleResultCardWithSharedFileLinks(element: Element): HTMLElement | null {
   const card = googleSearchResultContainer(element);
   // Google can split a snippet URL across bold query matches and text nodes.
-  return card && (sharedFileUrlsInText(card.textContent || "").length > 0
+  return card && (hasSharedFileSearchResultText(card.textContent || "")
     || readerFileDestinations([card]).length > 0) ? card : null;
 }
 
 function googleResultsWithSharedFileLinks(): Set<HTMLElement> {
   const matchingElements = new Set<HTMLElement>();
-  if (!hasCurrentSafeSearchLock()) return matchingElements;
+  if (!hasCurrentSharedFileSearchRestriction()) return matchingElements;
   const body = document.body;
   if (!body) return matchingElements;
   for (const heading of document.querySelectorAll("h3")) {
@@ -264,13 +268,18 @@ function googleResultsWithSharedFileLinks(): Set<HTMLElement> {
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const parent = node.parentElement;
     if (!parent || parent.closest("a[href], script, style, noscript, [hidden], [aria-hidden='true']")) continue;
-    if (sharedFileUrlsInText(node.textContent || "").length > 0) matchingElements.add(googleSearchResultContainer(parent) || parent);
+    // Broader service mentions need a result card. Retain the existing full
+    // shared-URL fallback for result layouts without a recognizable wrapper.
+    const card = googleSearchResultContainer(parent);
+    if (card ? hasSharedFileSearchResultText(node.textContent || "") : sharedFileUrlsInText(node.textContent || "").length > 0) {
+      matchingElements.add(card || parent);
+    }
   }
   return matchingElements;
 }
 
 function googleResultContainsSharedFileLink(anchor: HTMLAnchorElement): boolean {
-  return hasCurrentSafeSearchLock()
+  return hasCurrentSharedFileSearchRestriction()
     && (elementExposesSharedFileLink(anchor) || Boolean(googleResultCardWithSharedFileLinks(anchor)));
 }
 
@@ -278,7 +287,7 @@ function contextualLinkIsBlocked(anchor: HTMLAnchorElement): boolean {
   const query = currentGoogleSearchQuery();
   const label = [anchor.textContent, anchor.getAttribute("title"), anchor.getAttribute("aria-label")].filter(Boolean).join(" ");
   const file = sharedFileDestination(anchor.href, location.href);
-  if (query && hasCurrentSafeSearchLock() && (file || googleResultContainsSharedFileLink(anchor))) return true;
+  if (query && hasCurrentSharedFileSearchRestriction() && (file || googleResultContainsSharedFileLink(anchor))) return true;
   if (query && hasCurrentSafeSearchEvidence() && (hasSafeSearchContributor(label) || file)) return true;
   if (hasOrdinarySafeSearchContext(label) || (!query && hasOrdinarySafeSearchContext(document.title))) return false;
   if (query && hasSavedSafeSearchSubject(query) && (hasSafeSearchContributor(label) || file)) return true;

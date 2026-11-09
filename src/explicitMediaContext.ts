@@ -110,10 +110,17 @@ const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, 
 const ordinaryPhrasePatterns = EXPLICIT_MEDIA_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
 const explicitHomoglyphs: Record<string, string> = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "α": "a" };
 
+// ASCII text has no Latin diacritics to decompose. Keep the exact Unicode
+// path for accented letters, combining marks and mixed-script evasions.
+function foldLatinDiacritics(value: string): string {
+  return /\P{ASCII}/u.test(value)
+    ? value.replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""))
+    : value;
+}
+
 export function normalizeExplicitVocabulary(value: string): string {
-  let text = String(value || "").normalize("NFKC")
-    .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
-    .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""));
+  let text = foldLatinDiacritics(String(value || "").normalize("NFKC")
+    .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, ""));
   text = text.replace(/[\p{L}\p{N}]+/gu, token => {
     const folded = token.toLowerCase().replace(/[аеорсхіуα]/gu, letter => explicitHomoglyphs[letter]);
     return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded)
@@ -287,20 +294,22 @@ export const EXPLICIT_MEDIA_PATTERNS = {
 const explicitMediaPatterns = Object.fromEntries(Object.entries(EXPLICIT_MEDIA_PATTERNS)
   .map(([name, source]) => [name, new RegExp(source, "u")])) as Record<keyof typeof EXPLICIT_MEDIA_PATTERNS, RegExp>;
 
+const additionalExplicitSearchTerms = new Set<string>(["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS]);
+
+function containsNormalizedAdditionalExplicitSearchTerm(text: string): boolean {
+  const tokens = text.match(/[\p{L}\p{N}]+/gu) || [];
+  return tokens.some(token => additionalExplicitSearchTerms.has(token));
+}
+
 export function containsAdditionalExplicitSearchTerm(value: string): boolean {
-  const tokens = normalizeAutomaticExplicitText(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
-  return tokens.some(token => ["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS].includes(token));
+  return containsNormalizedAdditionalExplicitSearchTerm(normalizeAutomaticExplicitText(value).toLowerCase());
 }
 
 export function containsMultilingualExplicitText(value: string): boolean {
-  const text = String(value || "").normalize("NFKC")
+  const text = foldLatinDiacritics(String(value || "").normalize("NFKC")
     .replace(/[\u200b-\u200d\u2060\ufeff\u0640]/gu, "")
     .replace(/[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]/gu, "")
-    .replace(/[أإآٱ]/gu, "ا")
-    // Fold Latin accents without removing Japanese voicing marks or
-    // decomposing Korean syllables. Both are meaningful letters here.
-    .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""))
-    .toLowerCase();
+    .replace(/[أإآٱ]/gu, "ا")).toLowerCase();
   if (/(?:^|[^\p{L}\p{N}])(?:(?:[وف]?ال|[بك]ال|لل|[وف]))?اباحي(?:ة|ا|ات|ون|ين)?(?=$|[^\p{L}\p{N}])/u.test(text)) return true;
   if (/(?:^|[^\p{L}\p{N}])(?:ال)?(?:فيديو(?:هات)?|فيلم|افلام)[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])/u.test(text)) return true;
   if (/(?:^|[^\p{L}\p{N}])(?:pornografi(?:a|co|ca)s?|pornographi(?:e|ques?)|pornografie|pornografisch(?:e[rmns]?)?|порно(?:видео|фильм(?:ы|ов)?|ролик(?:и|ов)?)?|порнографи\p{Script=Cyrillic}*)(?=$|[^\p{L}\p{N}])/u.test(text)) return true;
@@ -311,8 +320,8 @@ export function containsMultilingualExplicitText(value: string): boolean {
 
 export function containsContextualExplicitMedia(value: string): boolean {
   if (containsMultilingualExplicitText(value)) return true;
-  if (containsAdditionalExplicitSearchTerm(value)) return true;
   const text = normalizeAutomaticExplicitText(value).toLowerCase();
+  if (containsNormalizedAdditionalExplicitSearchTerm(text)) return true;
   if (containsExplicitPrintEvidence(text)) return true;
   if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text)) return true;
   const tokens = text.replace(/\b(?:without(?:[\s_-]+any)?|with[\s_-]+no)[\s_-]+clothes\b/gu, "naked")

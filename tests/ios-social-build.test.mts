@@ -334,7 +334,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) button:has\(img\[alt\*="profile picture" i\]\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?canViewAccount\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
+  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) :is\(button, \[role="button"\]\):has\(img\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?canViewAccount\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
   "Instagram Home Stories must classify both link and button trays with the mutual-friend verifier while retaining the viewer's own Story"
 );
 assert.match(

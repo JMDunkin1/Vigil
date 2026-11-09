@@ -518,6 +518,10 @@ export const DEFAULT_ADULT_PRODUCT_BLOCKED_SITES = [
  * never become generic page-text classifier terms.
  */
 export const DEFAULT_PRIORITY_ADULT_BLOCKED_SITES = [
+  // Reviewed public mature-media album index and its operator-published old domain.
+  // research/2026-11-07-shared-file-search-services.md
+  "balbums.st",
+  "bunkr-albums.io",
   // User-requested whole-site ban; keep this mixed-use name out of prose terms.
   "artpal.com",
   // User-requested permanent block for the reported porn link.

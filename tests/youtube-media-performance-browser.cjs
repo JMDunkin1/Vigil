@@ -43,7 +43,7 @@ async function main() {
       return {...metrics,ms:performance.now()-start,nodes:document.querySelectorAll('*').length};
     })()`);
     console.log(JSON.stringify({ coldMs, fullHealthScans: steady }));
-    assert.equal(steady.fullScans, 10, 'full health scans retain both mixed-platform and general inspection');
+    assert.equal(steady.fullScans, 5, 'each full health check shares one complete enumeration between both inspectors');
     assert.ok(steady.matches < 1000, 'unchanged element text reuses classification without skipping inspection');
 
     await win.webContents.executeJavaScript(`metrics={matches:0,fullScans:0};
@@ -108,7 +108,7 @@ async function main() {
 
     assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.getElementById('feed').firstElementChild).display`), 'block', 'ordinary neighboring feed content stays usable');
     await win.webContents.executeJavaScript(`metrics={matches:0,fullScans:0};healthHeartbeat();`);
-    assert.ok((await win.webContents.executeJavaScript('metrics.fullScans')) >= 2, 'full periodic enforcement remains active after incremental scans');
+    assert.ok((await win.webContents.executeJavaScript('metrics.fullScans')) >= 1, 'full periodic enforcement remains active after incremental scans');
     completed = true;
     console.log('YouTube performance and dynamic enforcement checks passed.');
   } finally { win.destroy(); }

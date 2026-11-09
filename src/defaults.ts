@@ -233,7 +233,6 @@ export const STRICT_UNSUPPORTED_BROWSERS = [
 
 export const STRICT_EMBEDDED_BROWSER_APPS = [
   "Discord",
-  "Steam",
   "Epic Games Launcher",
   "Battle.net",
   "Roblox",

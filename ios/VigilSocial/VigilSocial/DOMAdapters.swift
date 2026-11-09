@@ -72,7 +72,7 @@ enum DOMAdapters {
             + documentIdentityBootstrap
             + (service == .instagram && ProcessInfo.processInfo.environment["VIGIL_WEB_INSPECT"] == "1"
                 ? "window.__vigilInstagramDiagnostics = true;" : "")
-            + (service == .instagram ? instagramCallingCompatibility + instagramActivityFeedCompatibility + instagramOutgoingUnreadCompatibility + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
+            + (service == .instagram ? instagramCallingCompatibility + instagramActivityFeedCompatibility + instagramOutgoingUnreadCompatibility + instagramInboxBadgeBootstrap + instagramReferenceSearchGuard + instagramSharedContentSeed(sharedContentURL) + instagramSingleReelGuard : "")
             + safetyBootstrap
         )
     }
@@ -2483,6 +2483,135 @@ enum DOMAdapters {
       timer = setInterval(register, 50);
       deadline = setTimeout(stop, 15000);
       register();
+    })();
+    """#
+
+    // Hydrate the same Relay connection that Instagram's navigation badge reads
+    // on Home, without waiting for an inbox visit. Leave rendering, unread/mute
+    // rules and mailbox subscriptions to Instagram. No message is opened/read.
+    static let instagramInboxBadgeBootstrap = #"""
+    (() => {
+      if (window !== window.top || location.protocol !== 'https:'
+          || !['instagram.com', 'www.instagram.com'].includes(location.hostname)
+          || (location.port && location.port !== '443')
+          || window.__vigilInstagramInboxBadgeBootstrap) return;
+      const names = ['CometRelay', 'PolarisRelayEnvironment', 'IGDBadgeCountOffMsysQuery.graphql',
+        'IGDMqttWebDeviceID', 'CurrentUser'];
+      let current = null, timer = 0, lastSuccess = -Infinity, requests = 0, status = 'waiting';
+      window.__vigilInstagramInboxBadgeBootstrap = Object.freeze({
+        get status() { return status; }, get requests() { return requests; }
+      });
+      const eligible = () => document.visibilityState === 'visible' && location.pathname === '/'
+        && !!document.querySelector('a[href="/direct/inbox/"], a[href="/direct/inbox"], a[href^="/direct/t/"]');
+      const stop = () => {
+        clearTimeout(timer);
+        const attempt = current;
+        current = null;
+        if (!attempt) return;
+        clearTimeout(attempt.round?.timeout);
+        try { attempt.round?.subscription?.unsubscribe(); } catch (_) {}
+      };
+      const loaded = name => {
+        try {
+          const value = window.require?.(name);
+          return value?.default || value;
+        } catch (_) { return null; }
+      };
+      const refresh = () => {
+        if (!eligible()) { stop(); return; }
+        if (current || Date.now() - lastSuccess < 15000) return;
+        // One bounded startup/recovery window. Loader polling does not become
+        // a perpetual inbox poll, and failed requests get at most two retries.
+        const attempt = { until: Date.now() + 15000, tries: 0, round: null };
+        current = attempt;
+        const active = round => current === attempt && eligible()
+          && (!round || attempt.round === round);
+        const fail = round => {
+          if (!active(round)) return;
+          attempt.round = null;
+          clearTimeout(round.timeout);
+          try { round.subscription?.unsubscribe(); } catch (_) {}
+          status = 'unavailable';
+          if (active() && attempt.tries < 3 && Date.now() + 1000 < attempt.until) {
+            timer = setTimeout(load, 1000);
+          } else stop();
+        };
+        const hydrate = (values, round) => {
+          if (!active(round) || round.started) return;
+          round.started = true;
+          clearTimeout(round.timeout);
+          round.timeout = setTimeout(() => fail(round), Math.min(8000, attempt.until - Date.now()));
+          try {
+            const [relay, environment, query, device, user] = values.map(value => value?.default || value);
+            // Use only the live client's own query, actor environment and device
+            // identity; an unknown client version leaves the site's UI untouched.
+            if (typeof relay?.fetchQuery !== 'function' || !environment
+                || query?.kind !== 'Request' || query.params?.name !== 'IGDBadgeCountOffMsysQuery'
+                || query.params?.operationKind !== 'query' || !query.operation || !query.fragment
+                || typeof device?.clientId !== 'string' || !device.clientId
+                || user?.isLoggedIn?.() !== true) { fail(round); return; }
+            status = 'loading'; requests++;
+            // subscribe (rather than toPromise) processes every incremental
+            // payload and lets hidden/navigated documents cancel their work.
+            relay.fetchQuery(environment, query, { device_id_for_iris_subscription: device.clientId },
+              { fetchPolicy: 'network-only', networkCacheConfig: { force: true } }).subscribe({
+                start(subscription) {
+                  if (active(round)) round.subscription = subscription;
+                  else subscription.unsubscribe();
+                },
+                error() { fail(round); },
+                complete() {
+                  if (!active(round)) return;
+                  lastSuccess = Date.now(); status = 'ready'; stop();
+                }
+              });
+          } catch (_) { fail(round); }
+        };
+        const load = () => {
+          if (!active()) { stop(); return; }
+          if (Date.now() >= attempt.until) { status = 'unavailable'; stop(); return; }
+          const modules = names.map(loaded);
+          if (modules.every(Boolean)) {
+            attempt.tries++;
+            const round = { timeout: 0, subscription: null, started: false };
+            attempt.round = round;
+            hydrate(modules, round);
+            return;
+          }
+          const bootloader = loaded('Bootloader');
+          if (typeof bootloader?.loadModules !== 'function') {
+            timer = setTimeout(load, 250);
+            return;
+          }
+          attempt.tries++;
+          const round = { timeout: 0, subscription: null, started: false };
+          attempt.round = round;
+          round.timeout = setTimeout(() => fail(round), Math.min(4000, attempt.until - Date.now()));
+          try {
+            bootloader.loadModules(names, (...values) => {
+              hydrate(values, round);
+            }, 'VigilInstagramInboxBadge');
+          } catch (_) { fail(round); }
+        };
+        load();
+      };
+      // An observer only waits for the real navigation control on first load;
+      // later refreshes are explicit foreground/online/Home navigation events.
+      const observer = new MutationObserver(() => {
+        if (!eligible()) return;
+        observer.disconnect(); clearTimeout(observationDeadline); refresh();
+      });
+      observer.observe(document, { childList: true, subtree: true });
+      const observationDeadline = setTimeout(() => observer.disconnect(), 15000);
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') refresh(); else stop();
+      });
+      document.addEventListener('__vigilRouteChanged', refresh);
+      document.addEventListener('DOMContentLoaded', refresh, { once: true });
+      addEventListener('online', refresh);
+      addEventListener('pageshow', refresh);
+      addEventListener('pagehide', stop);
+      refresh();
     })();
     """#
 
@@ -11366,6 +11495,9 @@ enum DOMAdapters {
         const labels = [
           control.getAttribute('aria-label'),
           control.textContent,
+          // The native add-story button gives the avatar an empty alt and
+          // includes its plus icon's title in the combined text content.
+          ...[...control.children].filter(node => node.matches('span')).map(node => node.textContent),
           ...[...control.querySelectorAll('[aria-label]')].slice(0, 12)
             .map((node) => node.getAttribute('aria-label'))
         ].map((value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase());
@@ -11396,7 +11528,8 @@ enum DOMAdapters {
           control.dataset.vigilInstagramProfileControl = 'true';
           return false;
         }
-        if (control.matches('a[href^="/stories/"]')) return true;
+        if (control.matches('a[href^="/stories/"]') || isOwnStoryControl(control)) return true;
+        if (!control.querySelector('img[alt*="profile picture" i]')) return false;
         const label = [control.getAttribute('aria-label'), control.textContent]
           .map((value) => String(value || '')).join(' ');
         if (/\bstor(?:y|ies)\b/i.test(label)) return true;
@@ -11419,8 +11552,7 @@ enum DOMAdapters {
         if (instagramRoute() !== 'feed') return [];
         const controls = [...document.querySelectorAll([
           'a[href^="/stories/"]',
-          ':is(main, [role="main"]) button:has(img[alt*="profile picture" i])',
-          ':is(main, [role="main"]) [role="button"]:has(img[alt*="profile picture" i])'
+          ':is(main, [role="main"]) :is(button, [role="button"]):has(img)'
         ].join(', '))];
         const stories = controls.filter((control) => !control.closest('article, [role="article"], nav, [role="navigation"]')
           && isStoryControl(control));
@@ -11468,9 +11600,9 @@ enum DOMAdapters {
         lastStoryRailViewportState = state;
         return state;
       };
-      const restoreStoryRailViewport = (rail, controls, state) => {
+      const restoreStoryRailViewport = (rail, controls, state, scrollBeforeLayout) => {
         if (!(rail instanceof HTMLElement) || !state) return false;
-        if (state.atStart && Math.abs(rail.scrollLeft - state.scrollLeft) <= 1) {
+        if (state.atStart && Math.abs(scrollBeforeLayout - state.scrollLeft) <= 1) {
           rail.scrollLeft = 0;
           rememberStoryRailViewport(rail, controls);
           return true;
@@ -11483,7 +11615,7 @@ enum DOMAdapters {
         const currentOffset = item.getBoundingClientRect().left - rail.getBoundingClientRect().left;
         // Scroll events can arrive after a mutation/relationship flush. Account
         // for motion since the snapshot so anchoring never undoes a swipe.
-        const expectedOffset = state.offset - (rail.scrollLeft - state.scrollLeft);
+        const expectedOffset = state.offset - (scrollBeforeLayout - state.scrollLeft);
         const adjustment = currentOffset - expectedOffset;
         if (Math.abs(adjustment) > 0.5) rail.scrollLeft += adjustment;
         rememberStoryRailViewport(rail, controls);
@@ -11536,31 +11668,39 @@ enum DOMAdapters {
         storyRailClampFrames.set(rail, frame);
       };
       let storyRailProbes = new WeakSet();
-      const primeHomeStoryRail = (rail, controls) => {
-        if (!(rail instanceof HTMLElement) || storyRailProbes.has(rail) || controls.length < 2
-            || Math.abs(rail.scrollLeft) > 1) return false;
+      const finishStoryRailProbes = new WeakMap();
+      const primeHomeStoryRail = (rail, controls, occupiedWidth) => {
+        if (storyRailProbes.has(rail) || occupiedWidth <= 0 || occupiedWidth >= rail.clientWidth - 1
+            || controls.length < 2 || Math.abs(rail.scrollLeft) > 1) return;
         const relationships = controls.map(control => control.dataset.vigilInstagramStoryRelationship);
-        if (relationships.includes('friend') || !relationships.some(state => state === 'other' || state === 'unavailable')) return false;
-        storyRailProbes.add(rail);
-        // Compacting an unread batch of denied accounts can remove all
-        // scroll range before Instagram mounts its watched batch. Give the
-        // native scroller a bounded pass over its leading viewport first.
+        if (relationships.some(state => state === 'pending' || state === 'refreshing')
+            && !relationships.some(state => state === 'other' || state === 'unavailable')) return;
+        // One allowed unread Story can leave most of the first viewport empty.
+        // Let Instagram measure its native row and request the watched batch
+        // before the user needs to swipe into the unfiltered scroll range.
         rail.dataset.vigilInstagramStoryProbing = 'true';
         const distance = Math.min(rail.clientWidth, rail.scrollWidth - rail.clientWidth);
+        if (distance <= 1) {
+          delete rail.dataset.vigilInstagramStoryProbing;
+          return;
+        }
+        storyRailProbes.add(rail);
         const direction = getComputedStyle(rail).direction === 'rtl' ? -1 : 1;
         const start = rail.scrollLeft;
-        if (distance > 0) rail.scrollTo({ left: start + direction * distance, behavior: 'instant' });
-        // WebKit can defer scroll events for a retained or offscreen tray.
-        // Notify its listener with the measured offset before restoring it.
-        rail.dispatchEvent(new Event('scroll'));
-        setTimeout(() => {
-          if (!touchingStoryRails.has(rail) && instagramRoute() === 'feed') {
-            rail.scrollTo({ left: start, behavior: 'instant' });
-          }
+        const finish = () => {
+          clearTimeout(timeout);
+          finishStoryRailProbes.delete(rail);
+          rail.scrollTo({ left: start, behavior: 'instant' });
           delete rail.dataset.vigilInstagramStoryProbing;
+        };
+        const timeout = setTimeout(() => {
+          finish();
           if (instagramRoute() === 'feed') reconcileFriendsFeed();
         }, 50);
-        return true;
+        finishStoryRailProbes.set(rail, finish);
+        rail.scrollTo({ left: start + direction * distance, behavior: 'instant' });
+        // WebKit can defer scroll events for a retained or offscreen tray.
+        rail.dispatchEvent(new Event('scroll'));
       };
       const normalizeHomeStoryRail = (controls = homeStoryControls()) => {
         const isFeed = instagramRoute() === 'feed';
@@ -11572,9 +11712,9 @@ enum DOMAdapters {
         // momentum. Recycled authors are concealed immediately by the classifier;
         // the existing slot geometry lasts until the rail settles.
         if (rail && (movingStoryRails.has(rail) || rail.dataset.vigilInstagramStoryProbing === 'true')) return;
-        if (primeHomeStoryRail(rail, controls)) return;
+        const scrollBeforeLayout = rail?.scrollLeft || 0;
         const viewportState = rail instanceof HTMLElement
-          ? (Math.abs(rail.scrollLeft) <= 1 ? { atStart: true, scrollLeft: rail.scrollLeft }
+          ? (Math.abs(scrollBeforeLayout) <= 1 ? { atStart: true, scrollLeft: scrollBeforeLayout }
             : storyRailViewportStates.get(rail) || lastStoryRailViewportState)
           : null;
         // Instagram's virtual row retains the width, absolute offsets and
@@ -11657,7 +11797,8 @@ enum DOMAdapters {
             clearTimeout(storyRailIdleTimers.get(rail));
             touchingStoryRails.add(rail);
             movingStoryRails.add(rail);
-          }, { passive: true });
+            finishStoryRailProbes.get(rail)?.();
+          }, { capture: true, passive: true });
           const release = () => { touchingStoryRails.delete(rail); settle(); };
           rail.addEventListener('touchend', release, { passive: true });
           rail.addEventListener('touchcancel', release, { passive: true });
@@ -11677,13 +11818,14 @@ enum DOMAdapters {
           || layout.some((entry, index) => entry.slot !== previousLayout[index].slot
             || entry.state !== previousLayout[index].state || entry.width !== previousLayout[index].width);
         storyRailLayouts.set(rail, layout);
-        if (movingStoryRails.has(rail) || !changed) return;
         // Keep the same account at the same viewport edge when Instagram
         // prepends or recycles slots, then trim only genuinely blank overflow.
-        if (!restoreStoryRailViewport(rail, controls, viewportState)) {
+        if (changed && !restoreStoryRailViewport(rail, controls, viewportState, scrollBeforeLayout)) {
           clampStoryRail(rail);
           rememberStoryRailViewport(rail, controls);
         }
+        const occupiedWidth = layout.reduce((width, entry) => width + entry.width, 0);
+        primeHomeStoryRail(rail, controls, occupiedWidth);
       };
       const flushHomeStoryRelationships = (allowPartial = false) => {
         if (instagramRoute() !== 'feed') return false;

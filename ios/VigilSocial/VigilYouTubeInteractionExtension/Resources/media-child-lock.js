@@ -116,10 +116,16 @@ const EXPLICIT_MEDIA_ORDINARY_PHRASES = [
 const vocabularyReplacements = EXPLICIT_VOCABULARY_REPLACEMENTS.map(({ pattern, replacement }) => ({ pattern: new RegExp(pattern, "giu"), replacement }));
 const ordinaryPhrasePatterns = EXPLICIT_MEDIA_ORDINARY_PHRASES.map(pattern => new RegExp(pattern, "giu"));
 const explicitHomoglyphs = { "а": "a", "е": "e", "о": "o", "р": "p", "с": "c", "х": "x", "і": "i", "у": "y", "α": "a" };
+// ASCII text has no Latin diacritics to decompose. Keep the exact Unicode
+// path for accented letters, combining marks and mixed-script evasions.
+function foldLatinDiacritics(value) {
+    return /\P{ASCII}/u.test(value)
+        ? value.replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""))
+        : value;
+}
 function normalizeExplicitVocabulary(value) {
-    let text = String(value || "").normalize("NFKC")
-        .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, "")
-        .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""));
+    let text = foldLatinDiacritics(String(value || "").normalize("NFKC")
+        .replace(/[\u00ad\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]|\p{Variation_Selector}/gu, ""));
     text = text.replace(/[\p{L}\p{N}]+/gu, token => {
         const folded = token.toLowerCase().replace(/[аеорсхіуα]/gu, letter => explicitHomoglyphs[letter]);
         return /^(?:naked|nudes?|porn|porno|nsfw|sex|sexual|topless|nakedgirls|nudegirls)$/u.test(folded)
@@ -298,19 +304,19 @@ const EXPLICIT_MEDIA_PATTERNS = {
 };
 const explicitMediaPatterns = Object.fromEntries(Object.entries(EXPLICIT_MEDIA_PATTERNS)
     .map(([name, source]) => [name, new RegExp(source, "u")]));
+const additionalExplicitSearchTerms = new Set(["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS]);
+function containsNormalizedAdditionalExplicitSearchTerm(text) {
+    const tokens = text.match(/[\p{L}\p{N}]+/gu) || [];
+    return tokens.some(token => additionalExplicitSearchTerms.has(token));
+}
 function containsAdditionalExplicitSearchTerm(value) {
-    const tokens = normalizeAutomaticExplicitText(value).toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
-    return tokens.some(token => ["porn", "porno", "nsfw", ...ADDITIONAL_EXPLICIT_SEARCH_TERMS].includes(token));
+    return containsNormalizedAdditionalExplicitSearchTerm(normalizeAutomaticExplicitText(value).toLowerCase());
 }
 function containsMultilingualExplicitText(value) {
-    const text = String(value || "").normalize("NFKC")
+    const text = foldLatinDiacritics(String(value || "").normalize("NFKC")
         .replace(/[\u200b-\u200d\u2060\ufeff\u0640]/gu, "")
         .replace(/[\u0610-\u061a\u064b-\u065f\u0670\u06d6-\u06ed]/gu, "")
-        .replace(/[أإآٱ]/gu, "ا")
-        // Fold Latin accents without removing Japanese voicing marks or
-        // decomposing Korean syllables. Both are meaningful letters here.
-        .replace(/\p{Script=Latin}\p{M}*/gu, letter => letter.normalize("NFD").replace(/\p{M}/gu, ""))
-        .toLowerCase();
+        .replace(/[أإآٱ]/gu, "ا")).toLowerCase();
     if (/(?:^|[^\p{L}\p{N}])(?:(?:[وف]?ال|[بك]ال|لل|[وف]))?اباحي(?:ة|ا|ات|ون|ين)?(?=$|[^\p{L}\p{N}])/u.test(text))
         return true;
     if (/(?:^|[^\p{L}\p{N}])(?:ال)?(?:فيديو(?:هات)?|فيلم|افلام)[\s_-]+(?:ال)?جنسي(?:ة)?(?=$|[^\p{L}\p{N}])/u.test(text))
@@ -324,9 +330,9 @@ function containsMultilingualExplicitText(value) {
 function containsContextualExplicitMedia(value) {
     if (containsMultilingualExplicitText(value))
         return true;
-    if (containsAdditionalExplicitSearchTerm(value))
-        return true;
     const text = normalizeAutomaticExplicitText(value).toLowerCase();
+    if (containsNormalizedAdditionalExplicitSearchTerm(text))
+        return true;
     if (containsExplicitPrintEvidence(text))
         return true;
     if (/(?:^|[^\p{L}\p{N}])(?:x+[\s_.\p{Pd}]*rated|rated[\s_.\p{Pd}]*x+)(?:$|[^\p{L}\p{N}])/u.test(text))
@@ -569,9 +575,16 @@ function googleSearchResultDestinations(anchor) {
     ? [root, ...root.querySelectorAll(selector)] : root.querySelectorAll(selector);
   const cards = 'article, [data-testid="tweet"], [data-testid="UserCell"], [data-testid^="feedItem"], [data-testid="post"], [data-tag="post-card"], [data-testid="post-card"], .game_cell, [id^="chat-messages-"]';
   const controls = 'button, a, input, label, select, [role="button"], [role="switch"], [role="checkbox"], [role="radio"], [role="menuitem"]';
-  const describe = element => [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('name'), ...(element.labels || []),
-    ...(element.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean).map(id => element.getRootNode().getElementById?.(id))]
-    .map(value => typeof value === 'string' ? value : value?.textContent || '').join(' ').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '').trim();
+  const describe = element => {
+    const values = [element.textContent, element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('name')];
+    for (const label of element.labels || []) values.push(label.textContent);
+    const labelledBy = element.getAttribute('aria-labelledby');
+    if (labelledBy) {
+      const root = element.getRootNode();
+      for (const id of labelledBy.split(/\s+/).filter(Boolean)) values.push(root.getElementById?.(id)?.textContent);
+    }
+    return values.join(' ').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, '').trim();
+  };
   const adultWarning = value => sensitiveWarning(value)
     || /(?:age[ -]restricted|adults?[ -]only|adult content|sexually (?:explicit|suggestive)|sexual content|\bnsfw\b|\br[ -]?18g?\b|18\s*\+|成人向け|成人向)/i.test(value);
   const ageConfirmation = value => /(?:i\s*(?:am|'m|’m)|yes[,]?\s*i(?:m|'m|’m)?|confirm[^.]{0,30}(?:age|over)|(?:enter|continue|view|show)[^.]{0,30}(?:over|age))[^.]{0,35}(?:18|eighteen)|(?:18|eighteen)[^.]{0,30}(?:or older|years or over)/i.test(value);
@@ -587,7 +600,7 @@ function googleSearchResultDestinations(anchor) {
   };
   const explicitAccount = value => explicitTitle(value) || /porn|p0rn|nsfw|onlyfans|fansly|gonewild|xxx/i.test(String(value || '').normalize('NFKC').replace(/[\u200b-\u200d\ufeff]/g, ''));
   const authorMarkers = '[author], [data-author], [author-name], .author, .user_name, [data-testid="User-Name"], [data-testid="postAuthor"], [data-testid="post-author"], [data-tag="creator-name"]';
-  const scanMixedPlatforms = root => {
+  const scanMixedPlatforms = (root, elements) => {
     if (!isMixedPlatform) return;
     for (const author of selectAll(root, authorMarkers)) {
       if ([author.getAttribute('author'), author.getAttribute('data-author'), author.getAttribute('author-name'),
@@ -610,7 +623,7 @@ function googleSearchResultDestinations(anchor) {
       if (explicitTitle(describe(card)) || adultWarning(card.textContent || '')
         || card.querySelector('[data-nsfw="true"], [data-adult="true"], [data-rating="adult"], [data-x-restrict="1"], [data-x-restrict="2"]')) conceal(card);
     }
-    for (const element of selectAll(root, '*')) {
+    for (const element of elements) {
       if (element.matches('script, style, textarea, input, [contenteditable="true"]') || element.closest('[contenteditable="true"], script, style')) continue;
       const text = describe(element);
       const marked = element.matches('[data-nsfw="true"], [data-adult="true"], [data-rating="adult"], [data-x-restrict="1"], [data-x-restrict="2"]');
@@ -694,8 +707,11 @@ function googleSearchResultDestinations(anchor) {
     const scanRoots = new Set(scopes);
     for (const root of scanRoots) {
       if (root !== document && !(root.host || root).isConnected) { roots.delete(root); continue; }
+      // Both inspectors still visit every element. Share this pass's snapshot
+      // instead of asking the DOM to enumerate the complete root twice.
+      const elements = selectAll(root, '*');
       scanX(root);
-      scanMixedPlatforms(root);
+      scanMixedPlatforms(root, elements);
       // A search-result heading can split a label across spans while its URL
       // contains only an opaque app ID. Inspect the complete local link label.
       for (const link of selectAll(root, 'a[href], [role="link"]')) {
@@ -703,7 +719,7 @@ function googleSearchResultDestinations(anchor) {
         const label = describe(link);
         if (isReviewedExplicitPrintProductUrl(link.href) || (label.length <= 700 && explicitTitle(label, link, 'link'))) conceal(mediaContainer(link));
       }
-      for (const element of selectAll(root, '*')) {
+      for (const element of elements) {
         if (element.shadowRoot) { observe(element.shadowRoot); scanRoots.add(element.shadowRoot); }
         if (element.closest('[data-vigil-explicit-media="blocked"]')) {
           if (element.getAttribute('data-vigil-explicit-media') === 'blocked') conceal(element);
@@ -712,7 +728,9 @@ function googleSearchResultDestinations(anchor) {
         if (element.matches('script, style, textarea, input, [contenteditable="true"]') || element.closest('script, style, [contenteditable="true"]')) continue;
         const label = [element.getAttribute('alt'), element.getAttribute('title'), element.getAttribute('aria-label'), element.getAttribute('data-title')].filter(Boolean).join(' ');
         // Short direct text catches catalog labels even if they use plain divs.
-        const directText = Array.from(element.childNodes).filter(node => node.nodeType === 3).map(node => node.textContent).join(' ').trim();
+        let directText = '';
+        for (const node of element.childNodes) if (node.nodeType === 3) directText += ' ' + node.textContent;
+        directText = directText.trim();
         if (explicitTitle(label, element, 'label') || (directText.length <= 180 && explicitTitle(directText, element, 'direct'))) {
           const target = mediaContainer(element);
           if (target !== element || element.matches('img, video, a, button, [role="link"], [role="button"]') || element.querySelector('img, video, picture') || (isMixedPlatform && !element.matches('main, nav, body, html'))) conceal(target);

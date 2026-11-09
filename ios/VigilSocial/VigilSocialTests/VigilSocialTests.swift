@@ -9573,23 +9573,31 @@ final class VigilSocialTests: XCTestCase {
         webView.navigationDelegate = delegate
         webView.loadHTMLString(#"""
             <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>
-              #rail { width: 200px; overflow-x: auto; }
+              #rail { width: 300px; overflow-x: auto; }
               #track { width: 1600px; height: 100px; display: flex; position: relative; }
               .slot { position: absolute; width: 100px; height: 100px; flex: 0 0 100px; overflow-x: hidden; overflow-y: auto; }
               button { width: 80px; height: 90px; }
             </style><script>
+              sessionStorage.setItem('vigil.instagram.mutual-friendships.v1:session', JSON.stringify({
+                unread: { mutual: true, checkedAt: Date.now() },
+                other: { mutual: false, checkedAt: Date.now() }
+              }));
               window.fetch = async input => {
                 const url = new URL(input, location.href);
                 const username = url.searchParams.get('username') || 'viewer';
-                const user = { username, friendship_status: { following: true, followed_by: username === 'friend' } };
+                const user = { username, friendship_status: { following: true, followed_by: ['friend', 'unread'].includes(username) } };
                 if (username === 'pending') return new Promise(() => {});
                 return { ok: true, json: async () => ({ user, data: { user } }) };
               };
             </script></head><body>
               <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
               <main><div id="rail"><div id="track" role="list">
-                <div class="slot" id="own-slot"><div><button aria-label="Your story"><img alt="viewer's profile picture"></button></div></div>
+                <div class="slot" id="own-slot"><div role="button">
+                  <div><img alt=""><svg aria-label="Plus icon"><title>Plus icon</title></svg></div>
+                  <span>Your story</span><form role="presentation"></form>
+                </div></div>
                 <div class="slot" id="other-slot" style="transform:translateX(100px)"><div><button aria-label="other's story"><img alt="other's profile picture"></button></div></div>
+                <div class="slot" id="unread-slot" style="transform:translateX(200px)"><div><button aria-label="unread's story"><img alt="unread's profile picture"></button></div></div>
                 <div id="spacer" style="width:1300px;flex-shrink:0"></div>
               </div></div></main>
             <script>
@@ -9599,7 +9607,7 @@ final class VigilSocialTests: XCTestCase {
                 window.mountedByScroll = true;
                 window.deniedConcealedDuringScroll =
                   getComputedStyle(document.querySelector('#other-slot img')).visibility === 'hidden';
-                document.getElementById('spacer').insertAdjacentHTML('beforebegin', `<div class="slot" id="friend-slot" style="transform:translateX(200px)"><div><button aria-label="friend's story"><img alt="friend's profile picture"></button></div></div>`);
+                document.getElementById('spacer').insertAdjacentHTML('beforebegin', `<div class="slot" id="friend-slot" style="transform:translateX(300px)"><div><button aria-label="friend's story"><img alt="friend's profile picture"></button></div></div>`);
               });
             </script></body></html>
             """#, baseURL: URL(string: "https://www.instagram.com/")!)
@@ -9607,23 +9615,26 @@ final class VigilSocialTests: XCTestCase {
         try await Task.sleep(nanoseconds: 250_000_000)
         let layout = try await webView.evaluateJavaScript(#"""
             (() => {
-              const own = document.getElementById('own-slot').getBoundingClientRect();
+              const unread = document.getElementById('unread-slot').getBoundingClientRect();
               const friend = document.getElementById('friend-slot')?.getBoundingClientRect();
               const rail = document.getElementById('rail');
               rail.scrollLeft = 9999;
-              return { gap: friend ? friend.left - own.right : -1, scroll: rail.scrollLeft,
+              return { gap: friend ? friend.left - unread.right : -1, scroll: rail.scrollLeft,
                 overflow: rail.scrollWidth - rail.clientWidth, mountedByScroll: Number(window.mountedByScroll === true),
-                deniedConcealed: Number(window.deniedConcealedDuringScroll === true) };
+                deniedConcealed: Number(window.deniedConcealedDuringScroll === true),
+                ownClassified: Number(document.querySelector('#own-slot [role=button]').dataset.vigilInstagramStoryRelationship === 'self') };
             })()
             """#) as? [String: Double]
+        XCTAssertEqual(layout?["ownClassified"], 1, "The native add-story button has an empty avatar alt and a separate plus icon")
         XCTAssertEqual(layout?["mountedByScroll"], 1, "The watched batch must mount without a user swipe")
         XCTAssertEqual(layout?["deniedConcealed"], 1, "Pagination must not expose a denied portrait")
         XCTAssertEqual(layout?["gap"], 0, "Hidden outer slots must not leave gaps between visible Stories")
-        XCTAssertEqual(layout?["scroll"], 0, "Two 100px stories fit; there is no extra row to scroll into")
+        XCTAssertEqual(layout?["scroll"], 0, "The own, unread, and watched portraits fill the viewport without blank scrolling")
         XCTAssertEqual(layout?["overflow"], 0)
 
         _ = try await webView.evaluateJavaScript(#"""
             document.getElementById('friend-slot').remove();
+            document.getElementById('unread-slot').remove();
             document.getElementById('track').insertAdjacentHTML('beforeend', '<div class="slot" style="transform:translateX(600px)"><div><button aria-label="pending\'s story"><img alt="pending\'s profile picture"></button></div></div>');
             """#)
         try await Task.sleep(nanoseconds: 100_000_000)

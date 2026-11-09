@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { hasSafeSearchContributor, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection } from "../src/safeSearchContext.js";
+import { hasSafeSearchContributor, isSafeSearchLimitedNotice, isSafeSearchLockedNotice, safeSearchSubject, matchesSafeSearchSubject, sharedFileDestination, isExplicitLinkCollection, isSharedFileSearchDestination, hasSharedFileSearchResultText } from "../src/safeSearchContext.js";
 
 for (const text of [
   "SafeSearch is locked to Filter by safety settings applied to this browser. Learn more",
@@ -56,5 +56,62 @@ assert.equal(isExplicitLinkCollection([...cloud, "https://erome.com.example.org/
 assert.equal(isExplicitLinkCollection(["https://erome.com/a/opaque"], false), false, "one unrelated citation is not a collection");
 for (const url of ["https://mega.nz/", "https://gofile.io/", "https://mega.nz.example.org/folder/opaque", "javascript://mega.nz/folder/opaque", "https://news.example/?next=https://gofile.io/d/opaque"]) {
   assert.equal(sharedFileDestination(url), null, url);
+}
+for (const url of ["https://rentry.co/fixture", "https://rentry.org/", "https://pastebin.com/fixture", "https://justpaste.it/fixture", "https://gofile.io/", "https://www.mediafire.com/", "https://drive.google.com/", "https://www.dropbox.com./"]) {
+  assert.equal(isSharedFileSearchDestination(url), true, url);
+  assert.equal(sharedFileDestination(url), null, "search-only categories cannot supply reader collection evidence: " + url);
+}
+for (const url of ["https://rentry.co.example.org/fixture", "https://gofile.io-example.org/", "https://notgofile.io/", "javascript://gofile.io/d/fixture", "https://gofile.io@example.org/", "https://example.org/?next=https://gofile.io/"]) {
+  assert.equal(isSharedFileSearchDestination(url), false, url);
+}
+for (const text of ["... abella, bpsex ... gofile.io, niam ...", "... gofile, ultimateshop.ru ... abella ...", "Rentry.co WELCOME TO VIDZ4ALL.R.V", "https://rentry.co", "GoFile", "https://<not-a-url> gofile", "https://gofile.io/d/fixture", "https://ＧＯＦＩＬＥ.io/", "go\u200bfile.io"]) {
+  assert.equal(hasSharedFileSearchResultText(text), true, text);
+}
+for (const text of ["go file for disability", "gofiles", "notgofile", "gofile.io.example.org", "https://gofile.io-example.org/", "https://gofile.io@example.org/", "https://example.org/?next=https://gofile.io/", "ordinary notes"]) {
+  assert.equal(hasSharedFileSearchResultText(text), false, text);
+}
+const otherSharingServices = [
+  ["https://pixeldrain.com/u/fixture", "PixelDrain"],
+  ["https://files.catbox.moe/fixture.mp4", "Catbox"],
+  ["https://litterbox.catbox.moe/fixture.mp4", "catbox.moe"],
+  ["https://bunkr.cr/a/fixture", "Bunkr Albums"],
+  ["https://mediafire.com/file/fixture", "MediaFire"],
+  ["https://4shared.com/video/fixture", "4shared"],
+  ["https://send.now/fixture", "send.now"],
+  ["https://swisstransfer.com/d/fixture", "SwissTransfer"],
+  ["https://filebin.net/fixture", "Filebin"],
+  ["https://sendvid.com/fixture", "Sendvid"],
+  ["https://imgbox.com/fixture", "Imgbox"],
+  ["https://streamable.com/fixture", "streamable.com"],
+  ["https://wetransfer.com/downloads/fixture", "WeTransfer"],
+  ["https://we.tl/t-fixture", "we.tl"],
+  ["https://onedrive.live.com/fixture", "OneDrive"],
+  ["https://1drv.ms/v/s!fixture", "1drv.ms"],
+  ["https://my.pcloud.com/publink/show?code=fixture", "pCloud"],
+  ["https://gofile.today/l/d/fixture", "gofile.today"]
+];
+for (const [url, name] of otherSharingServices) {
+  assert.equal(isSharedFileSearchDestination(url), true, url);
+  for (const label of [url, name]) {
+    assert.equal(hasSharedFileSearchResultText(`Other files: ${label}, updated today.`), true, label);
+    assert.equal(hasSafeSearchContributor(`Jane Example ${label}`), true, label);
+    assert.equal(safeSearchSubject(`Jane Example ${label}`), "jane example", "service switching retains the exact subject: " + label);
+  }
+  const host = new URL(url).hostname;
+  for (const fake of [`https://${host}.example.org/fixture`, `https://${host}-example.org/fixture`, `https://${host}@example.org/fixture`]) {
+    assert.equal(isSharedFileSearchDestination(fake), false, fake);
+    assert.equal(hasSharedFileSearchResultText(fake), false, fake);
+  }
+}
+assert.ok(sharedFileDestination("https://bunkr.cr/a/fixture"), "current Bunkr albums retain reader collection enforcement");
+assert.ok(sharedFileDestination("https://gofile.today/l/d/fixture"), "observed alternate sharing route is recognized");
+for (const text of ["drive safely", "send now", "streamable video", "a litterbox", "mega sale", "a cardboard box", "https://example.org?next=https://pixeldrain.com/u/fixture"]) {
+  assert.equal(hasSharedFileSearchResultText(text), false, text);
+}
+for (const text of ["New service: free file hosting", "File-sharing index", "Public folders", "Shared albums", "Download links", "Album links and mirror links"]) {
+  assert.equal(hasSharedFileSearchResultText(text), true, "declared sharing surfaces need no known provider name: " + text);
+}
+for (const text of ["File your tax return", "Download the application", "A photo album", "Folder organization tips", "Mirror repair", "filesharingly", "filehostingtool"]) {
+  assert.equal(hasSharedFileSearchResultText(text), false, text);
 }
 console.log("SafeSearch notice, topic isolation, benign context and link-collection tests passed.");

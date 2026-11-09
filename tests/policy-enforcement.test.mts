@@ -1665,6 +1665,8 @@ import { must, mustPolicy, now, recordValue, stringValue, TEST_DAYS, testProfile
   }];
   const locked = mustPolicy(activeAppLockPolicy(state, { app: "Safari", hostname: "redd.it" }, now));
   assert.equal(locked.kind, "app-lock");
+  assert.equal(activeAppLockPolicy(state, { app: "Steam Helper", hostname: "" }, now), null);
+  assert.equal(activeAppLockPolicy(state, { app: "Steam", hostname: "reddit.com" }, now)?.kind, "app-lock");
   assert.equal(managedBlockDomains(state, now).includes("reddit.com"), false);
   must(state.appLocks[0], "app lock fixture").apps = ["Discord"];
   const appLocked = mustPolicy(activeAppLockPolicy(state, { app: "Discord Helper", hostname: "" }, now));
