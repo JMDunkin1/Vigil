@@ -36,7 +36,15 @@ assert.throws(() => verifiedLauncherState(verifiedReceipt, expires), /current ve
 assert.throws(() => verifiedLauncherState({ ...verifiedReceipt, serviceLaunches: [] }, now), /current verified/);
 assert.throws(() => verifiedLauncherState({ ...verifiedReceipt, policyFingerprint: "" }, now), /current verified/);
 const earlyExtension = { name: "Extension", expiresAt: "2026-10-11T00:00:00.000Z" };
-assert.equal(verifiedLauncherState({ ...verifiedReceipt, apps: [{ ...receipt.apps[0], signingProfile: { ...old, profiles: [old, earlyExtension] } }] }, now).expiresAt, earlyExtension.expiresAt);
+const earlyExtensionReceipt = { ...verifiedReceipt, apps: [{ ...receipt.apps[0], signingProfile: { ...old, profiles: [old, earlyExtension] } }] };
+assert.equal(verifiedLauncherState(earlyExtensionReceipt, now).expiresAt, earlyExtension.expiresAt);
+assert.equal(renewalDecision(receipt, "verified-source", now).status, "current");
+assert.deepEqual(renewalDecision(earlyExtensionReceipt, "verified-source", now), {
+  status: "due", device: "phone-1", expiresAt: earlyExtension.expiresAt
+}, "an earlier Safari extension expiry cannot be masked by the app's signing date");
+const invalidExtensionReceipt = { ...verifiedReceipt, apps: [{ ...receipt.apps[0], signingProfile: { ...old, profiles: [old, { ...earlyExtension, expiresAt: "unknown" }] } }] };
+assert.equal(renewalDecision(invalidExtensionReceipt, "verified-source", now).status, "unverified");
+assert.throws(() => verifiedLauncherState(invalidExtensionReceipt, now), /current verified/);
 assert.equal(renewalDecision(receipt, "verified-source", expires - RENEWAL_WINDOW_MS - 1).status, "current");
 assert.equal(renewalDecision(receipt, "verified-source", expires - RENEWAL_WINDOW_MS).status, "due");
 assert.equal(renewalDecision(receipt, "verified-source", expires + 1).status, "due", "expired app remains repairable through the verified update path");
@@ -108,7 +116,9 @@ try {
     "competing recoveries must leave both locks recoverable");
   const plist = renewalLaunchAgent({ root: "/Work/Vigil & Focus", home: "/Users/test", node: "/usr/local/bin/node", device: "phone-1", server: "http://127.0.0.1:8787" });
   assert.match(plist, /Vigil &amp; Focus/);
-  assert.match(plist, /<key>StartInterval<\/key><integer>21600<\/integer>/);
+  assert.match(plist, /<key>RunAtLoad<\/key><true\/>/);
+  const calendar = plist.match(/<key>StartCalendarInterval<\/key><array>(.*?)<\/array>/u)?.[1] ?? "";
+  assert.deepEqual(Array.from(calendar.matchAll(/<key>Minute<\/key><integer>(\d+)<\/integer>/gu), ([, minute]) => Number(minute)), [0, 15, 30, 45]);
   assert.match(plist, /ios-phone-renewal\.mjs/);
 } finally {
   await rm(root, { recursive: true, force: true });

@@ -133,8 +133,8 @@ const splitReceipt = {
     { bundleId: "tech.caseline.vigil.snapchat", version: "0.1.0", build: 1, sourceFingerprint: "snapchat-source", signingProfile: { expiresAt: "2099-01-08T00:00:00.000Z" } }
   ]
 };
-assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-05T23:59:59.999Z"), false);
-assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-06T00:00:00.000Z"), true);
+assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-04T23:59:59.999Z"), false);
+assert.equal(signingExpirationNeedsRenewal("2099-01-08T00:00:00.000Z", "2099-01-05T00:00:00.000Z"), true);
 assert.equal(signingExpirationNeedsRenewal("not-a-date", "2099-01-01T00:00:00.000Z"), true);
 assert.deepEqual(socialAppsNeedingUpdate(splitRelease, [
   { bundleIdentifier: "tech.caseline.vigil.instagram", version: "1.2.3", bundleVersion: "7" },
@@ -527,6 +527,9 @@ const youtubeExtension = {
   permissions: []
 };
 const nextInstagramApps = [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }];
+assert.match(phoneSuiteSource,
+  /if \(previousReceipt\?\.socialContainer === true\) \{[\s\S]*?safariExtensionUpdateProblems\(previousReceipt, build\.apps\)[\s\S]*?could invalidate Safari website access[\s\S]*?prepareCurrentPolicy\(/u,
+  "the verified updater must check the installed Safari permission contract before changing the app or policy");
 assert.deepEqual(safariExtensionUpdateProblems({
   apps: [{ bundleId: "tech.caseline.vigil.instagram", youtubeInteractionExtension: youtubeExtension }]
 }, [{ bundleId: "tech.caseline.vigil.youtube" }]), []);

@@ -1221,10 +1221,12 @@ async function updatePhoneTransaction(selectedOptions) {
   printPolicyAudit(audit, edition);
   phoneProgress("build", "Build and sign the changed app");
   const build = await buildPhoneApps(release, edition, urlFilter, toolEnvironment, socialAppIds, includeUrlFilter, device.udid, pushNotifications);
-  if (selectedOptions.noPolicy) {
+  if (previousReceipt?.socialContainer === true) {
+    // A supervised-policy transaction does not control Safari's website
+    // grants. Check the existing extension contract before replacing the app.
     const extensionProblems = safariExtensionUpdateProblems(previousReceipt, build.apps);
     if (extensionProblems.length) {
-      throw new Error(`Refusing the app-only update because Safari could disable the YouTube controls extension:\n- ${extensionProblems.join("\n- ")}`);
+      throw new Error(`This phone build could invalidate Safari website access for Vigil Focused Web Controls. The installed app was kept:\n- ${extensionProblems.join("\n- ")}`);
     }
   }
   phoneProgress("policy", "Validate the matching supervised policy");
@@ -1933,7 +1935,7 @@ export function validYouTubeInteractionManifest(manifest) {
 }
 
 export function safariExtensionUpdateProblems(previousReceipt, nextApps) {
-  const maintenance = "Use the explicit offline Safari-extension maintenance procedure before installing this app build.";
+  const maintenance = "Preserve the installed Safari permission contract for routine updates.";
   const previousApp = previousReceipt?.apps?.find((app) => app.bundleId === "tech.caseline.vigil.instagram") || null;
   const nextApp = nextApps?.find((app) => app.bundleId === "tech.caseline.vigil.instagram") || null;
   const previous = previousApp?.youtubeInteractionExtension || null;

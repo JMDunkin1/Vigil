@@ -211,6 +211,50 @@
       }
     });
   };
+  function installPhoneCaptionDefault() {
+    const userAgent = window.navigator?.userAgent || '';
+    const appleMobile = /iPhone|iPad|iPod/.test(userAgent)
+      || (/Macintosh/.test(userAgent) && window.navigator.maxTouchPoints > 1);
+    if (!appleMobile || window !== window.top || !/^(?:www\.|m\.)?youtube\.com$/.test(location.hostname)
+        || /^\/(?:accounts|signin|embed)\//.test(location.pathname)) return;
+
+    // The web player reads the per-tab setting before its remembered choice
+    // in local storage. Its storage envelope contains a JSON-encoded boolean.
+    try {
+      const off = JSON.stringify({ data: 'false', creation: Date.now() });
+      window.sessionStorage.setItem('yt-player-caption-persistence', off);
+      window.sessionStorage.setItem('yt-player-sticky-caption', off);
+    } catch { /* WebKit may deny storage. Still handle the player at startup. */ }
+
+    const watchID = () => location.pathname === '/watch'
+      ? new URL(location.href).searchParams.get('v') : location.pathname.match(/^\/live\/([\w-]{11})/)?.[1];
+    const initialized = new WeakMap();
+    let manualChoice = '';
+    document.addEventListener('click', event => {
+      if (event.isTrusted && event.target.closest?.(
+        '.ytp-subtitles-button,ytm-closed-captioning-button,.ytp-settings-menu,.ytp-settings-button'
+      )) manualChoice = watchID();
+    }, true);
+    document.addEventListener('keydown', event => {
+      if (event.isTrusted && event.key?.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey
+          && !event.target.closest?.('input,textarea,[contenteditable="true"]')) manualChoice = watchID();
+    }, true);
+    const applyAtStartup = event => {
+      const video = event.target, id = watchID();
+      const player = video.closest?.('#movie_player,.html5-video-player');
+      if (!player || video.tagName !== 'VIDEO' || !id || id === manualChoice || initialized.get(video) === id) return;
+      // A native HLS track and YouTube's own caption renderer are independent.
+      // Leave metadata and chapter tracks available to the player.
+      for (const track of Array.from(video.textTracks)) {
+        if ((track.kind === 'captions' || track.kind === 'subtitles') && track.mode === 'showing') track.mode = 'disabled';
+      }
+      if (player.isSubtitlesOn?.()) player.unloadModule?.('captions');
+      if (event.type === 'playing') initialized.set(video, id);
+    };
+    for (const name of ['loadeddata', 'playing']) document.addEventListener(name, applyAtStartup, true);
+  }
+
+  installPhoneCaptionDefault();
   installFetchPlayerResponseGuard();
   installXHRPlayerResponseGuard();
   for (const key of ['ytInitialPlayerResponse', 'ytInitialData', 'ytplayer']) installInitialPlayerResponseGuard(key);

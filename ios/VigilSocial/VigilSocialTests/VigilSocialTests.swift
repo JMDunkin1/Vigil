@@ -9743,7 +9743,15 @@ final class VigilSocialTests: XCTestCase {
         let delegate = FixtureNavigationDelegate { loaded.fulfill() }
         webView.navigationDelegate = delegate
         webView.loadHTMLString(#"""
-            <html><head><script>
+            <html><head><meta name="viewport" content="width=device-width, initial-scale=1"><style>
+              body { margin:0; }
+              #header { height:28px; }
+              #feed { display:flex; flex-direction:column; justify-content:center; min-height:calc(100dvh - 28px); }
+              #bottom { position:fixed; bottom:0; width:100%; height:48px; }
+              #story-rail { width:350px; overflow-x:auto; }
+              #story-track { display:flex; width:max-content; margin:0; padding:0; }
+              #story-track > li { width:96px; height:100px; list-style:none; }
+            </style><script>
               window.fetch = async input => {
                 const url = new URL(input, location.href);
                 const username = url.searchParams.get('username') || 'viewer';
@@ -9751,8 +9759,15 @@ final class VigilSocialTests: XCTestCase {
                 return { ok: true, json: async () => ({ user, data: { user } }) };
               };
             </script></head><body>
-              <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav>
-              <div role="main" id="feed"><article><a href="/other/">other</a>Hidden post</article></div>
+              <nav id="header"><a href="/viewer/" aria-label="Profile">Profile</a><a href="/notifications/">Notifications</a></nav>
+              <div role="main" id="feed">
+                <div id="story-rail"><ul id="story-track">
+                  <li><a href="/stories/viewer/1/" aria-label="Your story"><img alt="viewer's profile picture"></a></li>
+                  <li><a href="/stories/friend/2/"><img alt="friend's profile picture"></a></li>
+                </ul></div>
+                <article><a href="/other/">other</a>Hidden post</article>
+              </div>
+              <nav id="bottom"><a href="/direct/inbox/">Messages</a></nav>
             </body></html>
             """#, baseURL: URL(string: "https://www.instagram.com/")!)
         await fulfillment(of: [loaded], timeout: 5)
@@ -9768,14 +9783,34 @@ final class VigilSocialTests: XCTestCase {
                 feed.append(post);
                 if (getComputedStyle(post).display !== 'none') exposed++;
               }
-              return { exposed, empty: document.getElementById('vigil-instagram-friends-empty')?.dataset.vigilState };
+              const status = document.getElementById('vigil-instagram-friends-empty');
+              const rail = document.getElementById('story-rail').getBoundingClientRect();
+              const header = document.getElementById('header').getBoundingClientRect();
+              const bottom = document.getElementById('bottom').getBoundingClientRect();
+              const isCentered = (element) => {
+                const box = element?.getBoundingClientRect();
+                return !!box && box.height > 0 && box.top >= rail.bottom && box.bottom <= bottom.top
+                  && Math.abs(box.top + box.bottom - rail.bottom - bottom.top) < 32;
+              };
+              const empty = status?.dataset.vigilState;
+              const messageCentered = isCentered(status?.querySelector('span'));
+              window.__vigilResetFriendsFeedForRefresh();
+              return { exposed, empty, messageCentered, loaderCentered: isCentered(status?.querySelector('i')),
+                storiesAtTop: rail.top >= header.bottom && rail.top <= header.bottom + 8,
+                statusBelowStories: status?.getBoundingClientRect().top >= rail.bottom,
+                ownVisible: document.querySelector('[aria-label="Your story"]').getBoundingClientRect().width > 0 };
             })()
             """#) as? [String: Any]
         XCTAssertEqual(pagination?["exposed"] as? Int, 0, "CSS must conceal inserted posts before the observer gets a turn")
         XCTAssertEqual(pagination?["empty"] as? String, "empty")
+        XCTAssertEqual(pagination?["storiesAtTop"] as? Bool, true, "An empty feed must not center the Stories tray")
+        XCTAssertEqual(pagination?["statusBelowStories"] as? Bool, true, "The empty status must not cover Stories")
+        XCTAssertEqual(pagination?["messageCentered"] as? Bool, true, "Center the message between Stories and the bottom menu")
+        XCTAssertEqual(pagination?["loaderCentered"] as? Bool, true, "Keep the loading indicator in the same space")
+        XCTAssertEqual(pagination?["ownVisible"] as? Bool, true, "Keep the original viewer control accessible")
         try await Task.sleep(nanoseconds: 150_000_000)
         let settled = try await webView.evaluateJavaScript(#"""
-            [...document.querySelectorAll('#feed > *')].every(post => getComputedStyle(post).display === 'none')
+            [...document.querySelectorAll('#feed > :is(article, [role="article"])')].every(post => getComputedStyle(post).display === 'none')
             """#) as? Bool
         XCTAssertEqual(settled, true)
         _ = try await webView.evaluateJavaScript(#"""
@@ -14209,6 +14244,36 @@ final class VigilSocialTests: XCTestCase {
         let compiled = try await store.compileContentRuleList(forIdentifier: identifier, encodedContentRuleList: source)
         XCTAssertEqual(compiled?.identifier, identifier)
         try await store.removeContentRuleList(forIdentifier: identifier)
+    }
+
+    @MainActor
+    func testYouTubeWatchStartsWithNativeSubtitlesOff() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: try youtubeInteractionExtensionSource(), injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Caption fixture loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        web.navigationDelegate = delegate
+        defer { withExtendedLifetime(delegate) { web.navigationDelegate = nil } }
+        web.loadHTMLString("<div id='movie_player'><video></video></div>",
+                           baseURL: URL(string: "https://m.youtube.com/watch?v=abcdefghijk"))
+        await fulfillment(of: [loaded], timeout: 5)
+        let result = try await web.evaluateJavaScript("""
+        (() => {
+          const video = document.querySelector('video');
+          const cc = video.addTextTrack('subtitles', 'Arabic', 'ar');
+          cc.mode = 'showing';
+          video.dispatchEvent(new Event('playing'));
+          const initial = cc.mode;
+          cc.mode = 'showing';
+          video.dispatchEvent(new Event('playing'));
+          return [initial, cc.mode, JSON.parse(sessionStorage.getItem('yt-player-caption-persistence')).data];
+        })()
+        """) as? [String]
+        XCTAssertEqual(result, ["disabled", "showing", "false"])
     }
 
     private func youtubeInteractionExtensionSource() throws -> String {

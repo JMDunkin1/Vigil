@@ -2428,7 +2428,15 @@ enum DOMAdapters {
         if (watermark === null || watermark <= 0n || watermark >= activity) return false;
         let complete = false;
         for (const name of connectionNames) {
-          const connection = data[name];
+          const result = data[name];
+          // A connection not loaded on this screen is normal. If a loaded
+          // connection is incomplete, do not use another to mask its errors.
+          if (result?.ok !== true) {
+            if (result?.ok === false && Array.isArray(result.errors) && result.errors.length
+                && result.errors.every(error => error?.path?.length === 1 && error.path[0] === name)) continue;
+            return false;
+          }
+          const connection = result.value;
           if (connection == null) continue;
           if (!Array.isArray(connection.edges) || connection.edges.length > 500) return false;
           let covered = false, latestIsOwn = false;
@@ -2447,17 +2455,20 @@ enum DOMAdapters {
         return complete;
       };
       const stop = () => { observer.disconnect(); clearInterval(timer); clearTimeout(deadline); };
-      const install = (module, fragment, fragments, user) => {
+      const install = (module, fragment, fragments, user, nodes) => {
         const original = module?.client__is_unread;
         if (installed || typeof original !== 'function' || fragment?.kind !== 'Fragment'
             || fragment.name !== 'XFBIGDirectViewerThreadIsUnreadResolver_XFBIGDirectViewerThread'
             || !Array.isArray(fragment.selections) || typeof fragments?.readFragment !== 'function'
-            || typeof user?.getEIMU !== 'function') return;
+            || typeof user?.getEIMU !== 'function' || nodes?.CATCH_FIELD !== 'CatchField') return;
         // Relay caches the first fragment read in a resolver evaluation. Read
-        // the expanded fragment first, preserving every original selection.
-        // Optional client connections add subscriptions, never network fields.
+        // the expanded fragment first. ClientExtension alone still produces
+        // throwing field errors when history is absent on Home. Catch only
+        // the extra client fields; native unread inputs retain their semantics.
         const expanded = { ...fragment, selections: [...fragment.selections,
-          { kind: 'ClientExtension', selections: connections }] };
+          { kind: 'ClientExtension', selections: connections.map(field => ({
+            kind: nodes.CATCH_FIELD, field, to: 'RESULT'
+          })) }] };
         const resolve = function(...args) {
           let data;
           try { data = fragments.readFragment(expanded, args[0]); } catch (_) {}
@@ -2473,7 +2484,7 @@ enum DOMAdapters {
         try {
           window.requireLazy(['XFBIGDirectViewerThreadIsUnreadResolver',
             'XFBIGDirectViewerThreadIsUnreadResolver_XFBIGDirectViewerThread.graphql',
-            'relay-runtime/store/ResolverFragments', 'CurrentUser'], install);
+            'relay-runtime/store/ResolverFragments', 'CurrentUser', 'relay-runtime/util/RelayConcreteNode'], install);
           registered = true;
           stop();
         } catch (_) {}
@@ -4961,13 +4972,19 @@ enum DOMAdapters {
             fill: #050505 !important;
           }
         }
+        html[data-vigil-instagram-home-filter="true"] :is(main, [role="main"]):has(
+          [data-vigil-instagram-story-rail="true"], > #vigil-instagram-friends-empty
+        ) {
+          justify-content: flex-start !important;
+        }
         #vigil-instagram-friends-empty {
           box-sizing: border-box !important;
-          position: fixed !important;
-          z-index: 2 !important;
-          inset: 156px 20px 84px !important;
+          align-self: stretch !important;
+          flex: 1 0 auto !important;
           display: grid !important;
           place-items: center !important;
+          /* The 48px bottom navigation overlays the feed column. */
+          padding: 20px 16px 68px !important;
           pointer-events: none !important;
           color: inherit !important;
           font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
@@ -9701,13 +9718,19 @@ enum DOMAdapters {
               fill: #050505 !important;
             }
           }
+          html[data-vigil-instagram-home-filter="true"] :is(main, [role="main"]):has(
+            [data-vigil-instagram-story-rail="true"], > #vigil-instagram-friends-empty
+          ) {
+            justify-content: flex-start !important;
+          }
           #vigil-instagram-friends-empty {
             box-sizing: border-box !important;
-            position: fixed !important;
-            z-index: 2 !important;
-            inset: 156px 20px 84px !important;
+            align-self: stretch !important;
+            flex: 1 0 auto !important;
             display: grid !important;
             place-items: center !important;
+            /* The 48px bottom navigation overlays the feed column. */
+            padding: 20px 16px 68px !important;
             pointer-events: none !important;
             color: inherit !important;
             font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
@@ -11226,6 +11249,12 @@ enum DOMAdapters {
       };
       const renderFriendsState = (mode, force = false) => {
         const stateID = 'vigil-instagram-friends-empty';
+        const mainSelector = 'main, [role="main"]';
+        const storyMain = document.querySelector('[data-vigil-instagram-story-rail="true"]')?.closest(mainSelector);
+        const main = storyMain || document.querySelector(mainSelector);
+        // Keep the status in the feed's normal flow, below native Stories.
+        // A fixed viewport center can overlap a tray when every post is hidden.
+        if (!main) return;
         let state = document.getElementById(stateID);
         if (!state) {
           state = document.createElement('div');
@@ -11236,9 +11265,8 @@ enum DOMAdapters {
           spinner.setAttribute('aria-hidden', 'true');
           const message = document.createElement('span');
           state.append(spinner, message);
-          document.body?.append(state);
         }
-        if (!state) return;
+        if (state.parentElement !== main) main.append(state);
         // Once the settled empty result is visible, background pagination may
         // continue checking newly inserted cards without flashing back to a
         // loader. Only removeFriendsState(), called for a verified friend or a

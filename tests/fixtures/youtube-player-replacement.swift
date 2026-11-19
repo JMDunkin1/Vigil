@@ -28,6 +28,7 @@ import WebKit
             let source = try String(contentsOfFile: CommandLine.arguments[1], encoding: .utf8)
             let engine = try String(contentsOfFile: CommandLine.arguments[2], encoding: .utf8)
             let media = try Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[3])).base64EncodedString()
+            let retainOldPlayer = CommandLine.arguments.dropFirst(4).first == "retained"
             let config = WKWebViewConfiguration()
             config.websiteDataStore = .nonPersistent()
             config.mediaTypesRequiringUserActionForPlayback = []
@@ -75,13 +76,16 @@ import WebKit
             window.fixtureLease=JSON.parse(fixtureLedger).youtubeLimits.lease.id;
             window.retired=document.getElementById('watch');
             const replacement=document.createElement('video');replacement.id='watch';replacement.muted=true;replacement.playsInline=true;replacement.loop=true;
-            replacement.src=fixtureSource;retired.replaceWith(replacement);true;
+            replacement.src=fixtureSource;
+            if (\(retainOldPlayer)) { retired.id='retired';retired.style.display='none';retired.after(replacement); }
+            else retired.replaceWith(replacement);
+            true;
             """)
             try await until(page, "retired.paused&&!document.getElementById('watch').paused", "replacement plays and old audio stops")
             try await check(page, "JSON.parse(fixtureLedger).youtubeLimits.lease.id===fixtureLease", "same bounded authorization")
             try await until(page, "document.getElementById('watch').getVideoPlaybackQuality().totalVideoFrames>3", "moving replacement frames")
             _ = try await page.evaluateJavaScript("retired.play().catch(()=>{});true;")
-            try await until(page, "retired.paused", "detached replay remains stopped")
+            try await until(page, "retired.paused", "retired player replay remains stopped")
             try await check(page, "!document.getElementById('watch').paused", "visible player keeps playing")
             _ = try await page.evaluateJavaScript("fixtureTogglePlayback();true;")
             try await until(page, "document.getElementById('watch').paused", "Pause reaches replacement")
@@ -92,7 +96,7 @@ import WebKit
             """)
             try await Task.sleep(nanoseconds: 600_000_000)
             try await check(page, "document.getElementById('watch').paused&&retired.paused&&secondRetired.paused", "replacement cannot undo Pause")
-            print("PASS native WebKit: replacement frames advance, removed audio stops, late replay is blocked, and Pause is retained.")
+            print("PASS native WebKit: replacement frames advance, retired audio stops, late replay is blocked, and Pause is retained.")
             host.orderOut(nil)
             exit(0)
         } catch { print("FAIL native WebKit player replacement: \(error)"); exit(1) }

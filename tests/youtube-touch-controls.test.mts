@@ -110,6 +110,39 @@ test('synthetic taps and active advertisements cannot invoke the custom seek pat
   assert.equal(f.seeks.length, 0);
 });
 
+test('iPhone watch startup defaults both caption settings off and preserves a later manual selection', () => {
+  const session = new Map<string, string>();
+  const window = { navigator: { userAgent: 'iPhone' }, sessionStorage: { setItem: (key: string, value: string) => session.set(key, value) }, top: {} };
+  window.top = window;
+  const handlers = new Map<string, (event: object) => void>();
+  const document = { addEventListener: (name: string, handler: (event: object) => void) => handlers.set(name, handler) };
+  const location = new URL('https://m.youtube.com/watch?v=abcdefghijk');
+  runInNewContext(responseGuard, { window, document, location, URL });
+  for (const key of ['yt-player-caption-persistence', 'yt-player-sticky-caption']) {
+    assert.equal(JSON.parse(JSON.parse(session.get(key)!).data), false);
+  }
+  let captions = true;
+  const player = { isSubtitlesOn: () => captions, unloadModule(name: string) { assert.equal(name, 'captions'); captions = false; } };
+  const tracks = [{ kind: 'subtitles', language: 'ar', mode: 'showing' }, { kind: 'chapters', mode: 'showing' }];
+  const video = { tagName: 'VIDEO', closest: () => player, textTracks: tracks };
+  const playing = () => handlers.get('playing')!({ target: video, type: 'playing' });
+  playing();
+  assert.equal(captions, false);
+  assert.deepEqual(tracks.map(track => track.mode), ['disabled', 'showing']);
+  captions = true;
+  tracks[0].mode = 'showing';
+  playing();
+  assert.equal(captions, true, 'a resume keeps the choice for the current video');
+  location.search = '?v=12345678901';
+  playing();
+  assert.equal(captions, false, 'a new watch item starts with captions off even on a reused player');
+  location.search = '?v=newvideo001';
+  handlers.get('click')!({ isTrusted: true, target: { closest: () => player } });
+  captions = true;
+  playing();
+  assert.equal(captions, true, 'an explicit CC choice before Play is respected');
+});
+
 test('the page response guard prunes nested mobile players and handles subsequent initial responses', () => {
   const window: Record<string, unknown> = {};
   runInNewContext(responseGuard, { window, location: new URL('https://m.youtube.com/watch?v=abcdefghijk'), URL });

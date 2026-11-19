@@ -32,7 +32,8 @@ function fixture({ late = false, host = "www.instagram.com", frame = false, port
   const timers = new Set<() => void>();
   const requireLazy = (names: string[], install: (...args: unknown[]) => void) => {
     assert.deepEqual(Array.from(names), ["XFBIGDirectViewerThreadIsUnreadResolver",
-      `${fragmentName}.graphql`, "relay-runtime/store/ResolverFragments", "CurrentUser"]);
+      `${fragmentName}.graphql`, "relay-runtime/store/ResolverFragments", "CurrentUser",
+      "relay-runtime/util/RelayConcreteNode"]);
     subscriptions++; callback = install;
   };
   if (!late) window.requireLazy = requireLazy;
@@ -48,20 +49,35 @@ function fixture({ late = false, host = "www.instagram.com", frame = false, port
     clearTimeout: (fn: () => void) => timers.delete(fn)
   });
   vm.runInContext(script!, context);
-  let viewer: unknown = "100", snapshot: Data | undefined, originalCalls = 0;
+  let viewer: unknown = "100", snapshot: Data | undefined, originalCalls = 0, hasFieldError = false;
   const fragment = { kind: "Fragment", name: fragmentName,
     selections: ["marked_as_unread", "last_activity_timestamp_ms", "slide_read_receipts"].map(name => ({ kind: "ScalarField", name })) };
   const fragments = { readFragment(selection: typeof fragment, key: Data) {
     // Production Relay caches the FIRST fragment read in each resolver call.
     // Project selected fields so reading the original first loses the evidence.
-    if (snapshot) return snapshot;
-    snapshot = {};
-    for (const field of selection.selections) {
-      if (field.kind === "ClientExtension") {
-        const fields = (field as unknown as { selections: { name: string }[] }).selections;
-        for (const client of fields) snapshot[client.name] = key[client.name];
-      } else snapshot[field.name] = key[field.name];
+    if (!snapshot) {
+      snapshot = {};
+      for (const field of selection.selections) {
+        if (field.kind === "ClientExtension") {
+          const fields = (field as unknown as { selections: {
+            kind: string; to?: string; name?: string; field?: { name: string }
+          }[] }).selections;
+          for (const client of fields) {
+            const name = (client.field?.name || client.name)!;
+            const value = key[name];
+            const path = value === undefined ? [name]
+              : (value as Data | null)?.missingEdges ? [name, "edges"] : null;
+            if (client.kind === "CatchField" && client.to === "RESULT") {
+              snapshot[name] = path ? { ok: false, errors: [{ path }] } : { ok: true, value };
+            } else {
+              snapshot[name] = value;
+              hasFieldError ||= !!path;
+            }
+          }
+        } else snapshot[field.name] = key[field.name];
+      }
     }
+    if (hasFieldError) throw new Error("Missing expected client data");
     return snapshot;
   } };
   const receiver = {};
@@ -78,8 +94,13 @@ function fixture({ late = false, host = "www.instagram.com", frame = false, port
     get originalCalls() { return originalCalls; },
     viewer(value: unknown) { viewer = value; },
     arrive() { window.requireLazy = requireLazy; notify?.(); },
-    install(value: unknown = module) { callback?.(value, fragment, fragments, { getEIMU: () => viewer }); },
-    unread(value: Data) { snapshot = undefined; return module.client__is_unread.call(receiver, value, "unchanged"); }
+    install(value: unknown = module, nodes: unknown = { CATCH_FIELD: "CatchField" }) {
+      callback?.(value, fragment, fragments, { getEIMU: () => viewer }, nodes);
+    },
+    unread(value: Data) {
+      snapshot = undefined; hasFieldError = false;
+      return module.client__is_unread.call(receiver, value, "unchanged");
+    }
   };
 }
 
@@ -101,6 +122,15 @@ test("older unseen incoming messages cannot be hidden by a more recent own send"
     "Conflicting incoming evidence in either connection wins");
   assert.equal(page.unread(data({ [inbox]: { edges: [item()] }, [messages]: { edges: [item("200", "1000")] } })), true,
     "Separate incomplete histories cannot be combined to claim coverage");
+  assert.equal(page.unread(data({ [inbox]: { missingEdges: true } })), true,
+    "A partial connection cannot be discarded when another looks complete");
+});
+
+test("Home resolves native unread and read states with neither history connection loaded", () => {
+  const page = fixture(); page.install();
+  assert.equal(page.unread(data({ [messages]: undefined })), true);
+  assert.equal(page.unread(data({ [messages]: undefined, last_activity_timestamp_ms: "1000" })), false);
+  assert.equal(page.unread(data({ [messages]: undefined, marked_as_unread: true })), true);
 });
 
 test("an inbox or loaded conversation can prove a complete outgoing-only interval without changing data", () => {
@@ -160,6 +190,10 @@ test("document-start bootstrap handles delayed modules, repeated injection and u
   assert.equal((frozen.window.__vigilInstagramOutgoingUnreadCompatibility as { installed: boolean }).installed, false);
   const unknown = fixture();
   assert.doesNotThrow(() => unknown.install({}));
+  const oldRelay = fixture();
+  const original = oldRelay.module.client__is_unread;
+  oldRelay.install(oldRelay.module, {});
+  assert.equal(oldRelay.module.client__is_unread, original);
 });
 
 test("foreign pages, embedded frames, HTTP and nonstandard ports stay untouched", () => {

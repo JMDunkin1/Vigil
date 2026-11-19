@@ -25,13 +25,27 @@ window.fixtureData={marked_as_unread:false,last_activity_timestamp_ms:'2000',
   {node:{id:'old',sender_fbid:'200',timestamp_ms:'1000'}}]}};
 const fragment={kind:'Fragment',name:'XFBIGDirectViewerThreadIsUnreadResolver_XFBIGDirectViewerThread',
  selections:['marked_as_unread','last_activity_timestamp_ms','slide_read_receipts'].map(name=>({kind:'ScalarField',name}))};
-const fragments={readFragment:(selection,key)=>key};
+let snapshot;
+const fragments={readFragment(selection,key){
+ if(snapshot)return snapshot;
+ snapshot={};
+ for(const field of selection.selections){
+  if(field.kind!=='ClientExtension'){snapshot[field.name]=key[field.name];continue;}
+  for(const client of field.selections){
+   const name=client.field?.name||client.name,value=key[name];
+   snapshot[name]=client.kind==='CatchField'&&client.to==='RESULT'
+    ?value===undefined?{ok:false,errors:[{path:[name]}]}:{ok:true,value}:value;
+  }
+ }
+ return snapshot;
+}};
 const user={getEIMU:()=> '100'};
 const module={client__is_unread(key){const data=fragments.readFragment(fragment,key);
  return data.marked_as_unread===true||Number(data.slide_read_receipts[0].watermark_timestamp_ms)<Number(data.last_activity_timestamp_ms);}};
-fixtureSubscriptions.forEach(callback=>callback(module,fragment,fragments,user));
+fixtureSubscriptions.forEach(callback=>callback(module,fragment,fragments,user,{CATCH_FIELD:'CatchField'}));
 // Compiled query modules capture the export rather than looking it up per call.
-window.fixtureResolver=module.client__is_unread;
+const resolver=module.client__is_unread;
+window.fixtureResolver=key=>{snapshot=undefined;return resolver(key);};
 window.fixtureFirstRender=fixtureResolver(fixtureData);
 </script></body></html>`;
 const scenarios = [{
@@ -44,7 +58,9 @@ const scenarios = [{
       condition: "fixtureResolver(fixtureData)===true" },
     { action: "fixtureData.marked_as_unread=false;fixtureData.__IGDMessagesList_slide_messages_connection.edges.splice(1,0,{node:{id:'unseen',sender_fbid:'200',timestamp_ms:'1500'}})",
       condition: "fixtureResolver(fixtureData)===true" },
-    { condition: "fixtureData.slide_read_receipts[0].watermark_timestamp_ms==='1000'" }
+    { condition: "fixtureData.slide_read_receipts[0].watermark_timestamp_ms==='1000'" },
+    { action: "delete fixtureData.__IGDMessagesList_slide_messages_connection",
+      condition: "fixtureResolver(fixtureData)===true" }
   ]
 }];
 const directory = await mkdtemp(join(tmpdir(), "vigil-instagram-unread-"));

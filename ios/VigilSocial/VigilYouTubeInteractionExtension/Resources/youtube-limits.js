@@ -153,13 +153,17 @@
     if (!playing) return false;
     const previous = playing;
     const detached = previous.isConnected === false;
-    // The short playback clock needs no layout scan for a connected owner.
-    // Check a hidden connected predecessor only when another player starts.
-    if (!detached && !replacement) return false;
+    if (!detached && (document.hidden || previous.webkitDisplayingFullscreen || previous.webkitPresentationMode === 'picture-in-picture'
+        || document.pictureInPictureElement === previous || document.fullscreenElement?.contains(previous))) return false;
     const rect = detached ? null : previous.getBoundingClientRect?.();
     if (!detached && !(rect && (rect.width === 0 || rect.height === 0))) return false;
     replacement ||= currentVideo();
     if (replacement === previous) return false;
+    if (!detached) {
+      const box = replacement?.getBoundingClientRect?.();
+      if (!box || box.width <= 0 || box.height <= 0
+          || !replacement.closest('ytm-player,ytd-player,#movie_player,#player-container-id')) return false;
+    }
     sample();
     observeMediaOwnership(previous);
     if (!replacement || !lease || busy || settlingPlayback || !wantsPlayback || intent !== currentID()
@@ -1214,6 +1218,27 @@
       const play = document.createElement('span'); play.className = 'play'; play.setAttribute('aria-hidden', 'true');
       // Navigate directly from this owned shadow surface. Native YouTube's
       // delegated handlers cannot resolve links inside a closed shadow root.
+      // A touch handler on the surrounding site can cancel the compatibility
+      // click. Activate a completed single tap inside our own shadow row.
+      let tap = null;
+      link.addEventListener('touchstart', event => {
+        const point = event.touches[0];
+        tap = event.touches.length === 1 ? { id: point.identifier, x: point.clientX, y: point.clientY, at: event.timeStamp } : null;
+      }, { passive: true });
+      link.addEventListener('touchmove', event => {
+        const point = event.touches[0];
+        if (tap && (event.touches.length !== 1 || Math.hypot(point.clientX - tap.x, point.clientY - tap.y) > 10)) tap = null;
+      }, { passive: true });
+      link.addEventListener('touchcancel', () => { tap = null; });
+      link.addEventListener('touchend', event => {
+        const start = tap, point = event.changedTouches[0];
+        tap = null;
+        if (!start || !point || event.touches.length || point.identifier !== start.id
+            || event.timeStamp - start.at > 500 || Math.hypot(point.clientX - start.x, point.clientY - start.y) > 10
+            || !event.cancelable || finishedScreen.hidden || !link.isConnected) return;
+        event.preventDefault(); event.stopPropagation();
+        location.assign(link.href);
+      }, { passive: false });
       link.addEventListener('click', event => {
         if (event.button > 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
         event.preventDefault(); event.stopPropagation();
@@ -1271,6 +1296,7 @@
       style.textContent += 'html[data-vigil-playback-held] .ytp-spinner{display:none!important}';
       document.documentElement.append(style);
     }
+    // Detect a retained, collapsed player even if its replacement never emitted Play.
     adoptReplacementPlayer();
     for (const media of document.querySelectorAll('video,audio')) {
       if (media.autoplay) media.autoplay = false;
@@ -1454,7 +1480,8 @@
         void stop().then(() => request({ action: 'switch', videoId: currentID() })).catch(error => show(error.message));
       }
     }
-    adoptReplacementPlayer();
+    // Avoid a layout scan on the fast playback clock.
+    if (playing?.isConnected === false) adoptReplacementPlayer();
     if (retryInterruptedPlay && wantsPlayback && playing?.readyState >= 3 && !playing.seeking) playAuthorized(playing);
     sample();
     if (lease && playing?.paused && !waiting) {

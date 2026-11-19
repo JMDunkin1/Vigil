@@ -834,12 +834,10 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 YouTubeWebCompatibility.unsupportedSafariApplicationNameSuffix
         } else if service == .x {
             configuration.applicationNameForUserAgent = XWebCompatibility.safariApplicationNameSuffix
-        } else if service == .instagram {
-            // WKWebView omits Safari's token; Meta's call capability detector
-            // recognizes Mobile Safari explicitly. Keep the real mobile UA.
-            configuration.applicationNameForUserAgent = "Version/18.6 Safari/605.1.15"
         }
 
+        // Keep Instagram's stock iPhone WKWebView identity. Replacing the
+        // application token also removes Mobile/, selecting Meta's desktop UI.
         let webView = service == .instagram
             ? InstagramWebView(frame: .zero, configuration: configuration)
             : WKWebView(frame: .zero, configuration: configuration)

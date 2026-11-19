@@ -9,7 +9,9 @@ import { promisify } from "node:util";
 const exec = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const LABEL = "tech.caseline.vigil.phone-renewal";
-export const RENEWAL_WINDOW_MS = 48 * 60 * 60 * 1000;
+const RENEWAL_LEAD_HOURS = 72;
+const RENEWAL_CHECK_MINUTES = 15;
+export const RENEWAL_WINDOW_MS = RENEWAL_LEAD_HOURS * 60 * 60 * 1000;
 export const FRESH_SIGNING_WINDOW_MS = 5 * 24 * 60 * 60 * 1000;
 
 // Include extensions: an expired Safari companion is an expired deployment,
@@ -37,13 +39,23 @@ export async function freshSigningBuild({ build, readProfiles, quarantine, now =
   return profiles;
 }
 
+function earliestSigningExpiration(app) {
+  const profile = app?.signingProfile;
+  const embedded = profile?.profiles;
+  if (embedded !== undefined && (!Array.isArray(embedded) || !embedded.length)) return NaN;
+  const profiles = [profile, ...(embedded || [])];
+  const expirations = profiles.map(entry => Date.parse(entry?.expiresAt || ""));
+  return expirations.every(Number.isFinite) ? Math.min(...expirations) : NaN;
+}
+
 export function renewalDecision(receipt, fingerprint, now = Date.now()) {
   if (receipt?.edition !== "personal" || receipt?.socialContainer !== true) return { status: "unconfigured" };
   const app = receipt.apps?.find((entry) => entry.bundleId === "tech.caseline.vigil.instagram");
-  const expiresAt = app?.signingProfile?.expiresAt || "";
+  const expires = earliestSigningExpiration(app);
+  const expiresAt = Number.isFinite(expires) ? new Date(expires).toISOString() : "";
   if (!app?.launchVerifiedAt || !receipt.policyFingerprint || !receipt.device?.udid
-    || !Number.isFinite(Date.parse(expiresAt))) return { status: "unverified", expiresAt };
-  if (Date.parse(expiresAt) > Number(now) + RENEWAL_WINDOW_MS) return { status: "current", expiresAt };
+    || !Number.isFinite(expires)) return { status: "unverified", expiresAt };
+  if (expires > Number(now) + RENEWAL_WINDOW_MS) return { status: "current", expiresAt };
   if (!fingerprint || receipt.release?.sourceFingerprint !== fingerprint) return { status: "sources-changed", expiresAt };
   return { status: "due", expiresAt, device: receipt.device.udid };
 }
@@ -52,13 +64,11 @@ export function verifiedLauncherState(receipt, now = Date.now()) {
   const app = receipt?.apps?.find((entry) => entry.bundleId === "tech.caseline.vigil.instagram");
   const required = ["instagram", "youtube", "snapchat", "linkedin"];
   const launches = new Set(receipt?.serviceLaunches?.filter((entry) => entry.verifiedAt).map((entry) => entry.service));
-  const profiles = app?.signingProfile?.profiles || [app?.signingProfile];
-  const expirations = profiles.map((profile) => Date.parse(profile?.expiresAt || ""));
-  const expires = Math.min(...expirations);
+  const expires = earliestSigningExpiration(app);
   if (receipt?.edition !== "personal" || receipt?.socialContainer !== true
     || !receipt.policyFingerprint || !app?.launchVerifiedAt
     || !required.every((service) => launches.has(service))
-    || !expirations.length || expirations.some((expiration) => !Number.isFinite(expiration)) || expires <= now) {
+    || !Number.isFinite(expires) || expires <= now) {
     throw new Error("A current verified app-and-policy receipt is required to publish launcher expiry.");
   }
   // Informational preflight only. This is never a signing credential or an
@@ -162,6 +172,10 @@ const xml = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&
 export function renewalLaunchAgent({ root, node, home, device, server }) {
   const log = join(home, "Library", "Logs", "Vigil", "phone-renewal.log");
   const args = [node, join(root, "scripts", "ios-phone-renewal.mjs"), device, server];
+  // Calendar triggers missed during sleep are coalesced into one check on wake.
+  // Short connection windows can fall entirely between the old six-hour checks.
+  const times = Array.from({ length: 60 / RENEWAL_CHECK_MINUTES }, (_, step) =>
+    `<dict><key>Minute</key><integer>${step * RENEWAL_CHECK_MINUTES}</integer></dict>`);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
@@ -169,7 +183,8 @@ export function renewalLaunchAgent({ root, node, home, device, server }) {
 <key>ProgramArguments</key><array>${args.map((arg) => `<string>${xml(arg)}</string>`).join("")}</array>
 <key>WorkingDirectory</key><string>${xml(root)}</string>
 <key>EnvironmentVariables</key><dict><key>PATH</key><string>${xml(`${dirname(node)}:/usr/bin:/bin:/usr/sbin:/sbin`)}</string></dict>
-<key>StartInterval</key><integer>21600</integer>
+<key>RunAtLoad</key><true/>
+<key>StartCalendarInterval</key><array>${times.join("")}</array>
 <key>StandardOutPath</key><string>${xml(log)}</string>
 <key>StandardErrorPath</key><string>${xml(log)}</string>
 </dict></plist>
@@ -197,7 +212,7 @@ export async function installPhoneRenewal(device, server, root = ROOT) {
   }
   await writeFile(path, plist, { mode: 0o600 });
   if (!loaded) await exec("/bin/launchctl", ["bootstrap", domain, path]);
-  console.log("Automatic phone signing renewal: every six hours, starting 48 hours before expiry.");
+  console.log(`Automatic phone signing renewal: checks every ${RENEWAL_CHECK_MINUTES} minutes, starting ${RENEWAL_LEAD_HOURS} hours before expiry.`);
 }
 
 export async function runPhoneRenewal({ receipt, fingerprint, now, update }) {

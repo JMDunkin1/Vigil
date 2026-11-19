@@ -85,6 +85,21 @@ test('first activation directly opens a save and polling does not replace the cl
   assert.deepEqual(f.navigations, ['/watch?v=video000000']);
   assert.equal(prevented, 1); assert.equal(stopped, 1);
 });
+test('a saved row ignores a scroll, long press and cancelled touch while accepting a single tap', () => {
+  const f = fixture(); f.api.update();
+  const link = f.links()[1];
+  const touch = (type: string, x: number, timeStamp: number) => {
+    const point = { identifier: 1, clientX: x, clientY: 100 };
+    link.events.get(type)!({ touches: type === 'touchend' ? [] : [point], changedTouches: [point],
+      timeStamp, cancelable: true, preventDefault() {}, stopPropagation() {} });
+  };
+  touch('touchstart', 10, 0); touch('touchmove', 45, 100); touch('touchend', 10, 160);
+  touch('touchstart', 10, 200); touch('touchend', 10, 800);
+  touch('touchstart', 10, 1000); touch('touchcancel', 10, 1010); touch('touchend', 10, 1050);
+  assert.deepEqual(f.navigations, []);
+  touch('touchstart', 10, 1200); touch('touchend', 12, 1250);
+  assert.deepEqual(f.navigations, ['/watch?v=video000001']);
+});
 test('document-start gating precedes the body and mounting waits until content is assembled', () => {
   const f = fixture(false); f.api.update();
   assert.equal(f.document.documentElement.attributes.has('data-vigil-saves-finished'), true);

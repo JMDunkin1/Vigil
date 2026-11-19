@@ -7,14 +7,20 @@ import vm from 'node:vm';
 import { test } from 'node:test';
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = existsSync(join(runtimeRoot, 'ios')) ? runtimeRoot : resolve(runtimeRoot, '..', '..');
-const source = await readFile(join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources/status.js'), 'utf8');
+const resources = join(root, 'ios/VigilSocial/VigilYouTubeInteractionExtension/Resources');
+const [source, markup] = await Promise.all([
+  readFile(join(resources, 'status.js'), 'utf8'),
+  readFile(join(resources, 'status.html'), 'utf8')
+]);
 for (const scenario of [
   { granted:false, health:null, expected:'needs permission' },
   { granted:true, health:null, expected:'has not started' },
   { granted:true, health:{loaded:true,allowanceLoaded:false}, expected:'allowance is unavailable' },
   { granted:true, health:{loaded:true,allowanceLoaded:true}, expected:'is running' }
 ]) test(`Safari status: ${scenario.expected}`, async () => {
-  const nodes = Object.fromEntries(['status','details','allow','check','open-vigil'].map(id=>[id,{textContent:'',hidden:false,style:{display:''},addEventListener(){}}]));
+  const nodes = Object.fromEntries(Array.from(markup.matchAll(/\bid="([\w-]+)"/gu), ([, id]) => [id, {
+    textContent: '', hidden: false, style: { display: '' }, addEventListener() {}
+  }]));
   vm.runInNewContext(source, {
     document:{getElementById:(id:string)=>nodes[id]}, setTimeout, clearTimeout,
     navigator:{userAgent:'Macintosh',platform:'MacIntel',maxTouchPoints:0},
