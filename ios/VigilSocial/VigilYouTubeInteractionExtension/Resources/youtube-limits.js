@@ -117,10 +117,15 @@
     const remaining = Math.max(0, 7200000 - state.usedMs);
     const timeFinished = state.grace.status === 'ended' || remaining === 0
       && !(state.grace.status === 'active' && state.grace.usedMs < 1200000 && state.grace.videoId === currentID());
+    const completionVisible = Boolean(finishedScreen && !finishedScreen.hidden);
+    panel.toggleAttribute('data-duplicate-status', completionVisible && timeFinished);
     const text = timeFinished ? 'Watch time used for today' : state.grace.status === 'active'
       ? `Finish this video · ${Math.ceil((1200000 - state.grace.usedMs) / 60000)} min left`
-      : `${state.watchLaterOverflow ? 0 : 4 - state.slots.filter(Boolean).length} saves left · ${Math.ceil(remaining / 60000)} min left`;
-    if (statusLine.textContent !== text) statusLine.textContent = text;
+      : `${Math.ceil(remaining / 60000)} min left`;
+    const saves = completionVisible || timeFinished || state.grace.status === 'active'
+      ? '' : `${state.watchLaterOverflow ? 0 : 4 - state.slots.filter(Boolean).length} saves left · `;
+    const allowance = saves + text;
+    if (statusLine.textContent !== allowance) statusLine.textContent = allowance;
   }
   const sample = () => {
     if (!lease || !playing) return;
@@ -1146,10 +1151,7 @@
         .brand-label:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:4px;border-radius:4px}
         .brand-mark{display:grid;place-items:center;width:32px;height:23px;border-radius:7px;background:#f03}
         .brand-mark::after{content:'';margin-left:2px;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:8px solid #fff}
-        .count{margin-left:auto;padding:5px 10px;border-radius:8px;background:var(--vigil-finished-chip,#272727);
-          color:var(--vigil-finished-secondary,#aaa);font-size:12px;font-weight:500;letter-spacing:0}
-        h1{margin:36px 0 12px;font-size:clamp(26px,4.5vw,34px);font-weight:700;line-height:1.2;letter-spacing:-.7px}
-        p{margin:0 0 30px;max-width:500px;color:var(--vigil-finished-secondary,#aaa);font-size:15px;line-height:1.6}
+        h1{margin:36px 0 24px;font-size:clamp(26px,4.5vw,34px);font-weight:700;line-height:1.2;letter-spacing:-.7px}
         nav{display:grid;gap:10px}
         a{display:flex;align-items:center;gap:16px;min-height:76px;padding:16px 18px;border-radius:12px;
           background:var(--vigil-finished-card,#212121);color:var(--vigil-finished-text,#f1f1f1);text-decoration:none;touch-action:manipulation;
@@ -1196,9 +1198,6 @@
     finishedSignature = signature;
     const heading = document.createElement('h1'); heading.textContent = timeFinished ? 'You’ve run out of watch time today.'
       : complete ? 'You’ve watched all your saved videos today.' : 'You’ve saved all four videos today.';
-    const description = document.createElement('p'); description.textContent = timeFinished || complete
-      ? 'You’re done with YouTube for today. Come back tomorrow.'
-      : 'Finish watching your saved videos, then you’re done with YouTube for today.';
     finishedScreen.setAttribute('aria-label', timeFinished ? 'Daily YouTube watch time complete' : 'Daily YouTube saves complete');
     const brand = document.createElement('div'); brand.className = 'brand';
     const mark = document.createElement('span'); mark.className = 'brand-mark'; mark.setAttribute('aria-hidden', 'true');
@@ -1208,8 +1207,7 @@
       label.className = 'brand-label';
       label.addEventListener('click', event => { if (event.isTrusted) void openWatchLaterTools(); });
     }
-    const count = document.createElement('span'); count.className = 'count'; count.textContent = timeFinished ? 'Time used' : complete ? '4 / 4 watched' : '4 / 4 saved';
-    brand.append(mark, label, count);
+    brand.append(mark, label);
     const list = document.createElement('nav'); list.setAttribute('aria-label', 'Your saved videos');
     const links = slots.map((slot, index) => {
       const link = document.createElement('a'); link.href = `/watch?v=${encodeURIComponent(slot.videoId)}`;
@@ -1247,7 +1245,7 @@
       link.append(number, title, play); return link;
     });
     list.append(...links);
-    finishedScreen._content.replaceChildren(brand, heading, description, ...(slots.length ? [list] : []));
+    finishedScreen._content.replaceChildren(brand, heading, ...(slots.length ? [list] : []));
     finishedScreen.hidden = false;
   }
   function updateHeldPlayer() {
@@ -1282,6 +1280,7 @@
       // Keep the native masthead controls and their normal 56px geometry.
       style.textContent += 'html[data-vigil-standard-feed] ytd-masthead #background,html[data-vigil-standard-feed] ytd-app #frosted-glass{height:var(--ytd-masthead-height,56px)!important;min-height:0!important;overflow:hidden!important}html[data-vigil-standard-feed] ytd-rich-grid-renderer #header{display:none!important}';
       style.textContent += 'html[data-vigil-saves-finished] body>:not(#vigil-youtube-finished):not(#vigil-youtube-limits):not(#vigil-youtube-notice):not(#vigil-watch-later-tools):not(style):not(script){display:none!important}html[data-vigil-saves-full] :is(ytd-watch-flexy #secondary,ytd-watch-next-secondary-results-renderer,ytm-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,.ytp-pause-overlay,.ytp-suggestion-set){display:none!important}';
+      style.textContent += '#vigil-youtube-limits[data-duplicate-status]{display:none!important}';
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
       // The mobile topic bar is fixed, but its wrapper still reserves 50–62px

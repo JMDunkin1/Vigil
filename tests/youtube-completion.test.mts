@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { runInNewContext } from 'node:vm';
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
 const screenSource = source.slice(source.indexOf('  function updateFinishedScreen()'), source.indexOf('  function updateHeldPlayer()'));
+const renderSource = source.slice(source.indexOf('  function render()'), source.indexOf('  const sample ='));
 const ids = ['video000000', 'video000001', 'video000002', 'video000003'];
 function fixture(bodyReady = true) {
   class Node {
@@ -24,6 +25,7 @@ function fixture(bodyReady = true) {
     constructor(readonly tag = '') {}
   }
   const body = new Node('body');
+  const panel = new Node('aside'), statusLine = new Node('strong');
   const document = { body: bodyReady ? body : null, documentElement: new Node('html'), createElement: (tag: string) => new Node(tag) };
   const navigations: string[] = [];
   const initial = { day: '2026-10-28', slots: ids.map(videoId => ({ videoId, title: videoId, locked: false, removed: false })),
@@ -31,15 +33,35 @@ function fixture(bodyReady = true) {
   const api = runInNewContext(`let state = initial, finishedScreen, finishedSignature = '', id = '';
     const topFrame = true, verifiedWatchPages = new Set(), currentID = () => id;
     ${screenSource}
-    ({update: updateFinishedScreen, state: () => state, set: value => {state = value;}, route: value => {id = value;},
+    ${renderSource}
+    ({update: updateFinishedScreen, render, state: () => state, set: value => {state = value;}, route: value => {id = value;},
       verify: value => verifiedWatchPages.add(state.day + ':' + value), screen: () => finishedScreen})`, {
-    initial, document, window: {}, location: { assign: (url: string) => navigations.push(url) }
+    initial, document, panel, statusLine, window: {}, location: { assign: (url: string) => navigations.push(url) }
   });
   const content = () => api.screen()?._content as Node;
   const links = () => content()?.querySelector('nav')?.children || [];
   const heading = () => content()?.querySelector('h1')?.textContent;
-  return { api, document, body, navigations, content, links, heading };
+  return { api, document, body, panel, statusLine, navigations, content, links, heading };
 }
+test('the completion headline appears once and the allowance strip shows only remaining time', () => {
+  const f = fixture(), state = f.api.state();
+  f.api.render();
+  assert.match(f.heading()!, /saved all four videos/);
+  assert.deepEqual(f.content().children.map(node => node.tag), ['div', 'h1', 'nav']);
+  assert.equal(f.content().children[0].children.length, 2);
+  assert.equal(f.statusLine.textContent, '120 min left');
+  assert.equal(f.panel.attributes.has('data-duplicate-status'), false);
+
+  f.api.route(ids[0]); f.api.render();
+  assert.equal(f.statusLine.textContent, '0 saves left · 120 min left');
+
+  state.usedMs = 7200000; state.grace.status = 'ended';
+  f.api.render();
+  assert.match(f.heading()!, /run out of watch time/);
+  assert.deepEqual(f.content().children.map(node => node.tag), ['div', 'h1']);
+  assert.equal(f.content().children[0].children.length, 2);
+  assert.equal(f.panel.attributes.has('data-duplicate-status'), true);
+});
 test('time exhaustion takes priority with any number of saves and on saved or verified external routes', () => {
   for (const saves of [0, 1, 4]) {
     const f = fixture(), state = f.api.state();

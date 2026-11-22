@@ -33,12 +33,12 @@ async function check() {
     catch { /* A missing content-script receiver is a diagnostic result. */ }
     if (!health?.loaded) {
       statusLine.textContent = 'The limiter has not started on this page.';
-      details.textContent = 'Website access is granted, but the page has no limiter response. Reload the page and check again.';
+      details.textContent = 'Reload the page and check again.';
       return;
     }
     watchLaterTools.hidden = !health.watchLaterTools;
     statusLine.textContent = health.allowanceLoaded ? 'The limiter is running.' : 'The limiter loaded, but its allowance is unavailable.';
-    details.textContent = health.allowanceLoaded ? 'The page script has received its allowance. Shorts blocking is checked separately.' : 'This is a connection or allowance-engine failure, not an extension toggle issue.';
+    details.textContent = health.allowanceLoaded ? 'Shorts blocking is checked separately.' : 'This is a connection or allowance-engine failure, not an extension toggle issue.';
   } catch (error) {
     statusLine.textContent = 'Vigil could not finish the check.';
     details.textContent = error.message;
