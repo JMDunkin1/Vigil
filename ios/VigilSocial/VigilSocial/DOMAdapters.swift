@@ -3174,8 +3174,9 @@ enum DOMAdapters {
       let postCarousel = null;
       let postLayoutCaptured = false;
       let captionRequest = null;
-      let captionReader = null;
-      let captionButton = null;
+      let expandedCaption = null;
+      let captionViewport = null;
+      let captionDrag = null;
       const captionSelector = '[data-testid*="caption" i], [itemprop="caption"], [aria-label="Caption" i]';
       let alignedPermalinkCards = new WeakSet();
       const sharedStoryKey = 'vigil.instagram.shared-story.v1';
@@ -3275,10 +3276,10 @@ enum DOMAdapters {
         const activationRegions = locked ? [...document.querySelectorAll('button, [role="button"], a[href]')]
           .filter(control => sheetOpeningControl(control) || viewerClosingControl(control))
           .map(control => nativeGestureRegion(control, true)).filter(Boolean).slice(0, 24) : [];
-        // The reader consumes its own drags. This type of region leaves the
-        // root WKWebView scroller disabled, including at the caption's edges.
-        const readerRegion = locked && nativeGestureRegion(captionReader?.dialog, true);
-        if (readerRegion) activationRegions.unshift(readerRegion);
+        // Caption gestures only change the text box's offset. An activation
+        // region lets WebKit deliver taps and touch events without opening the rail.
+        const captionRegion = locked && nativeGestureRegion(captionViewport?.source, true);
+        if (captionRegion) activationRegions.unshift(captionRegion);
         activationRegions.length = Math.min(activationRegions.length, 24);
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
@@ -3368,59 +3369,38 @@ enum DOMAdapters {
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] {
           overscroll-behavior: contain !important;
         }
-        html[data-vigil-single-reel] dialog.vigil-instagram-caption[open] {
+        html[data-vigil-single-reel] [data-vigil-instagram-caption-viewport] {
           box-sizing: border-box !important;
-          inline-size: min(calc(100% - 24px), 34rem) !important;
-          max-block-size: 75dvh !important;
-          padding: 16px !important;
-          border: 0 !important;
-          border-radius: 14px !important;
-          color: #fff !important;
-          background: #252525 !important;
-          overflow: hidden !important;
-          display: flex !important;
-          flex-direction: column !important;
-          font: normal 1rem/1.5 system-ui, sans-serif !important;
+          display: block !important;
+          min-block-size: 0 !important;
+          max-block-size: var(--vigil-caption-height) !important;
+          overflow-y: auto !important;
+          overflow-wrap: anywhere;
+          translate: var(--vigil-caption-translate, 0 0) !important;
+          overflow-anchor: none !important;
         }
-        dialog.vigil-instagram-caption::backdrop { background: rgba(0, 0, 0, .64); }
-        html[data-vigil-single-reel] dialog.vigil-instagram-caption,
-        html[data-vigil-single-reel] dialog.vigil-instagram-caption * {
+        html[data-vigil-single-reel] [data-vigil-instagram-caption-viewport],
+        html[data-vigil-single-reel] [data-vigil-instagram-caption-viewport] * {
           touch-action: none !important;
           overscroll-behavior: none !important;
         }
-        dialog.vigil-instagram-caption > button {
-          align-self: end !important;
-          flex: none !important;
-          min-block-size: 44px !important;
-          color: #fff !important;
-          background: transparent !important;
-          font: inherit !important;
+        [data-vigil-instagram-caption-viewport="post"] {
+          background-color: rgb(var(--ig-primary-background, 255, 255, 255));
+          color: rgb(var(--ig-primary-text, 0, 0, 0));
         }
-        dialog.vigil-instagram-caption > div {
-          min-block-size: 0 !important;
-          overflow-y: auto !important;
-          white-space: pre-wrap !important;
-          overflow-wrap: anywhere !important;
-        }
-        html[data-vigil-single-reel] button.vigil-instagram-read-caption {
-          position: fixed !important;
-          inset-inline-start: 12px !important;
-          inset-block-end: max(84px, calc(env(safe-area-inset-bottom) + 72px)) !important;
-          z-index: 1000 !important;
-          padding: 0 14px !important;
-          min-block-size: 44px !important;
-          border: 1px solid #777 !important;
-          border-radius: 22px !important;
-          background: #252525 !important;
-          color: #fff !important;
-          font: normal 14px/1.2 system-ui, sans-serif !important;
+        [data-vigil-instagram-caption-viewport="reel"] {
+          color: white;
+          background-color: rgb(0 0 0 / 62%);
+          border-radius: 8px;
+          backdrop-filter: blur(10px);
         }
       `;
       document.documentElement.appendChild(style);
       const reset = () => {
-        closeCaption();
+        clearCaptionViewport();
         captionRequest = null;
-        clearCaptionButton();
+        expandedCaption = null;
+        captionDrag = null;
         alignedPermalinkCards = new WeakSet();
         pinnedID = '';
         pinnedKind = '';
@@ -4002,7 +3982,9 @@ enum DOMAdapters {
         // Capture at input time, after Instagram has positioned the sent item.
         // Do not rewrite overflow/snap or freeze the player's startup layout.
         for (let node = target instanceof Element ? target : document.scrollingElement; node; node = node.parentElement) {
-          if (node.scrollHeight > node.clientHeight && !lockedScroll.has(node)) lockedScroll.set(node, node.scrollTop);
+          if (node !== captionViewport?.source && node.scrollHeight > node.clientHeight && !lockedScroll.has(node)) {
+            lockedScroll.set(node, node.scrollTop);
+          }
         }
       };
       const allowsCarouselPan = target => pinnedKind === 'p' && postCarousel && !postCarousel.rejected
@@ -4106,7 +4088,7 @@ enum DOMAdapters {
           && exactPostCard(card) ? card : null;
       };
       const alignClippedPermalink = card => {
-        if (!card || alignedPermalinkCards.has(card) || captionRequest || captionReader
+        if (!card || alignedPermalinkCards.has(card) || captionRequest || captionViewport
             || (window.visualViewport?.scale || 1) !== 1 || !activeViewer(card) || inSheet(card)) return;
         const viewportTop = window.visualViewport?.offsetTop || 0;
         const bounds = card.getBoundingClientRect();
@@ -4171,136 +4153,98 @@ enum DOMAdapters {
         captionRequest = request;
         setTimeout(() => { if (captionRequest === request) captionRequest = null; }, 1200);
       };
-      const clearCaptionButton = () => {
-        captionButton?.remove();
-        captionButton = null;
+      const clearCaptionViewport = () => {
+        if (!captionViewport) return;
+        const { source, addedTabIndex } = captionViewport;
+        source.removeAttribute('data-vigil-instagram-caption-viewport');
+        source.style.removeProperty('--vigil-caption-height');
+        source.style.removeProperty('--vigil-caption-translate');
+        if (addedTabIndex && source.getAttribute('tabindex') === '0') source.removeAttribute('tabindex');
+        captionViewport = null;
       };
-      const closeCaption = () => {
-        if (!captionReader) return;
-        const { dialog, returnFocus } = captionReader;
-        captionReader = null;
-        dialog.close();
-        dialog.remove();
-        returnFocus?.focus?.({ preventScroll: true });
-      };
-      const reconcileCaption = () => {
-        if (captionReader && !selectedPermalinkCard(captionReader.source)) {
-          closeCaption();
-          reportNativeScrollLock(true);
+      const reconcileCaption = card => {
+        if (captionRequest?.card === card) {
+          const { control, initialText } = captionRequest;
+          let { source } = captionRequest;
+          const prefix = initialText.replace(/[\s.…]+$/, '');
+          if (!card.contains(source) && source.matches(captionSelector) && prefix) {
+            const replacements = [...card.querySelectorAll(captionSelector)].filter(candidate =>
+              captionOnly(candidate) && captionText(candidate).startsWith(prefix));
+            if (replacements.length === 1) source = replacements[0];
+          }
+          if (card.contains(source) && activeModal(source)
+              && (captionText(source, control).length > initialText.length || control.getAttribute('aria-expanded') === 'true')) {
+            expandedCaption = source;
+            captionRequest = null;
+          }
         }
-        const request = captionRequest;
-        if (!request) return;
-        const { card, control, initialText } = request;
-        let { source } = request;
-        const prefix = initialText.replace(/[\s.…]+$/, '');
-        if (!card.contains(source) && source.matches(captionSelector) && prefix) {
-          const replacements = [...card.querySelectorAll(captionSelector)].filter(candidate =>
-            captionOnly(candidate) && captionText(candidate).startsWith(prefix));
-          if (replacements.length === 1) source = replacements[0];
-        }
-        if (selectedPermalinkCard(source) !== card || !activeModal(source)) return;
-        const text = captionText(source, control);
-        const expanded = text.length > initialText.length || control.getAttribute('aria-expanded') === 'true';
-        if (!expanded || !text) return;
-        captionRequest = null;
-        openCaption(source, text);
-      };
-      const openCaption = (source, text) => {
-        captureReelScroll(source);
-        const dialog = document.createElement('dialog');
-        dialog.className = 'vigil-instagram-caption';
-        dialog.setAttribute('aria-label', 'Caption');
-        const close = document.createElement('button');
-        close.type = 'button';
-        close.textContent = 'Close';
-        const body = document.createElement('div');
-        body.tabIndex = 0;
-        body.textContent = text;
-        dialog.append(close, body);
-        document.body.append(dialog);
-        captionReader = { dialog, body, close, source, returnFocus: document.activeElement, touchY: null };
-        dialog.showModal();
-        reportNativeScrollLock(true);
-      };
-      const updateCaptionButton = card => {
-        const source = !captionReader && activeViewer(card)
-          && [...card.querySelectorAll(captionSelector)].find(node => captionOnly(node) && activeModal(node));
-        if (!source || inSheet(source) || allRecipientSheets().some(activeViewer)
+        if (!card?.contains(expandedCaption) || !activeModal(expandedCaption)) expandedCaption = null;
+        const source = expandedCaption || (card && [...card.querySelectorAll(captionSelector)].find(node =>
+          captionOnly(node) && activeModal(node) && captionText(node)));
+        if (captionViewport?.source !== source) clearCaptionViewport();
+        if (!source || !activeViewer(card) || inSheet(source)
+            || allRecipientSheets().some(activeViewer)
             || [...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"]')].some(activeViewer)) {
-          clearCaptionButton();
+          clearCaptionViewport();
           return;
         }
+
+        // Keep the site's caption in its own card and inside any clipping
+        // ancestors. A long caption can scroll locally without moving the rail.
         const viewport = window.visualViewport;
         let top = viewport?.offsetTop || 0, bottom = top + (viewport?.height || innerHeight);
         for (let parent = source.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
-          if (/hidden|clip|auto|scroll/.test(getComputedStyle(parent).overflowY)) {
+          if (parent === card || /hidden|clip|auto|scroll/.test(getComputedStyle(parent).overflowY)) {
             const parentTop = parent.getBoundingClientRect().top + parent.clientTop;
             top = Math.max(top, parentTop);
             bottom = Math.min(bottom, parentTop + parent.clientHeight);
           }
         }
-        // A collapsed caption needs Instagram's More action to load the rest.
-        // Only offer the reader directly when the full text is already here.
-        const more = [...source.querySelectorAll('button, [role="button"], span')].find(moreLabel);
-        const bounds = source.getBoundingClientRect();
-        const clipped = bounds.top < top - 2 || bounds.bottom > bottom + 2 || source.scrollHeight > source.clientHeight + 2;
-        const text = clipped ? captionText(source, more) : '';
-        if (!text || more && nativeGestureRegion(more, true)) { clearCaptionButton(); return; }
-        if (!captionButton) {
-          captionButton = document.createElement('button');
-          captionButton.type = 'button';
-          captionButton.className = 'vigil-instagram-read-caption';
-          captionButton.textContent = 'Read caption';
-          document.body.append(captionButton);
-        }
-        captionButton.onclick = event => {
-          if (selectedPermalinkCard(source) !== card) return;
-          event.stopPropagation();
-          if (more) more.click();
-          else openCaption(source, text);
-        };
-      };
-      const handleCaptionInput = event => {
-        const reader = captionReader;
-        if (!reader) return;
-        // Window capture keeps Instagram's rail from seeing a caption drag.
-        // Only the reader's plain-text box can change its own offset.
-        const inside = reader.dialog.contains(event.target);
-        if (event.type === 'scroll') {
-          if (inside) event.stopImmediatePropagation();
+        if (bottom <= top) { clearCaptionViewport(); return; }
+        const bounds = source.getBoundingClientRect(), originalTop = bounds.top - (captionViewport?.shift || 0);
+        const more = [...source.querySelectorAll('button, [role="button"], span')].find(node =>
+          moreLabel(node) && node.getAttribute('aria-expanded') !== 'true' && activeModal(node));
+        const fullHeight = Math.max(bounds.height, more ? source.clientHeight : source.scrollHeight);
+        if (originalTop >= top - 2 && originalTop + fullHeight <= bottom + 2
+            && (more || source.scrollHeight <= source.clientHeight + 2)) {
+          clearCaptionViewport();
           return;
         }
-        if (event.type === 'touchstart') reader.touchY = inside && reader.body.contains(event.target)
-          && event.touches.length === 1 ? event.touches[0].clientY : null;
-        if (event.type === 'touchmove' && reader.touchY !== null && event.touches.length === 1) {
-          const y = event.touches[0].clientY;
-          reader.body.scrollTop += reader.touchY - y;
-          reader.touchY = y;
+        if (!captionViewport) {
+          const translate = getComputedStyle(source).translate;
+          // Preserve an authored translation. Percentage offsets cannot be
+          // composed reliably here because the caption height may change.
+          const offsets = translate === 'none' ? ['0px', '0px']
+            : translate.match(/^(-?[\d.]+px)(?:\s+(-?[\d.]+px))?$/)?.slice(1);
+          if (!offsets) return;
+          captionViewport = { source, offsets, shift: 0, addedTabIndex: false };
         }
-        if (['touchend', 'touchcancel'].includes(event.type)) reader.touchY = null;
-        if (event.type === 'wheel' && inside) reader.body.scrollTop += event.deltaY
-          * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? reader.body.clientHeight : 1);
-        if ((event.type === 'click' && event.target === reader.close) || (event.type === 'keydown' && event.key === 'Escape')) {
-          closeCaption();
-          reconcile();
+        const height = Math.floor(Math.min(fullHeight, (bottom - top) * (more ? 1 : .38)));
+        const shift = Math.round(Math.max(top, Math.min(originalTop, bottom - height)) - originalTop);
+        const [x, y = '0px'] = captionViewport.offsets;
+        const translate = `${x} ${parseFloat(y) + shift}px`;
+        captionViewport.shift = shift;
+        if (source.style.getPropertyValue('--vigil-caption-translate') !== translate) {
+          source.style.setProperty('--vigil-caption-translate', translate);
         }
-        if (event.type === 'keydown' && inside && event.key !== 'Escape') {
-          const { body } = reader;
-          const distances = { ArrowDown: 40, ArrowUp: -40, PageDown: body.clientHeight, PageUp: -body.clientHeight,
-            Home: -body.scrollHeight, End: body.scrollHeight };
-          if (Object.hasOwn(distances, event.key)) body.scrollTop += distances[event.key];
-          else if (event.key === ' ' && event.target === body) body.scrollTop += event.shiftKey ? -body.clientHeight : body.clientHeight;
-          else {
-            event.stopImmediatePropagation();
-            return;
-          }
+        if (source.style.getPropertyValue('--vigil-caption-height') !== `${height}px`) {
+          source.style.setProperty('--vigil-caption-height', `${height}px`);
         }
-        if (event.type === 'touchstart' || event.type === 'touchend' || event.type === 'pointerdown' || event.type === 'pointerup') {
-          // Preserve the browser-generated click for Close.
-          event.stopImmediatePropagation();
-        } else {
-          cancel(event);
+        const appearance = more ? 'preview' : pinnedKind === 'reel' ? 'reel' : 'post';
+        if (source.dataset.vigilInstagramCaptionViewport !== appearance) {
+          source.dataset.vigilInstagramCaptionViewport = appearance;
         }
+        if (!more && !source.hasAttribute('tabindex')) {
+          source.tabIndex = 0;
+          captionViewport.addedTabIndex = true;
+        }
+        lockedScroll.delete(source);
+      };
+      const captionScrollTarget = target => {
+        const source = captionViewport?.source;
+        return target instanceof Element && source?.contains(target)
+          && source.dataset.vigilInstagramCaptionViewport !== 'preview'
+          && source.scrollHeight > source.clientHeight + 1 && !inSheet(target) ? source : null;
       };
       const loadedRelayCarouselManifest = (reference, value) => {
         // Current Polaris passes fragment references instead of the legacy
@@ -4641,10 +4585,9 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         lastDirectThreadPath = directThreadPath(location.href) || lastDirectThreadPath;
-        if (blockSuggestedReels()) { closeCaption(); clearCaptionButton(); return; }
+        if (blockSuggestedReels()) { clearCaptionViewport(); return; }
         normalizeRecipientSheets();
         if (!syncRoute() || !concealmentScope) return;
-        reconcileCaption();
         carouselManifestRefreshed = false;
         freshCarouselManifest = null;
         // Reel playback may change CDN/blob sources and remount its player.
@@ -4656,7 +4599,8 @@ enum DOMAdapters {
             if (card && activeViewer(card)) { selected = card; break; }
           }
           alignClippedPermalink(selected);
-          updateCaptionButton(selected);
+          reconcileCaption(selected);
+          reportNativeScrollLock(true);
           return;
         }
         const videos = [...(modalContext || document).querySelectorAll('video')];
@@ -4694,7 +4638,8 @@ enum DOMAdapters {
           pinnedCard = media ? cardFor(media) : null;
         }
         if (!pinnedCard) {
-          clearCaptionButton();
+          clearCaptionViewport();
+          reportNativeScrollLock(true);
           // React inserts empty player shells before the post has measurable
           // layout. Keep those cards concealed, but do not bind their sources
           // or permanently reject them before a selected card exists. Doing
@@ -4839,7 +4784,7 @@ enum DOMAdapters {
         });
         const selected = selectedPermalinkCard(pinnedCard);
         alignClippedPermalink(selected);
-        updateCaptionButton(selected);
+        reconcileCaption(selected);
         if (pinnedCard?.isConnected && concealmentScope?.contains(pinnedCard)) {
           for (let node = pinnedCard; node && (!modalContext || modalContext.contains(node)); node = node.parentElement) {
             if (inSheet(node)) continue;
@@ -4886,11 +4831,17 @@ enum DOMAdapters {
         viewerAcquisitionUntil = performance.now() + 1500;
         if (!viewerAcquisitionFrame) viewerAcquisitionFrame = requestAnimationFrame(acquireViewer);
       };
-      for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel', 'pointerdown', 'pointermove',
-        'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'wheel', 'keydown', 'click', 'contextmenu', 'scroll']) {
-        window.addEventListener(type, handleCaptionInput, { capture: true, passive: false });
-      }
       window.addEventListener('touchstart', event => {
+        if (captionDrag) { event.stopImmediatePropagation(); return; }
+        const caption = event.touches.length === 1 && captionScrollTarget(event.target);
+        if (caption && syncRoute()) {
+          captureReelScroll(caption);
+          const { identifier, clientY } = event.touches[0];
+          captionDrag = { source: caption, id: identifier, y: clientY, moved: false };
+          gesture = null;
+          event.stopImmediatePropagation();
+          return;
+        }
         if (event.touches.length === 1) directPress = { x: event.touches[0].clientX, y: event.touches[0].clientY };
         rememberViewerClosing(event.target);
         rememberDirectActivation(event.target);
@@ -4901,6 +4852,22 @@ enum DOMAdapters {
           horizontal: allowsCarouselPan(event.target), contained: containPress(event) };
       }, { capture: true, passive: true });
       window.addEventListener('touchmove', event => {
+        if (captionDrag) {
+          const touch = event.touches.length === 1 && event.touches[0];
+          const dy = touch && touch.identifier === captionDrag.id ? captionDrag.y - touch.clientY : 0;
+          if (touch && !captionDrag.moved && Math.abs(dy) <= 5) {
+            event.stopImmediatePropagation();
+            return;
+          }
+          cancel(event);
+          if (dy && captionScrollTarget(captionDrag.source)) {
+            captionDrag.source.scrollTop += dy;
+            captionDrag.y = touch.clientY;
+            captionDrag.moved = true;
+          }
+          restoreScroll();
+          return;
+        }
         if (event.touches.length === 1) cancelDirectDrag(event.touches[0].clientX, event.touches[0].clientY);
         if (!syncRoute() || !gesture || event.touches.length !== 1) return;
         const dx = event.touches[0].clientX - gesture.x;
@@ -4919,6 +4886,12 @@ enum DOMAdapters {
       }, { capture: true, passive: false });
       for (const type of ['touchend', 'touchcancel']) window.addEventListener(type, event => {
         directPress = null;
+        if (captionDrag) {
+          if (captionDrag.moved) cancel(event);
+          else event.stopImmediatePropagation();
+          if (!event.touches.length || type === 'touchcancel') captionDrag = null;
+          return;
+        }
         if (type === 'touchcancel' && !pinnedID) sharedIntent = null;
         else if (type === 'touchend') scheduleViewerAcquisition();
         if (gesture?.blocked) cancel(event);
@@ -4972,14 +4945,23 @@ enum DOMAdapters {
       window.addEventListener('wheel', event => {
         if (syncRoute() && !inSheet(event.target) && (event.deltaY || (!allowsCarouselPan(event.target) && event.deltaX))) {
           captureReelScroll(event.target);
+          const caption = captionScrollTarget(event.target);
+          if (caption) caption.scrollTop += event.deltaY
+            * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? caption.clientHeight : 1);
           cancel(event);
           restoreScroll();
         }
       }, { capture: true, passive: false });
       window.addEventListener('keydown', event => {
-        if (syncRoute() && !inSheet(event.target)
-            && (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)
-              || (!allowsCarouselPan(event.target) && ['ArrowLeft', 'ArrowRight'].includes(event.key)))) cancel(event);
+        if (!syncRoute() || inSheet(event.target)) return;
+        const caption = captionScrollTarget(event.target);
+        if (caption && (event.key !== ' ' || event.target === caption)) {
+          const distances = { ArrowDown: 40, ArrowUp: -40, PageDown: caption.clientHeight, PageUp: -caption.clientHeight,
+            Home: -caption.scrollHeight, End: caption.scrollHeight, ' ': event.shiftKey ? -caption.clientHeight : caption.clientHeight };
+          if (Object.hasOwn(distances, event.key)) caption.scrollTop += distances[event.key];
+        }
+        if (['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '].includes(event.key)
+            || (!allowsCarouselPan(event.target) && ['ArrowLeft', 'ArrowRight'].includes(event.key))) cancel(event);
       }, true);
       window.addEventListener('click', event => {
         rememberViewerClosing(event.target);
@@ -4996,6 +4978,7 @@ enum DOMAdapters {
       }, true);
       window.addEventListener('scroll', event => {
         if (!syncRoute() || inSheet(event.target)) return;
+        if (event.target === captionViewport?.source) event.stopImmediatePropagation();
         restoreScroll();
       }, true);
       for (const type of ['play', 'playing', 'loadedmetadata', 'emptied', 'load']) document.addEventListener(type, () => {

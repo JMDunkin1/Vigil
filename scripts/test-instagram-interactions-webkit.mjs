@@ -75,71 +75,86 @@ const captionHTML = `<!doctype html><html><head><meta name="viewport" content="w
   <style>
     body{margin:0} #rail{margin-top:44px;height:670px;overflow-y:auto}
     #earlier{height:120px} #selected,#other{height:670px;position:relative}
-    video{display:block;width:100%;height:550px;background:white}
-    #description{position:absolute;bottom:25px;color:white;line-height:24px}
-    #rail a{position:absolute;bottom:0}
+    video{display:block;width:100%;height:550px;background:#222}
+    #description{position:absolute;bottom:25px;left:8px;right:54px;color:white;line-height:24px;white-space:pre-line}
+    .post #description{top:530px;bottom:auto;color:black}
+    #rail a#permalink,#rail a#next{position:absolute;bottom:0}
   </style></head><body>
   <main id="rail">
     <article id="earlier">Profile tiles</article>
     <article id="selected"><video></video>
       <div id="description" data-testid="reel-caption"><span id="copy">The published caption begins here.</span>
-        <button id="more" aria-expanded="false">More</button></div><a id="permalink">Selected permalink</a>
+        <button id="more" aria-expanded="false">More</button><a id="caption-link" href="/friend/" hidden>@friend</a>
+      </div><a id="permalink">Selected permalink</a>
     </article>
-    <article id="other"><video></video><a href="/reel/Other123/">Next reel</a>
+    <article id="other"><video></video><a id="next" href="/reel/Other123/">Next reel</a>
       <div data-testid="reel-caption"><button id="unrelated">More</button><span>Other post caption</span></div>
     </article>
   </main>
   <script>
     const rail=document.getElementById('rail'), description=document.getElementById('description');
-    const copy=document.getElementById('copy'), more=document.getElementById('more');
-    const longText='The published caption begins here.\\n'+'A line of the selected post.\\n'.repeat(80)+'Last line of this caption.';
-    let siteMoves=0;
+    const copy=document.getElementById('copy'), more=document.getElementById('more'), link=document.getElementById('caption-link');
+    const preview=copy.textContent;
+    const longText=preview+'\\n'+'A line of the selected post.\\n'.repeat(80)+'Last line of this caption.';
+    let siteMoves=0, expansions=0, linkClicks=0;
     document.addEventListener('touchmove',()=>siteMoves++);
-    more.onclick=()=>{copy.textContent=longText;more.remove();};
+    link.onclick=(event)=>{event.preventDefault();linkClicks++;};
+    function showCaption(expanded) {
+      copy.textContent=expanded ? longText : preview;
+      more.setAttribute('aria-expanded',String(expanded));
+      more.textContent=expanded ? 'Less' : 'More';
+      link.hidden=!expanded;
+      if(expanded) expansions++;
+    }
+    more.onclick=()=>showCaption(more.getAttribute('aria-expanded')==='false');
     document.getElementById('unrelated').onclick=event=>{
       event.currentTarget.nextElementSibling.textContent=longText;
       event.currentTarget.setAttribute('aria-expanded','true');
     };
-    function openPermalink(kind) {
+    function openPermalink(kind, alreadyExpanded) {
       const path='/channel/'+kind+'/Selected123/';
       document.getElementById('permalink').href=path;
-      if(kind==='p') {copy.textContent=longText;more.remove();description.style.top='530px';description.style.bottom='auto';}
+      if(kind==='p') document.body.classList.add('post');
+      if(alreadyExpanded) {showCaption(true);more.remove();}
       rail.scrollTop=290;
       history.pushState({},'',path);
       return true;
     }
-    function readerScrollsLocally() {
-      const reader=document.querySelector('dialog.vigil-instagram-caption[open]');
-      const text=reader.querySelector('div'), original=rail.scrollTop;
+    function captionScrollsLocally(kind) {
+      const original=rail.scrollTop;
       const state=window.__vigilInstagramSharedItem.containmentState().nativeGestureState;
+      const box=description.getBoundingClientRect(), railBox=rail.getBoundingClientRect();
       if (!state.locked || state.scrollingRegions.length!==0 || state.activationRegions.length!==1
-          || text.textContent!==longText || text.scrollHeight<=text.clientHeight
-          || getComputedStyle(reader).backgroundColor!=='rgb(37, 37, 37)'
-          || getComputedStyle(reader).color!=='rgb(255, 255, 255)'
-          || reader.getBoundingClientRect().top<0 || reader.getBoundingClientRect().height>innerHeight*.76) return false;
+          || copy.textContent!==longText || expansions!==1 || description.scrollHeight<=description.clientHeight
+          || (kind==='reel' && getComputedStyle(description).backgroundColor!=='rgba(0, 0, 0, 0.62)')
+          || box.top<railBox.top || box.bottom>railBox.bottom+1 || document.querySelector('dialog, .vigil-instagram-read-caption')) return false;
       for (const [type,y] of [['touchstart',500],['touchmove',300],['touchend',300]]) {
         const event=new Event(type,{bubbles:true,cancelable:true});
-        Object.defineProperty(event,'touches',{value:[{clientY:y}]});
-        text.dispatchEvent(event);
+        Object.defineProperty(event,'touches',{value:type==='touchend' ? [] : [{identifier:1,clientY:y}]});
+        copy.dispatchEvent(event);
       }
-      if(text.scrollTop!==200) return false;
-      const wheel=new WheelEvent('wheel',{deltaY:10000,bubbles:true,cancelable:true});
-      text.dispatchEvent(wheel);
-      const bottom=text.scrollTop;
-      text.dispatchEvent(new WheelEvent('wheel',{deltaY:1000,bubbles:true,cancelable:true}));
-      return wheel.defaultPrevented && bottom===text.scrollTop && rail.scrollTop===original && siteMoves===0;
+      if(description.scrollTop!==200) return false;
+      const end=new KeyboardEvent('keydown',{key:'End',bubbles:true,cancelable:true});
+      description.dispatchEvent(end);
+      const bottom=description.scrollTop;
+      const wheel=new WheelEvent('wheel',{deltaY:1000,bubbles:true,cancelable:true});
+      copy.dispatchEvent(wheel);
+      link.click();
+      return end.defaultPrevented && wheel.defaultPrevented && bottom===description.scrollTop
+        && Math.abs(bottom-(description.scrollHeight-description.clientHeight))<=1
+        && rail.scrollTop===original && siteMoves===0 && linkClicks===1;
     }
   </script></body></html>`;
-for (const kind of ['p', 'reel']) {
+for (const [kind, alreadyExpanded] of [['p', false], ['p', true], ['reel', false]]) {
   if (process.argv[3] && process.argv[3] !== 'permalink-caption') continue;
-  scenarios.push({name: `Permalink clipping and caption containment: ${kind}`, html: captionHTML, path: '/channel/', steps: [
-    {action: `openPermalink('${kind}')`, condition: 'rail.scrollTop===120 && document.querySelector("#selected").getBoundingClientRect().top===44'},
-    {action: 'document.getElementById("unrelated").click();true', condition: '!document.querySelector("dialog.vigil-instagram-caption[open]")'},
-    {action: kind === 'p' ? 'document.querySelector(".vigil-instagram-read-caption").click();true' : 'more.click();true',
-      condition: 'Boolean(document.querySelector("dialog.vigil-instagram-caption[open]"))'},
-    {action: 'window.readerStayedLocal=readerScrollsLocally()', condition: 'window.readerStayedLocal'},
-    {action: 'document.querySelector("dialog button").click();true', condition:
-      '!document.querySelector("dialog[open]") && window.__vigilInstagramSharedItem.containmentState().nativeGestureState.activationRegions.length===0'},
+  scenarios.push({name: `Inline permalink caption: ${kind}${alreadyExpanded ? ' already expanded' : ''}`, html: captionHTML, path: '/channel/', steps: [
+    {action: `openPermalink('${kind}', ${alreadyExpanded})`, condition: 'rail.scrollTop===120 && document.querySelector("#selected").getBoundingClientRect().top===44'},
+    {action: 'document.getElementById("unrelated").click();true', condition: '!document.querySelector("#other [data-vigil-instagram-caption-viewport]")'},
+    ...(!alreadyExpanded ? [{action: 'more.click();true', condition: 'more.textContent==="Less"'}] : []),
+    {condition: `description.dataset.vigilInstagramCaptionViewport==='${kind==='p' ? 'post' : 'reel'}'`},
+    {action: `window.captionStayedLocal=captionScrollsLocally('${kind}')`, condition: 'window.captionStayedLocal'},
+    ...(!alreadyExpanded ? [{action: 'more.click();true', condition:
+      'copy.textContent===preview && !description.hasAttribute("data-vigil-instagram-caption-viewport") && !description.hasAttribute("tabindex") && window.__vigilInstagramSharedItem.containmentState().nativeGestureState.activationRegions.length===0'}] : []),
     {action: `window.backgroundStayedLocked=(() => {
       const wheel=new WheelEvent('wheel',{bubbles:true,cancelable:true,deltaY:500});
       document.querySelector('#selected video').dispatchEvent(wheel);
@@ -147,7 +162,7 @@ for (const kind of ['p', 'reel']) {
       return wheel.defaultPrevented && rail.scrollTop===120 && location.pathname.includes('Selected123');
     })()`, condition: 'window.backgroundStayedLocked && window.__vigilInstagramSharedItem.containmentState().pinned'},
     {action: 'history.pushState({},"","/channel/");true', condition:
-      '!document.querySelector(".vigil-instagram-read-caption") && !window.__vigilInstagramSharedItem.containmentState().pinned'}
+      '!document.querySelector("[data-vigil-instagram-caption-viewport]") && !window.__vigilInstagramSharedItem.containmentState().pinned'}
   ]});
 }
 assert.ok(scenarios.length);
