@@ -9846,9 +9846,13 @@ final class VigilSocialTests: XCTestCase {
               const refreshAvailable = !button.disabled && button.textContent === 'Refresh'
                 && button.getBoundingClientRect().height >= 44 && button.getBoundingClientRect().bottom < bottom.top;
               window.__vigilResetFriendsFeedForRefresh();
-              window.placeholderTop = card.top;
+              window.placeholderFrame = { top: card.top, left: card.left, width: card.width };
               return { exposed, empty, messageCentered, refreshAvailable,
-                postShape: Math.abs(media.width - media.height) < 2 && card.height > media.height,
+                postShape: Math.abs(media.width / media.height - 4 / 5) < 0.01
+                  && media.left === card.left && media.width === card.width && card.bottom <= bottom.top
+                  && getComputedStyle(status).borderRadius === '0px'
+                  && getComputedStyle(status, '::before').height === '48px'
+                  && getComputedStyle(status, '::after').height === '62px',
                 sameSlotWhileChecking: status.getBoundingClientRect().top === card.top
                   && status.getBoundingClientRect().height === card.height && button.disabled
                   && message.textContent === 'Checking for friends’ posts…',
@@ -9886,8 +9890,12 @@ final class VigilSocialTests: XCTestCase {
         let replacement = try await webView.evaluateJavaScript(#"""
             (() => {
               const post = document.getElementById('friend-post');
+              const frame = post.getBoundingClientRect();
+              const placeholder = window.placeholderFrame;
               return getComputedStyle(post).display !== 'none'
-                && Math.abs(post.getBoundingClientRect().top - window.placeholderTop) < 2
+                && Math.abs(frame.top - placeholder.top) < 2
+                && Math.abs(frame.left - placeholder.left) < 2
+                && Math.abs(frame.width - placeholder.width) < 2
                 && !document.getElementById('vigil-instagram-friends-empty');
             })()
             """#) as? Bool

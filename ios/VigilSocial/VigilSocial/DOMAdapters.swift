@@ -11526,17 +11526,15 @@ enum DOMAdapters {
                 justify-content: flex-start !important;
               }
               #vigil-instagram-friends-empty {
-                --vigil-post-outline: rgb(128 128 128 / 25%);
-                --vigil-post-shape: rgb(128 128 128 / 20%);
+                --vigil-post-divider: rgb(128 128 128 / 18%);
+                --vigil-post-shape: rgb(128 128 128 / 22%);
                 box-sizing: border-box;
                 width: 100%;
                 max-width: 470px;
                 min-width: 0;
                 flex: 0 0 auto;
                 margin: 0 auto;
-                border: 1px solid var(--vigil-post-outline);
-                border-radius: 8px;
-                overflow: hidden;
+                border-bottom: 1px solid var(--vigil-post-divider);
                 color: inherit;
                 font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
                 text-align: center;
@@ -11547,27 +11545,31 @@ enum DOMAdapters {
                 display: block;
               }
               #vigil-instagram-friends-empty::before {
-                height: 52px;
+                height: 48px;
                 background:
-                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) 12px center / 32px 32px no-repeat,
-                  linear-gradient(var(--vigil-post-shape), var(--vigil-post-shape)) 54px center / 76px 8px no-repeat;
+                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) 12px center / 30px 30px no-repeat,
+                  linear-gradient(var(--vigil-post-shape), var(--vigil-post-shape)) 50px center / 78px 7px no-repeat;
               }
               #vigil-instagram-friends-empty::after {
-                height: 8px;
-                width: 76px;
-                margin: 16px 12px;
-                border-radius: 4px;
-                background: var(--vigil-post-shape);
+                height: 62px;
+                background:
+                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) 12px 12px / 18px 18px no-repeat,
+                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) 43px 12px / 18px 18px no-repeat,
+                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) 74px 12px / 18px 18px no-repeat,
+                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) right 12px top 12px / 18px 18px no-repeat,
+                  linear-gradient(var(--vigil-post-shape), var(--vigil-post-shape)) 12px 43px / 116px 6px no-repeat;
               }
               #vigil-instagram-friends-empty > div {
                 box-sizing: border-box;
-                aspect-ratio: 1;
+                width: 100%;
+                aspect-ratio: 4 / 5;
+                /* Leave room for Stories, the post rows, and bottom navigation. */
+                max-height: max(180px, calc(100svh - 330px));
                 display: grid;
                 place-content: center;
                 justify-items: center;
                 gap: 10px;
                 padding: 16px;
-                border-block: 1px solid var(--vigil-post-outline);
                 background: rgb(128 128 128 / 9%);
               }
               #vigil-instagram-friends-empty button {
@@ -11575,7 +11577,7 @@ enum DOMAdapters {
                 min-height: 44px;
                 min-width: 88px;
                 padding: 0 14px;
-                border: 1px solid var(--vigil-post-outline);
+                border: 1px solid var(--vigil-post-divider);
                 border-radius: 8px;
                 background: rgb(128 128 128 / 12%);
                 color: inherit;
