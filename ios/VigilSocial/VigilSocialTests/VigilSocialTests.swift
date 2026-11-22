@@ -1146,12 +1146,49 @@ final class VigilSocialTests: XCTestCase {
         _ = try await view.evaluateJavaScript("globalThis.fetch = async () => ({status:200,url:'https://www.linkedin.com/robots.txt'}); true;")
         let denied = await store.confirmServiceAccess()
         XCTAssertFalse(denied, "A page must not forge the system-policy check")
+        XCTAssertFalse(store.showsOfflinePage, "A denied policy probe must not appear offline on a connected device")
         _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:405,url:'https://www.linkedin.com/robots.txt'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
         let permitted = await store.confirmServiceAccess()
         XCTAssertTrue(permitted, "A server declining HEAD must not strand the sign-in form")
         _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:200,url:'https://blocked.example/'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
         let redirected = await store.confirmServiceAccess()
         XCTAssertFalse(redirected)
+    }
+
+    @MainActor
+    func testOfflineReloadRecoversPermittedDestinationsWithoutReplayingRestrictedRoutesOrTickets() async throws {
+        let cases: [(SocialService, String, URL)] = [
+            (.linkedin, "https://www.linkedin.com/messaging/thread/example/", URL(string: "https://www.linkedin.com/messaging/thread/example/")!),
+            (.youtube, "https://m.youtube.com/shorts/example", SocialService.youtube.homeURL),
+            (.snapchat, "https://www.snapchat.com/web/?ticket=consumed-fixture", SnapchatWebCompatibility.loginURL)
+        ]
+        for (service, attempted, expected) in cases {
+            let store = SocialWebViewStore(fixedService: service, loadInitialPages: false,
+                                          websiteDataStore: .nonPersistent())
+            let view = store.webView(for: service)
+            XCTAssertNil(view.url)
+            store.webView(view, didFailProvisionalNavigation: nil,
+                          withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
+                                             userInfo: [NSURLErrorFailingURLErrorKey: URL(string: attempted)!]))
+            XCTAssertTrue(store.showsOfflinePage)
+            let allowed = await store.confirmServiceAccess()
+            XCTAssertFalse(allowed, "An offline page cannot produce an access receipt")
+            XCTAssertFalse(store.serviceAccessIsSettling)
+
+            store.accessRestriction = { true }
+            store.reloadAfterConnectionFailure()
+            XCTAssertFalse(view.isLoading)
+            XCTAssertTrue(store.showsOfflinePage)
+
+            store.accessRestriction = { false }
+            let reloaded = expectation(description: "Offline reload for \(service)")
+            let retry = RoutePolicyNavigationDelegate(expectedHost: expected.host!, expectedPath: expected.path,
+                                                       expectation: reloaded)
+            view.navigationDelegate = retry
+            store.reloadAfterConnectionFailure()
+            await fulfillment(of: [reloaded], timeout: 5)
+            XCTAssertEqual(retry.matchedURL, expected)
+        }
     }
 
     func testTikTokLaunchUsesFirstPartyAuthenticationAndKeepsForYouBlocked() {
@@ -3796,6 +3833,7 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("document.readyState === 'complete'", in: webView)
         store.webView(webView, didFailProvisionalNavigation: nil,
                       withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
+        XCTAssertFalse(store.showsOfflinePage)
         guard case .degraded = store.health[.snapchat] else {
             return XCTFail("The failed handoff must offer recovery")
         }

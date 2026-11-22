@@ -338,41 +338,56 @@ private struct SocialServiceAccessView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var accessConfirmed = false
     @State private var checking = true
+    @State private var reloadAttempt = 0
+
+    private var serviceAvailable: Bool {
+        accessConfirmed && restriction == nil && !store.showsOfflinePage
+    }
 
     var body: some View {
         ZStack {
-            RootView(store: store, isServiceVisible: isServiceVisible && accessConfirmed && restriction == nil)
-                .opacity(accessConfirmed && restriction == nil ? 1 : 0)
-                .allowsHitTesting(accessConfirmed && restriction == nil)
-                .accessibilityHidden(!accessConfirmed || restriction != nil)
-            if !accessConfirmed || restriction != nil {
-                if checking && restriction == nil {
-                    SocialLaunchScreen(service: store.fixedService)
-                } else {
-                    VStack(spacing: 8) {
-                        Text("Blocked").font(.system(size: 30, weight: .regular))
-                        Button("Back", action: onBack)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Color(red: 141.0 / 255.0, green: 179.0 / 255.0, blue: 154.0 / 255.0))
-                            .frame(minWidth: 44, minHeight: 44)
-                            .buttonStyle(.plain)
-                    }
-                    .multilineTextAlignment(.center).padding(28)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .foregroundStyle(Color(white: 0.76))
-                    .background(Color(red: 24.0 / 255.0, green: 26.0 / 255.0, blue: 28.0 / 255.0).ignoresSafeArea())
-                    .overlay(alignment: .bottomTrailing) {
-                        Text("V1-SOC-\(store.fixedService.rawValue.uppercased())-\(restriction != nil ? (restriction?.permanent == true ? "LOCK" : "ROUTINE") : "CONNECTION")")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundStyle(Color(white: 0.46))
-                            .padding(16)
-                            .accessibilityHint(restriction?.message ?? store.serviceAccessDetail)
-                    }
-                    .environment(\.colorScheme, .dark)
+            RootView(store: store, isServiceVisible: isServiceVisible && serviceAvailable)
+                .opacity(serviceAvailable ? 1 : 0)
+                .allowsHitTesting(serviceAvailable)
+                .accessibilityHidden(!serviceAvailable)
+            if restriction == nil && store.showsOfflinePage {
+                SocialOfflineView(
+                    service: store.fixedService,
+                    reload: {
+                        accessConfirmed = false
+                        checking = true
+                        store.reloadAfterConnectionFailure()
+                        reloadAttempt += 1
+                    },
+                    onBack: onBack
+                )
+            } else if restriction == nil && !accessConfirmed && checking {
+                SocialLaunchScreen(service: store.fixedService)
+            } else if restriction != nil || !accessConfirmed {
+                VStack(spacing: 8) {
+                    Text("Blocked")
+                        .font(.title3.weight(.semibold))
+                        .accessibilityAddTraits(.isHeader)
+                    Button("Back", action: onBack)
+                        .font(.body)
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .multilineTextAlignment(.center)
+                .padding(28)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .foregroundStyle(.primary)
+                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
+                .tint(Color(uiColor: .systemBlue))
+                .overlay(alignment: .bottomTrailing) {
+                    Text("V1-SOC-\(store.fixedService.rawValue.uppercased())-\(restriction != nil ? (restriction?.permanent == true ? "LOCK" : "ROUTINE") : "CONNECTION")")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .padding(16)
+                        .accessibilityHint(restriction?.message ?? store.serviceAccessDetail)
                 }
             }
         }
-        .task(id: isServiceVisible && scenePhase == .active && restriction == nil) {
+        .task(id: isServiceVisible && scenePhase == .active && restriction == nil ? reloadAttempt : nil) {
             guard restriction == nil else {
                 accessConfirmed = false
                 store.suspendAllMedia(relinquishExternalPlayback: true)
@@ -405,6 +420,33 @@ private struct SocialServiceAccessView: View {
                 try? await Task.sleep(for: .milliseconds(checking ? 150 : 5000))
             }
         }
+    }
+}
+
+private struct SocialOfflineView: View {
+    let service: SocialService
+    let reload: () -> Void
+    var onBack: (() -> Void)?
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No Internet Connection", systemImage: "wifi.slash")
+        } description: {
+            Text("Connect to Wi-Fi or cellular data to reload \(service.displayName).")
+        } actions: {
+            Button("Reload", systemImage: "arrow.clockwise", action: reload)
+                .buttonStyle(.borderedProminent)
+                .tint(service == .youtube ? Color(uiColor: .systemRed) : Color(uiColor: .systemBlue))
+                .accessibilityIdentifier("social-offline-reload")
+            if let onBack {
+                Button("Back", action: onBack)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color(uiColor: .systemBlue))
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(uiColor: .systemBackground).ignoresSafeArea())
     }
 }
 
@@ -455,6 +497,7 @@ struct RootView: View {
         // the established safe area remains unchanged.
         let webViewSafeAreaEdges: Edge.Set = []
         let surfaceColor = Self.surfaceColor(store: store, colorScheme: colorScheme)
+        let isOffline = store.showsOfflinePage
         return ZStack {
             surfaceColor
                 .ignoresSafeArea()
@@ -486,12 +529,18 @@ struct RootView: View {
                         }
                     }
             }
+            .allowsHitTesting(!isOffline)
+            .accessibilityHidden(isOffline)
 
-            healthOverlay(
-                store.health[service] ?? .loading,
-                service: service,
-                isDark: isDark
-            )
+            if isOffline {
+                SocialOfflineView(service: service, reload: store.reloadAfterConnectionFailure)
+            } else {
+                healthOverlay(
+                    store.health[service] ?? .loading,
+                    service: service,
+                    isDark: isDark
+                )
+            }
 
             if service == .instagram {
                 YouTubeContentBlockerGate(isDark: isDark)
@@ -537,7 +586,7 @@ struct RootView: View {
             SocialHealthOverlay(
                 title: "\(service.displayName) didn’t load",
                 message: detail.isEmpty ? "Please try again." : detail,
-                systemImage: "wifi.exclamationmark",
+                systemImage: "exclamationmark.circle",
                 isLoading: false,
                 isDark: isDark,
                 serviceName: service.displayName,

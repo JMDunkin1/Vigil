@@ -4,6 +4,7 @@ import CryptoKit
 import Foundation
 import ImageIO
 import MediaPlayer
+import Network
 import Photos
 import UIKit
 import UniformTypeIdentifiers
@@ -404,6 +405,8 @@ enum InstagramInformationalAccounts {
 final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var selectedService: SocialService
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
+    @Published private var offlineRetryURL: URL?
+    @Published private var serviceAccessIsOffline = false
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
     @Published private(set) var snapchatChromeColor: UIColor?
@@ -490,7 +493,11 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private static let maximumConcurrentMediaClassifications = 4
     private static let maximumPendingMediaClassifications = 12
     private static let maximumMediaRetryTasks = 12
+    private static let networkPath = SocialNetworkPath()
     static let youtubePlaybackPositionNamespace = "VigilSocial.youtube.position.v2"
+
+    var showsOfflinePage: Bool { offlineRetryURL != nil || serviceAccessIsOffline }
+
     init(
         defaults: UserDefaults = .standard,
         fixedService: SocialService? = nil,
@@ -562,7 +569,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func confirmServiceAccess() async -> Bool {
         var confirmed = false
+        var canReportOffline = false
         defer {
+            if !Task.isCancelled {
+                let offline = canReportOffline && !confirmed
+                    && accessRestriction?() != true && Self.networkPath.isOffline
+                if serviceAccessIsOffline != offline { serviceAccessIsOffline = offline }
+            }
             if !confirmed, !serviceNavigationDiagnostic.isEmpty {
                 serviceAccessDetail += " Last navigation: " + serviceNavigationDiagnostic
             }
@@ -577,6 +590,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         serviceAccessDetail = "Vigil could not confirm access under the current web policy."
         guard accessRestriction?() != true else { return false }
         let view = webView(for: fixedService)
+        if let url = view.url {
+            guard fixedService.allowsNavigation(to: url), !fixedService.isRestrictedSurface(url) else { return false }
+        }
+        // The device path can diagnose a failed check. Only the protected
+        // WebKit probe below can confirm access.
+        canReportOffline = true
+        guard offlineRetryURL == nil, !Self.networkPath.isOffline else {
+            serviceAccessDetail = "The internet connection is offline."
+            return false
+        }
         guard let url = view.url else {
             serviceAccessDetail = "The protected page has not established a document URL."
             switch health[fixedService] {
@@ -586,7 +609,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             }
             return false
         }
-        guard fixedService.allowsNavigation(to: url), !fixedService.isRestrictedSurface(url) else { return false }
         guard !view.isLoading else {
             serviceAccessDetail = "The protected document is still loading."
             serviceAccessIsSettling = true
@@ -642,6 +664,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                 """, arguments: [:], in: nil, contentWorld: .defaultClient)
             // A navigation or a newly active routine invalidates an in-flight result.
             guard !Task.isCancelled, view.url == url, !view.isLoading,
+                  offlineRetryURL == nil, !Self.networkPath.isOffline,
                   accessRestriction?() != true else {
                 serviceAccessIsSettling = view.isLoading || view.url != url
                 return false
@@ -892,12 +915,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             // Snapchat's /web landing can return a mobile download shell before
             // it ever offers login. Begin with first-party authentication;
             // its continue URL returns the persistent session to friend chat.
-            let initialURL: URL
-            switch service {
-            case .snapchat: initialURL = SnapchatWebCompatibility.loginURL
-            case .tiktok: initialURL = TikTokWebCompatibility.loginURL
-            default: initialURL = service.homeURL
-            }
+            let initialURL = service.initialWebURL
             webView.load(URLRequest(url: initialURL))
         }
 
@@ -981,6 +999,22 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             return
         }
         reload(service)
+    }
+
+    func reloadAfterConnectionFailure() {
+        guard showsOfflinePage, accessRestriction?() != true else { return }
+        let service = fixedService
+        let view = webView(for: service)
+        let url = offlineRetryURL ?? Self.offlineRecoveryURL(view.url, for: service)
+        if offlineRetryURL != nil { offlineRetryURL = nil }
+        if serviceAccessIsOffline { serviceAccessIsOffline = false }
+        if service == .instagram, instagramSuggestedReelsBlocked {
+            retry(service)
+            return
+        }
+        health[service] = .loading
+        setSurface(.unknown, for: service)
+        view.load(URLRequest(url: url))
     }
 
     func goHome(_ service: SocialService) {
@@ -2416,7 +2450,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         )
     }
 
-    private func recordNavigationFailure(_ error: Error, for service: SocialService) {
+    private func recordNavigationFailure(_ error: Error, for service: SocialService, in webView: WKWebView) {
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled {
             return
@@ -2424,6 +2458,15 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         // WebKit reports policy-driven frame replacements through its private
         // compatibility domain/code rather than the public WKError.Code enum.
         if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
+            return
+        }
+        if nsError.domain == NSURLErrorDomain,
+           nsError.code == NSURLErrorNotConnectedToInternet
+            || (nsError.code == NSURLErrorNetworkConnectionLost && Self.networkPath.isOffline) {
+            let failedURL = nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+            lastConfirmedServiceAccess = nil
+            offlineRetryURL = Self.offlineRecoveryURL(failedURL ?? webView.url, for: service)
+            setSurface(.unknown, for: service)
             return
         }
         if !instagramSuggestedReelsBlocked, Self.shouldPreserveInstagramSurface(
@@ -2497,6 +2540,14 @@ final class SocialWebViewStore: NSObject, ObservableObject {
               service.allowsNavigation(to: url),
               !service.isRestrictedSurface(url) else { return nil }
         return url
+    }
+
+    private static func offlineRecoveryURL(_ url: URL?, for service: SocialService) -> URL {
+        // A failed Snapchat handoff may carry a consumed ticket, including on /web.
+        if service == .snapchat, SnapchatWebCompatibility.isTicketHandoff(url) {
+            return SnapchatWebCompatibility.loginURL
+        }
+        return safeRecoveryURL(url, for: service) ?? service.initialWebURL
     }
 
     private func restoreWebContentPositionIfNeeded(for service: SocialService, in webView: WKWebView) {
@@ -2757,6 +2808,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         youtubeAllowsLandscape = false
         guard let service = service(for: webView) else { return }
+        if offlineRetryURL != nil { offlineRetryURL = nil }
         if service == .youtube {
             stopYouTubeExternalPlayback(); lastConfirmedServiceAccess = nil
             youtubeProtectionVerified = false
@@ -2833,7 +2885,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         webView.scrollView.refreshControl?.endRefreshing()
         if let service = service(for: webView) {
             serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
-            recordNavigationFailure(error, for: service)
+            recordNavigationFailure(error, for: service, in: webView)
         }
     }
 
@@ -2844,7 +2896,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         webView.scrollView.refreshControl?.endRefreshing()
         if let service = service(for: webView) {
             serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
-            recordNavigationFailure(error, for: service)
+            recordNavigationFailure(error, for: service, in: webView)
         }
     }
 
@@ -2870,6 +2922,20 @@ extension SocialWebViewStore: WKNavigationDelegate {
             webContentRecovery.removeValue(forKey: service)
             webView.load(URLRequest(url: service.homeURL))
         }
+    }
+}
+
+@MainActor
+private final class SocialNetworkPath {
+    private let monitor = NWPathMonitor()
+    private(set) var isOffline = false
+
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in
+            let isOffline = path.status == .unsatisfied
+            Task { @MainActor in self?.isOffline = isOffline }
+        }
+        monitor.start(queue: DispatchQueue(label: "tech.caseline.vigil.social.network-path"))
     }
 }
 

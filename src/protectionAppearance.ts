@@ -137,4 +137,28 @@ body[data-vigil-block-page="1"] .message { margin: 16px auto 0; font-size: .75re
   overflow-wrap: anywhere;
   text-align: right;
 }
+
+@supports (-webkit-touch-callout: none) {
+  :root:has(body[data-vigil-block-page="1"]) { color-scheme: light dark; background: Canvas; color: CanvasText; }
+  body[data-vigil-block-page="1"] {
+    --block-link: #0066cc;
+    background: Canvas;
+    color: CanvasText;
+  }
+  body[data-vigil-block-page="1"] h1 {
+    color: inherit;
+    font-size: 1.25rem;
+    font-weight: 600;
+    letter-spacing: normal;
+  }
+  body[data-vigil-block-page="1"] .escape-actions :is(a, button) {
+    color: var(--block-link);
+    font-size: 1rem;
+  }
+  body[data-vigil-block-page="1"] .escape-actions :is(a, button):focus-visible { outline-color: var(--block-link); }
+  body[data-vigil-block-page="1"] .block-reference { color: color-mix(in srgb, CanvasText 58%, Canvas); }
+  @media (prefers-color-scheme: dark) {
+    body[data-vigil-block-page="1"] { --block-link: #409cff; }
+  }
+}
 `;

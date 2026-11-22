@@ -105,6 +105,14 @@ enum InstagramCallPolicy {
 
 enum SnapchatWebCompatibility {
     static let loginURL = URL(string: "https://accounts.snapchat.com/v2/login?continue=https%3A%2F%2Fwww.snapchat.com%2Fweb%2F")!
+
+    static func isTicketHandoff(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.contains {
+            $0.name.caseInsensitiveCompare("ticket") == .orderedSame
+        } == true
+    }
+
     // Snapchat for Web is intentionally desktop-only even though its web app
     // is otherwise usable in modern WebKit. The focused companion presents a
     // desktop Safari identity while keeping navigation confined to Snapchat.
@@ -271,6 +279,14 @@ enum SocialService: String, CaseIterable, Identifiable, Sendable {
             URL(string: "https://www.snapchat.com/web/")!
         case .facebook, .x, .tiktok, .reddit:
             URL(string: focusedRoutePolicy!.homeURL)!
+        }
+    }
+
+    var initialWebURL: URL {
+        switch self {
+        case .snapchat: SnapchatWebCompatibility.loginURL
+        case .tiktok: TikTokWebCompatibility.loginURL
+        default: homeURL
         }
     }
 
