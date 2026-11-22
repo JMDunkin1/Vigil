@@ -36,7 +36,7 @@ export interface YouTubeDay {
 export interface YouTubeRequest {
   action?: unknown; client?: unknown; videoId?: unknown; title?: unknown;
   replace?: unknown; mode?: unknown; feed?: unknown; cards?: unknown; leaseId?: unknown;
-  playedMs?: unknown; ended?: unknown;
+  playedMs?: unknown; ended?: unknown; completed?: unknown;
   accountKey?: unknown; videoIds?: unknown; revision?: unknown; day?: unknown; complete?: unknown;
 }
 function videoId(value: unknown): string {
@@ -205,6 +205,10 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
       if (typeof elapsed !== "number" || !Number.isFinite(elapsed) || elapsed < lease.settledMs || elapsed > lease.milliseconds) return result(false, "Invalid playback time.");
       charge(day, lease.videoId, elapsed - lease.settledMs);
       lease.settledMs = elapsed;
+      if (input.completed === true || (input.action === "settle" && input.ended === true)) {
+        const finished = day.slots.find(item => item?.videoId === lease.videoId);
+        if (finished) finished.completed = true;
+      }
       if (input.action === "renew" && day.grace.status !== "ended") {
         const remaining = day.usedMs < YOUTUBE_BASE_MS ? YOUTUBE_BASE_MS - day.usedMs : YOUTUBE_GRACE_MS - day.grace.usedMs;
         // Retain ownership and the same authorization identity during renewal.
@@ -216,11 +220,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
         return result(true, "", { ...lease });
       }
       day.lease = null;
-      if (input.ended === true) {
-        const finished = day.slots.find(item => item?.videoId === lease.videoId);
-        if (finished) finished.completed = true;
-        if (day.grace.videoId === lease.videoId) day.grace.status = "ended";
-      }
+      if (input.ended === true && day.grace.videoId === lease.videoId) day.grace.status = "ended";
       return result();
     }
     case "check":

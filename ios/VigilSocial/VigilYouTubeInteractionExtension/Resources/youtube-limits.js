@@ -17,6 +17,7 @@
   let panel, message, statusLine, notice;
   let finishedScreen, finishedSignature = "";
   let lease = null, playing = null, played = 0, lastTick = 0, lastPosition = 0;
+  let reachedEnd = false, reportedCompletion = false;
   let renewal = null;
   let resumeMedia = null, retryInterruptedPlay = false, queuedStart = false;
   let wantsPlayback = false, playAttempt = 0, pendingPlay = null, settlingPlayback = false;
@@ -127,6 +128,9 @@
     const allowance = saves + text;
     if (statusLine.textContent !== allowance) statusLine.textContent = allowance;
   }
+  // Give short videos a few seconds of leeway when possible and keep the
+  // threshold near the end of both very short clips and long videos.
+  const completionWindow = duration => Math.min(duration * .15, 20, Math.max(3, duration * .05));
   const sample = () => {
     if (!lease || !playing) return;
     const now = performance.now();
@@ -134,6 +138,11 @@
     if (!playing.seeking && !waiting && position > lastPosition) {
       const elapsed = Math.min(Math.max(0, now - lastTick), (position - lastPosition) * 1000 / previousRate);
       played = Math.min(lease.milliseconds, played + elapsed);
+      const duration = playing.duration;
+      if (!reachedEnd && elapsed > 0 && Number.isFinite(duration) && duration > 0
+          && position >= duration - completionWindow(duration) && lease.videoId === currentID()
+          && state?.slots.some(slot => slot?.videoId === lease.videoId && !slot.completed && !slot.removed)
+          && !playing.closest('.ad-showing, .ad-interrupting')) reachedEnd = true;
     }
     lastTick = now; lastPosition = position; previousRate = playing.playbackRate || 1;
   };
@@ -197,10 +206,12 @@
     if (renewal) await renewal.catch(() => {});
     const old = lease; lease = null;
     const elapsed = played; played = 0;
+    const completed = reachedEnd;
+    reachedEnd = false; reportedCompletion = false;
     pauseMedia(playing);
     playing = null; retryInterruptedPlay = false;
     if (old) {
-      try { await request({ action: 'settle', leaseId: old.id, playedMs: elapsed, ended }); }
+      try { await request({ action: 'settle', leaseId: old.id, playedMs: elapsed, ended, completed }); }
       catch (error) {
         // A backgrounded tab may wake after its short authorization expires.
         // The paused video itself remains usable; the next Play gets a new lease.
@@ -1127,6 +1138,7 @@
     const timeFinished = Boolean(state && (grace?.status === 'ended'
       || state.usedMs >= 7200000 && !(grace?.status === 'active' && grace.usedMs < 1200000 && grace.videoId === id)));
     const permittedWatch = Boolean(id && ((slot && !slot.removed && !slot.completed)
+      || playing && !settlingPlayback && lease?.videoId === id
       || state?.external?.includes(id) || !slot?.completed && verifiedWatchPages.has(`${state?.day}:${id}`)));
     const gated = timeFinished || full && !permittedWatch;
     document.documentElement.toggleAttribute('data-vigil-saves-finished', gated);
@@ -1144,7 +1156,7 @@
           background:var(--vigil-finished-bg,#0f0f0f)!important;color:var(--vigil-finished-text,#f1f1f1)!important;
           font:16px/1.5 Roboto,Arial,sans-serif}
         :host([hidden]){display:none!important}*{box-sizing:border-box}
-        main{max-width:640px;margin:0 auto;color:var(--vigil-finished-text,#f1f1f1);
+        main{max-width:1040px;margin:0 auto;color:var(--vigil-finished-text,#f1f1f1);
           animation:vigil-content-in 300ms cubic-bezier(.2,0,0,1) both}
         .brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:600;letter-spacing:-.2px}
         .brand-label{border:0;background:transparent;color:inherit;font:inherit;padding:0;min-height:44px;cursor:pointer}
@@ -1152,21 +1164,24 @@
         .brand-mark{display:grid;place-items:center;width:32px;height:23px;border-radius:7px;background:#f03}
         .brand-mark::after{content:'';margin-left:2px;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:8px solid #fff}
         h1{margin:36px 0 24px;font-size:clamp(26px,4.5vw,34px);font-weight:700;line-height:1.2;letter-spacing:-.7px}
-        nav{display:grid;gap:10px}
-        a{display:flex;align-items:center;gap:16px;min-height:76px;padding:16px 18px;border-radius:12px;
+        .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}
+        .card{display:block;min-width:0;border:1px solid var(--vigil-finished-outline,#ffffff26);border-radius:14px;
           background:var(--vigil-finished-card,#212121);color:var(--vigil-finished-text,#f1f1f1);text-decoration:none;touch-action:manipulation;
-          transition:background-color 150ms ease,transform 150ms ease;animation:vigil-content-in 280ms cubic-bezier(.2,0,0,1) both}
-        a:nth-child(1){animation-delay:50ms}a:nth-child(2){animation-delay:80ms}a:nth-child(3){animation-delay:110ms}a:nth-child(4){animation-delay:140ms}
-        @media(hover:hover){a:hover{background:var(--vigil-finished-hover,#303030)}}
-        a:focus-visible{background:var(--vigil-finished-hover,#303030)}a:active{transform:scale(.99)}
-        a:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:3px}
-        .number{flex:0 0 28px;color:var(--vigil-finished-secondary,#aaa);font-size:13px;font-variant-numeric:tabular-nums}
-        .title{flex:1;min-width:0;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;font-size:15px;font-weight:500;line-height:1.4}
-        .play{display:grid;place-items:center;flex:0 0 34px;height:34px;border-radius:50%;background:var(--vigil-finished-chip,#272727)}
-        .play::after{content:'';margin-left:2px;border-top:5px solid transparent;border-bottom:5px solid transparent;border-left:8px solid currentColor}
+          transition:background-color 150ms ease,transform 150ms ease}
+        @media(hover:hover){a.card:hover{background:var(--vigil-finished-hover,#303030)}}
+        a.card:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:3px}
+        a.card:active{transform:scale(.99)}
+        .poster{display:block;position:relative;aspect-ratio:16/9;border-radius:13px 13px 0 0;overflow:hidden;
+          background:var(--vigil-finished-chip,#272727)}
+        .poster img{display:block;width:100%;height:100%;object-fit:cover}
+        .card[data-inactive]{background:transparent;color:var(--vigil-finished-secondary,#aaa)}
+        .card[data-inactive] img{filter:grayscale(1);opacity:.25}
+        .card-status{position:absolute;right:10px;bottom:10px;padding:3px 8px;border-radius:5px;background:#202020;color:#eee;font-size:12px}
+        .card-copy{display:block;min-height:64px;padding:11px 13px}
+        .title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:15px;font-weight:500;line-height:1.4}
         @keyframes vigil-content-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
-        @media(max-width:600px){:host{padding-top:calc(env(safe-area-inset-top) + 48px);padding-left:20px;padding-right:20px}h1{margin-top:30px}a{gap:12px;padding:14px;min-height:78px}}
-        @media(prefers-reduced-motion:reduce){:host,main,a{animation:none!important;transition:none!important}a:active{transform:none}}
+        @media(max-width:600px){:host{padding-top:calc(env(safe-area-inset-top) + 32px);padding-left:16px;padding-right:16px}h1{margin-top:20px}.cards{grid-template-columns:minmax(0,1fr);gap:16px}}
+        @media(prefers-reduced-motion:reduce){:host,main,.card{animation:none!important;transition:none!important}a.card:active{transform:none}}
       `;
       shadow.append(style, document.createElement('main'));
       finishedScreen._content = shadow.querySelector('main');
@@ -1179,7 +1194,7 @@
       const theme = window.getComputedStyle(document.querySelector('ytd-app,ytm-app') || document.documentElement);
       for (const [own, native] of [
         ['bg', '--yt-spec-base-background'], ['text', '--yt-spec-text-primary'],
-        ['secondary', '--yt-spec-text-secondary'], ['card', '--yt-spec-raised-background'],
+        ['secondary', '--yt-spec-text-secondary'], ['card', '--yt-spec-raised-background'], ['outline', '--yt-spec-10-percent-layer'],
         ['chip', '--yt-spec-badge-chip-background'], ['hover', '--yt-spec-button-chip-background-hover'],
         ['focus', '--yt-spec-call-to-action']
       ]) {
@@ -1189,16 +1204,17 @@
         else if (!value && finishedScreen.style.getPropertyValue(property)) finishedScreen.style.removeProperty(property);
       }
     }
-    const slots = timeFinished ? [] : state.slots.filter(slot => slot && !slot.removed && !slot.completed);
-    const complete = !timeFinished && slots.length === 0;
-    // Playback counters and slot locks change during polling. Only visible
-    // content changes should rebuild rows or restart their entrance animation.
-    const signature = JSON.stringify([state.day, timeFinished, slots.map(slot => [slot.videoId, slot.title])]);
+    const saved = state.slots.filter(Boolean);
+    const allWatched = saved.length === 4 && saved.every(slot => slot.completed);
+    const slots = timeFinished && !allWatched ? [] : saved;
+    // Playback counters and slot locks change during polling. Rebuild only
+    // when a card or the heading changes.
+    const signature = JSON.stringify([state.day, timeFinished, slots.map(slot => [slot.videoId, slot.title, Boolean(slot.completed), slot.completed ? false : slot.removed])]);
     if (signature === finishedSignature) { finishedScreen.hidden = false; return; }
     finishedSignature = signature;
-    const heading = document.createElement('h1'); heading.textContent = timeFinished ? 'You’ve run out of watch time today.'
-      : complete ? 'You’ve watched all your saved videos today.' : 'You’ve saved all four videos today.';
-    finishedScreen.setAttribute('aria-label', timeFinished ? 'Daily YouTube watch time complete' : 'Daily YouTube saves complete');
+    const heading = document.createElement('h1'); heading.textContent = timeFinished && !allWatched
+      ? 'You’ve run out of watch time today.' : 'Today’s saved videos';
+    finishedScreen.setAttribute('aria-label', timeFinished && !allWatched ? 'Daily YouTube watch time complete' : 'Today’s saved videos');
     const brand = document.createElement('div'); brand.className = 'brand';
     const mark = document.createElement('span'); mark.className = 'brand-mark'; mark.setAttribute('aria-hidden', 'true');
     const label = document.createElement(timeFinished ? 'span' : 'button'); label.textContent = timeFinished ? 'YouTube' : 'Watch Later';
@@ -1208,16 +1224,42 @@
       label.addEventListener('click', event => { if (event.isTrusted) void openWatchLaterTools(); });
     }
     brand.append(mark, label);
-    const list = document.createElement('nav'); list.setAttribute('aria-label', 'Your saved videos');
-    const links = slots.map((slot, index) => {
-      const link = document.createElement('a'); link.href = `/watch?v=${encodeURIComponent(slot.videoId)}`;
-      const number = document.createElement('span'); number.className = 'number'; number.textContent = String(index + 1).padStart(2, '0'); number.setAttribute('aria-hidden', 'true');
-      const title = document.createElement('span'); title.className = 'title'; title.textContent = slot.title || 'Watch saved video';
-      const play = document.createElement('span'); play.className = 'play'; play.setAttribute('aria-hidden', 'true');
+    const list = document.createElement('div'); list.className = 'cards'; list.setAttribute('role', 'list');
+    const cards = slots.map(slot => {
+      const item = document.createElement('div'); item.setAttribute('role', 'listitem');
+      const inactive = slot.completed || slot.removed;
+      const card = document.createElement(inactive ? 'div' : 'a'); card.className = 'card';
+      const poster = document.createElement('span'); poster.className = 'poster';
+      const thumbnail = document.createElement('img');
+      thumbnail.alt = ''; thumbnail.decoding = 'async'; thumbnail.referrerPolicy = 'no-referrer';
+      thumbnail.addEventListener('error', () => thumbnail.remove(), { once: true });
+      thumbnail.src = `https://i.ytimg.com/vi/${encodeURIComponent(slot.videoId)}/mqdefault.jpg`;
+      poster.append(thumbnail);
+      const copy = document.createElement('span'); copy.className = 'card-copy';
+      const title = document.createElement('span'); title.className = 'title';
+      title.textContent = slot.title && slot.title !== slot.videoId ? slot.title : 'Saved video';
+      copy.append(title);
+      card.append(poster, copy); item.append(card);
+      if (inactive) {
+        card.setAttribute('data-inactive', '');
+        const status = document.createElement('span'); status.className = 'card-status';
+        status.textContent = slot.completed ? 'Watched' : 'Removed';
+        poster.append(status);
+      } else {
+        card.href = `/watch?v=${encodeURIComponent(slot.videoId)}`;
+        wireSavedCard(card);
+      }
+      return item;
+    });
+    list.append(...cards);
+    finishedScreen._content.replaceChildren(brand, heading, ...(cards.length ? [list] : []));
+    finishedScreen.hidden = false;
+
+    function wireSavedCard(link) {
       // Navigate directly from this owned shadow surface. Native YouTube's
       // delegated handlers cannot resolve links inside a closed shadow root.
       // A touch handler on the surrounding site can cancel the compatibility
-      // click. Activate a completed single tap inside our own shadow row.
+      // click. Activate a completed single tap inside our own shadow card.
       let tap = null;
       link.addEventListener('touchstart', event => {
         const point = event.touches[0];
@@ -1242,11 +1284,7 @@
         event.preventDefault(); event.stopPropagation();
         location.assign(link.href);
       });
-      link.append(number, title, play); return link;
-    });
-    list.append(...links);
-    finishedScreen._content.replaceChildren(brand, heading, ...(slots.length ? [list] : []));
-    finishedScreen.hidden = false;
+    }
   }
   function updateHeldPlayer() {
     // YouTube treats the interrupted autoplay attempt as buffering. Keep its
@@ -1491,12 +1529,18 @@
       }
     } else idleSince = null;
     const remainingBudget = state?.grace.status === 'active' ? 1200000 - state.grace.usedMs : 7200000 - (state?.usedMs || 0);
+    const completing = reachedEnd && !reportedCompletion;
     // Safari's native bridge and durable ledger write can take more than 500 ms.
     // Renew halfway through the two-second reservation, without extending it locally.
-    if (lease && remainingBudget > lease.milliseconds - lease.settledMs && !renewal && !busy && playing && (!playing.paused || waiting) && (played >= lease.milliseconds - 1000 || performance.now() >= deadline - 1000) && performance.now() < deadline) {
+    // Persist near-end completion on the current lease so the viewer can
+    // still watch the ending. The final settlement also carries completion.
+    if (lease && remainingBudget > lease.milliseconds - lease.settledMs && !renewal && !busy && !settlingPlayback
+        && playing && (completing || (!playing.paused || waiting) && (played >= lease.milliseconds - 1000 || performance.now() >= deadline - 1000))
+        && performance.now() < deadline) {
       const original = lease;
       const sent = performance.now();
-      renewal = request({ action: 'renew', leaseId: original.id, playedMs: played }).then(response => {
+      if (completing) reportedCompletion = true;
+      renewal = request({ action: 'renew', leaseId: original.id, playedMs: played, completed: completing }).then(response => {
         if (lease?.id === original.id && response.lease) {
           lease = response.lease;
           deadline = sent + (lease.expiresAt - response.serverTime) - 100;

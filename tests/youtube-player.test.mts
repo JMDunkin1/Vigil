@@ -59,7 +59,7 @@ async function playerFixture({
     if (target.isConnected !== false) for (const callback of handlers.get(name) || []) callback({ target, isTrusted: true });
   };
   const media = Object.assign(new Node(), {
-    dataset: {} as Record<string, string>, isConnected: true, webkitDisplayingFullscreen: false, pauseCount: 0, paused: true, ended: false, seeking: false, readyState: 4, currentTime: 0, playbackRate: 1, autoplay: false,
+    dataset: {} as Record<string, string>, isConnected: true, webkitDisplayingFullscreen: false, pauseCount: 0, paused: true, ended: false, seeking: false, readyState: 4, currentTime: 0, duration: Infinity, playbackRate: 1, autoplay: false,
     pause() { if (!this.paused) this.pauseCount++; this.paused = true; },
     async play() { this.paused = false; emit('play'); emit('playing'); }
   });
@@ -260,6 +260,50 @@ test('renewal preserves actual playback through the base limit and natural end c
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(state.youtubeLimits!.grace.status, 'ended');
   await click('Play this video'); assert.equal(media.paused, true);
+});
+
+test('a 100-second saved video checks off at 95% and its authorized ending keeps playing', async () => {
+  const { state, media, click, advance, emit, flush } = await playerFixture({ nativeReply: 'safari' });
+  state.youtubeLimits!.usedMs = YOUTUBE_BASE_MS;
+  state.youtubeLimits!.grace = { status: 'active', videoId: id, usedMs: 0 };
+  media.currentTime = 94; media.duration = 100;
+  await click('Play this video'); await advance(900);
+  assert.equal(state.youtubeLimits!.slots[0]!.completed, undefined);
+  await advance(150);
+  assert.equal(state.youtubeLimits!.slots[0]!.completed, true);
+  assert.equal(state.youtubeLimits!.grace.status, 'active');
+  await advance(4000);
+  assert.ok(media.currentTime > 99);
+  assert.equal(media.pauseCount, 0);
+  media.ended = true; media.paused = true; emit('ended'); await flush();
+  assert.equal(state.youtubeLimits!.grace.status, 'ended');
+});
+
+test('short clips get a practical completion window and long videos wait until the last 20 seconds', async () => {
+  for (const {duration, checkAt} of [
+    {duration: 5, checkAt: 4.25},
+    {duration: 20, checkAt: 17},
+    {duration: 3600, checkAt: 3580}
+  ]) {
+    const { state, media, click, advance } = await playerFixture();
+    media.duration = duration; media.currentTime = checkAt - .35;
+    await click('Play this video'); await advance(250);
+    assert.equal(state.youtubeLimits!.slots[0]!.completed, undefined, `${duration}s video before the threshold`);
+    await advance(150);
+    assert.equal(state.youtubeLimits!.slots[0]!.completed, true, `${duration}s video after the threshold`);
+    assert.equal(media.paused, false);
+  }
+});
+
+test('seeking into the completion window while paused does not check off the saved video', async () => {
+  const { state, media, click, advance, emit } = await playerFixture();
+  media.duration = 100;
+  await click('Play this video'); await advance(500);
+  media.pause();
+  media.seeking = true; emit('seeking'); media.currentTime = 98;
+  media.seeking = false; emit('seeked');
+  await advance(5000, false);
+  assert.equal(state.youtubeLimits!.slots[0]!.completed, undefined);
 });
 
 test('authorization renewals do not interrupt ordinary playback', async () => {

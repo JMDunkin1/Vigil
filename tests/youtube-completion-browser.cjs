@@ -9,7 +9,13 @@ async function main() {
   const win = new BrowserWindow({show:false, width:1200, height:850, webPreferences:{sandbox:true}});
   let slots = [];
   await win.webContents.session.protocol.handle('https', request => {
-    const path = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const path = url.pathname;
+    if (url.hostname === 'i.ytimg.com') {
+      return new Response(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jA1sAAAAASUVORK5CYII=', 'base64'), {
+        headers: { 'Content-Type': 'image/png' }
+      });
+    }
     const playlist = { contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: slots.filter(Boolean).map(slot => ({
       playlistVideoRenderer: { videoId: slot.videoId, title: { simpleText: slot.title } }
     })) } } };
@@ -45,8 +51,11 @@ async function main() {
     await win.webContents.executeJavaScript(`history.pushState({},'', '/watch?v=other000001')`); await wait(750);
     assert.equal(await win.webContents.executeJavaScript(`document.documentElement.hasAttribute('data-vigil-saves-finished')`),true);
     assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('ytd-app')).display`),'none','all discovery UI disappears');
-    const complete = await win.webContents.executeJavaScript(`(()=>{const root=testShadows.get(document.getElementById('vigil-youtube-finished'));return {text:root.textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),images:root.querySelectorAll('img').length}})()`);
-    assert.match(complete.text,/saved all four videos today/); assert.equal(complete.links.length,4); assert.equal(complete.images,0);
+    const complete = await win.webContents.executeJavaScript(`(()=>{const root=testShadows.get(document.getElementById('vigil-youtube-finished'));return {heading:root.querySelector('h1').textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),images:[...root.querySelectorAll('img')].map(img=>[img.src,img.naturalWidth]),titles:[...root.querySelectorAll('.title')].map(title=>title.textContent)}})()`);
+    assert.equal(complete.heading,'Today’s saved videos');
+    assert.equal(complete.links.length,4);
+    assert.deepEqual(complete.images,slots.map(slot=>[`https://i.ytimg.com/vi/${slot.videoId}/mqdefault.jpg`,1]));
+    assert.deepEqual(complete.titles,slots.map(slot=>slot.title));
     const appearance = await win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),main=root.querySelector('main');window.fixtureEntrance=main.getAnimations()[0];return {background:getComputedStyle(host).backgroundColor,text:getComputedStyle(main).color,row:getComputedStyle(root.querySelector('a')).backgroundColor,animation:getComputedStyle(main).animationName}})()`);
     assert.equal(appearance.background,'rgb(15, 15, 15)','native theme wins over the page’s white section styling');
     assert.equal(appearance.text,'rgb(241, 241, 241)');
@@ -77,17 +86,25 @@ async function main() {
       await win.webContents.executeJavaScript(`Object.assign(__testReply,${JSON.stringify(changes)}); history.pushState({},'',${JSON.stringify(route)})`);
       await wait(750);
     };
-    const screen = () => win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host);return {hidden:host.hidden,heading:root.querySelector('h1').textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),nav:!!root.querySelector('nav'),opacity:getComputedStyle(host).opacity}})()`);
+    const screen = () => win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host);return {hidden:host.hidden,heading:root.querySelector('h1').textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),cards:[...root.querySelectorAll('.card')].map(card=>{const box=card.getBoundingClientRect();return {title:card.querySelector('.title').textContent,status:card.querySelector('.card-status')?.textContent,filter:getComputedStyle(card.querySelector('img')).filter,outline:getComputedStyle(card).borderTopStyle,box:[box.x,box.y,box.width,box.height]}}),opacity:getComputedStyle(host).opacity}})()`);
+    const before = await screen();
     const completed = slots.map((slot,index)=>({...slot,completed:index===0}));
     await refresh({slots:completed},'/watch?v=other000003');
-    assert.equal((await screen()).links.length,3,'finished saved videos disappear while unwatched saves remain');
+    const partial = await screen();
+    assert.equal(partial.links.length,3,'only unwatched cards remain playable');
+    assert.deepEqual(partial.cards.map(card=>card.box),before.cards.map(card=>card.box),'completion keeps the grid geometry');
+    assert.equal(partial.cards[0].status,'Watched');
+    assert.equal(partial.cards[0].filter,'grayscale(1)');
+    assert.equal(partial.cards[0].outline,'solid');
+    assert.equal(partial.cards[1].filter,'none');
     await refresh({},`/watch?v=${ids[0]}`);
     assert.equal((await screen()).hidden,false,'a cached successful check cannot reopen a completed saved video');
     await refresh({slots:completed.map(slot=>({...slot,completed:true}))},'/watch?v=other000004');
     const done = await screen();
-    assert.match(done.heading,/watched all your saved videos/);
+    assert.equal(done.heading,'Today’s saved videos');
     assert.equal(done.links.length,0);
-    assert.equal(done.nav,false,'the finished state contains no empty or unusable video list');
+    assert.deepEqual(done.cards.map(card=>card.status),Array(4).fill('Watched'));
+    assert.deepEqual(done.cards.map(card=>card.title),slots.map(slot=>slot.title));
     assert.equal(done.opacity,'1','the opaque surface never reveals the underlying feed during entrance');
     for (const saved of [slots, [slots[0],null,null,null]]) {
       await refresh({slots:saved,usedMs:7200000,grace:{status:'ended',videoId:ids[0],usedMs:1200000}},`/watch?v=${ids[1]}`);

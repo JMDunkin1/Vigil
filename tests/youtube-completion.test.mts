@@ -30,25 +30,32 @@ function fixture(bodyReady = true) {
   const navigations: string[] = [];
   const initial = { day: '2026-10-28', slots: ids.map(videoId => ({ videoId, title: videoId, locked: false, removed: false })),
     usedMs: 0, grace: { status: 'unused', usedMs: 0, videoId: null }, external: [] };
-  const api = runInNewContext(`let state = initial, finishedScreen, finishedSignature = '', id = '';
+  const api = runInNewContext(`let state = initial, finishedScreen, finishedSignature = '', id = '', playing = false, lease, settlingPlayback = false;
     const topFrame = true, verifiedWatchPages = new Set(), currentID = () => id;
     ${screenSource}
     ${renderSource}
     ({update: updateFinishedScreen, render, state: () => state, set: value => {state = value;}, route: value => {id = value;},
-      verify: value => verifiedWatchPages.add(state.day + ':' + value), screen: () => finishedScreen})`, {
+      verify: value => verifiedWatchPages.add(state.day + ':' + value), screen: () => finishedScreen,
+      play: value => { playing = Boolean(value); lease = value ? {videoId: value} : null; }})`, {
     initial, document, panel, statusLine, window: {}, location: { assign: (url: string) => navigations.push(url) }
   });
   const content = () => api.screen()?._content as Node;
-  const links = () => content()?.querySelector('nav')?.children || [];
+  const grid = () => content()?.children.find(node => node.className === 'cards');
+  const cards = () => grid()?.children.map(item => item.children[0]) || [];
+  const links = () => cards().filter(card => card.tag === 'a');
   const heading = () => content()?.querySelector('h1')?.textContent;
-  return { api, document, body, panel, statusLine, navigations, content, links, heading };
+  return { api, document, body, panel, statusLine, navigations, content, grid, cards, links, heading };
 }
-test('the completion headline appears once and the allowance strip shows only remaining time', () => {
+test('four saved videos show their thumbnails and titles alongside the remaining time', () => {
   const f = fixture(), state = f.api.state();
+  state.slots[0].title = 'A saved video title';
   f.api.render();
-  assert.match(f.heading()!, /saved all four videos/);
-  assert.deepEqual(f.content().children.map(node => node.tag), ['div', 'h1', 'nav']);
+  assert.equal(f.heading(), 'Today’s saved videos');
+  assert.deepEqual(f.content().children.map(node => node.tag), ['div', 'h1', 'div']);
   assert.equal(f.content().children[0].children.length, 2);
+  assert.equal(f.cards().length, 4);
+  assert.deepEqual(f.cards().map(card => card.children[0].children[0].tag), ['img', 'img', 'img', 'img']);
+  assert.equal(f.cards()[0].children[1].children[0].textContent, 'A saved video title');
   assert.equal(f.statusLine.textContent, '120 min left');
   assert.equal(f.panel.attributes.has('data-duplicate-status'), false);
 
@@ -72,7 +79,7 @@ test('time exhaustion takes priority with any number of saves and on saved or ve
       assert.equal(f.api.screen().hidden, false);
       assert.match(f.heading()!, /run out of watch time/);
       assert.equal(f.links().length, 0);
-      assert.equal(f.content().querySelector('nav'), undefined);
+      assert.equal(f.grid(), undefined);
     }
   }
 });
@@ -86,17 +93,26 @@ test('the existing grace allows only its current video and never offers other sa
   state.grace.usedMs = 1200000;
   f.api.route(ids[0]); f.api.update(); assert.equal(f.api.screen().hidden, false);
 });
-test('completed saves disappear individually and all four completed saves leave no video list', () => {
+test('watched cards keep their position and the final grid remains visible with four disabled cards', () => {
   const f = fixture(); f.api.update(); assert.equal(f.links().length, 4);
   const state = f.api.state(); state.slots[0].completed = true;
   f.api.update(); assert.equal(f.links().length, 3);
+  assert.deepEqual(f.cards().map(card => card.attributes.has('data-inactive')), [true, false, false, false]);
+  assert.deepEqual(f.links().map(card => card.href), ids.slice(1).map(id => '/watch?v=' + id));
   f.api.route(ids[0]); f.api.verify(ids[0]); f.api.update();
   assert.equal(f.api.screen().hidden, false, 'a cached check cannot reopen a finished save');
+  f.api.play(ids[0]); f.api.update();
+  assert.equal(f.api.screen().hidden, true, 'the existing lease can still play the ending');
+  f.api.play(null);
   for (const slot of state.slots) slot.completed = true;
-  f.api.update(); assert.match(f.heading()!, /watched all your saved videos/);
-  assert.equal(f.links().length, 0); assert.equal(f.content().querySelector('nav'), undefined);
+  for (const grace of ['unused', 'ended']) {
+    state.grace.status = grace;
+    f.api.update(); assert.equal(f.heading(), 'Today’s saved videos');
+    assert.equal(f.links().length, 0);
+    assert.deepEqual(f.cards().map(card => card.children[0].children[1].textContent), Array(4).fill('Watched'));
+  }
 });
-test('first activation directly opens a save and polling does not replace the clicked row', () => {
+test('first activation directly opens a save and polling does not replace the clicked card', () => {
   const f = fixture(); f.api.update();
   const first = f.links()[0], heading = f.content().querySelector('h1');
   const state = f.api.state(); state.slots[0].locked = true; state.usedMs = 16000;
@@ -107,7 +123,7 @@ test('first activation directly opens a save and polling does not replace the cl
   assert.deepEqual(f.navigations, ['/watch?v=video000000']);
   assert.equal(prevented, 1); assert.equal(stopped, 1);
 });
-test('a saved row ignores a scroll, long press and cancelled touch while accepting a single tap', () => {
+test('a saved card ignores a scroll, long press and cancelled touch while accepting a single tap', () => {
   const f = fixture(); f.api.update();
   const link = f.links()[1];
   const touch = (type: string, x: number, timeStamp: number) => {
