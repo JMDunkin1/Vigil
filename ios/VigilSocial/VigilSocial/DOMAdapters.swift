@@ -10975,6 +10975,8 @@ enum DOMAdapters {
         scheduleRouteCheck();
       });
 
+      const editorSelector = 'input, textarea, [contenteditable]:not([contenteditable="false" i]), [role="textbox"], [role="searchbox"]';
+      const overlapsEditor = node => Boolean(node.closest(editorSelector) || node.querySelector(editorSelector));
       const exactLeafLabel = (root, expected) => {
         const expectedLabels = new Set(
           (Array.isArray(expected) ? expected : [expected]).map((value) => String(value).toLowerCase())
@@ -10985,7 +10987,7 @@ enum DOMAdapters {
           if (node.children.length === 0) {
             const label = String(node.textContent || node.getAttribute('aria-label') || '')
               .replace(/\s+/g, ' ').trim().toLowerCase();
-            if (expectedLabels.has(label)) return true;
+            if (expectedLabels.has(label) && !overlapsEditor(node)) return true;
           }
           if (inspected >= 120) break;
         }
@@ -11050,6 +11052,7 @@ enum DOMAdapters {
           if (label.children.length && !label.matches('h1, h2, h3, h4, [role="heading"], span')) continue;
           if (!labels.has(normalizedLabel(label.textContent))
               && !labels.has(normalizedLabel(label.getAttribute('aria-label')))) continue;
+          if (overlapsEditor(label)) continue;
           if (label.closest('nav, footer, form, [role="banner"], [role="navigation"], [role="dialog"], [aria-modal="true"]')) continue;
           if (label.matches(boundary)) continue;
           let target = label;
@@ -11057,7 +11060,7 @@ enum DOMAdapters {
               parent = parent.parentElement, depth += 1) {
             // Never consume the surrounding feed, Stories, post, or composer.
             if (parent.matches(boundary) || parent.querySelector(
-              'article, [role="article"], nav, [role="navigation"], [role="banner"], input, textarea, video, a[href^="/p/"], a[href^="/reel/"], a[href^="/stories/"]'
+              `article, [role="article"], nav, [role="navigation"], [role="banner"], ${editorSelector}, video, a[href^="/p/"], a[href^="/reel/"], a[href^="/stories/"]`
             )) break;
             const follows = [...parent.querySelectorAll('button, [role="button"], a')].some(control =>
               normalizedLabel(control.textContent) === 'follow'
@@ -12882,7 +12885,9 @@ enum DOMAdapters {
         ...(root.matches?.(selector) ? [root] : []), ...root.querySelectorAll(selector)
       ];
       const instagramPromotionKind = (node) => {
-        const labels = [node.textContent, node.getAttribute('aria-label'),
+        // Editable text can match even an exact promotion label. Explicit
+        // destination checks below apply independently of the editor.
+        const labels = overlapsEditor(node) ? [] : [node.textContent, node.getAttribute('aria-label'),
           ...[...node.querySelectorAll('svg[aria-label], img[alt]')].map(
             (icon) => icon.getAttribute('aria-label') || icon.getAttribute('alt')
           )].map((label) => String(label || '').replace(/\s+/g, ' ').trim().toLowerCase());
@@ -12917,7 +12922,7 @@ enum DOMAdapters {
             for (let parent = control.parentElement, depth = 0;
                 parent && depth < 5; parent = parent.parentElement, depth += 1) {
               if (parent.matches('body, main, nav, article, form, [role="main"], [role="navigation"]')
-                  || parent.querySelector('input, textarea, video, article')) break;
+                  || parent.querySelector(`${editorSelector}, video, article`)) break;
               const rect = parent.getBoundingClientRect();
               if (rect.height > 200 || rect.width < 1) break;
               const controls = [...parent.querySelectorAll('a, button, [role="button"]')];

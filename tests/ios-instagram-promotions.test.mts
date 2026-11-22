@@ -11,9 +11,10 @@ const source = readFileSync(join(root, 'ios/VigilSocial/VigilSocial/DOMAdapters.
 const adapterStart = source.indexOf('    private static let instagramStable = #"""') + '    private static let instagramStable = #"""'.length;
 const adapter = source.slice(adapterStart, source.indexOf('    """#', adapterStart));
 const code = adapter.slice(adapter.indexOf('const instagramPromotionKind ='), adapter.indexOf('const hideInstagramPromotions ='));
-function classify(text: string, attributes: Record<string, string> = {}, icon = '') {
+function classify(text: string, attributes: Record<string, string> = {}, icon = '', inEditor = false) {
   return runInNewContext(`${code}\ninstagramPromotionKind(node)`, {
     URL, location: { href: 'https://www.instagram.com/example/' },
+    overlapsEditor: () => inEditor,
     node: {
       textContent: text,
       getAttribute: (name: string) => attributes[name] || null,
@@ -42,4 +43,9 @@ test('ordinary Instagram controls and lookalike domains remain visible', () => {
   }
   assert.equal(classify('', { href: 'https://threads.com.example.org/' }), null);
   assert.equal(classify('', { href: '/direct/inbox/' }), null);
+});
+test('editable labels stay visible while explicit promotion destinations are recognized', () => {
+  assert.equal(classify('Threads', { href: '/friend/' }, '', true), null);
+  assert.equal(classify('Use the app', {}, '', true), null);
+  assert.equal(classify('Visit', { href: 'https://www.threads.com/@example' }, '', true), 'threads');
 });

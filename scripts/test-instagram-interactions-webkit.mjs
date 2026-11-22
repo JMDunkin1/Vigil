@@ -28,6 +28,49 @@ const scenarios = modes.map(mode => ({name: `Interaction boundary: ${mode}`, htm
   {condition: 'fixtureVerify()'},
   {action: 'fixtureFinish()', condition: 'fixtureReleased()'}
 ]}));
+if (!process.argv[3] || process.argv[3] === 'draft-text') {
+  const draftHTML = `<!doctype html><html><body><main>
+    <article id="post"><div>Post by a friend</div>
+      <div id="comment" role="textbox" contenteditable="true" aria-label="Add a comment">
+        <span>I was </span><span id="comment-word">sponsore</span><span> last year.</span>
+      </div>
+    </article>
+    <article id="ad"><span>Sponsored</span><p>Ad copy</p></article>
+    <div id="message-row">
+      <div id="message" role="textbox" contenteditable="true" aria-label="Message">
+        <span>Ask </span><a id="message-link" href="/friend/">Threds</a>
+        <span> about </span><span id="message-phrase">suggested account</span>
+      </div>
+    </div>
+    <a id="threads-promotion" href="https://www.threads.net/">Visit Threads</a>
+  </main><script>
+    const byId = id => document.getElementById(id);
+    const visible = id => byId(id).getClientRects().length > 0;
+    function insertDraftLetter(editor, part, offset, letter) {
+      byId(editor).focus();
+      getSelection().collapse(byId(part).firstChild, offset);
+      if (!document.execCommand('insertText', false, letter)) throw new Error('WebKit did not edit the draft');
+    }
+  </script></body></html>`;
+  scenarios.push(
+    {name: 'Ad detection preserves inline comment drafts', html: draftHTML, path: '/friend/', steps: [
+      {condition: "visible('comment') && !visible('ad')"},
+      {action: "insertDraftLetter('comment', 'comment-word', 8, 'd')",
+        condition: "byId('comment-word').textContent === 'sponsored'"},
+      {action: "byId('post').setAttribute('aria-label', 'Post by a friend')", delay: 500,
+        condition: "visible('comment') && document.activeElement === byId('comment') && !visible('ad')"}
+    ]},
+    {name: 'Suggestion and promotion detection preserves Direct drafts', html: draftHTML, path: '/direct/t/friend/', steps: [
+      {condition: "visible('message-link') && !visible('threads-promotion')"},
+      {action: "insertDraftLetter('message', 'message-link', 4, 'a')", delay: 500,
+        condition: "byId('message-link').textContent === 'Threads' && visible('message-link')"},
+      {action: "insertDraftLetter('message', 'message-phrase', 17, 's')", delay: 500,
+        condition: "byId('message-phrase').textContent === 'suggested accounts' && !byId('message-phrase').hasAttribute('data-vigil-instagram-suggestions')"},
+      {action: "byId('message-row').insertAdjacentHTML('afterbegin', '<button id=open-app>Open App</button>')", delay: 500,
+        condition: "visible('message') && document.activeElement === byId('message') && !visible('open-app') && !visible('threads-promotion')"}
+    ]}
+  );
+}
 const captionHTML = `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
   <style>
     body{margin:0} #rail{margin-top:44px;height:670px;overflow-y:auto}
