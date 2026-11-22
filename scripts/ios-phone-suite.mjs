@@ -9,7 +9,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { isDeepStrictEqual, promisify } from "node:util";
 import { freshSigningBuild, installPhoneRenewal, publishPhoneLauncherState, renewalDecision, RENEWAL_WINDOW_MS, withPhoneUpdateLock } from "./ios-phone-renewal.mjs";
 import { validatePushEnvironment, verifyPushSigning, writePushEntitlements } from "./ios-notification-signing.mjs";
-import { ensurePhoneRuntime, phoneBuildCacheRoot, phoneUpdateIsCurrent, serviceLaunchReceiptMatches, withStablePhoneSources } from "./ios-phone-update-cache.mjs";
+import { COMBINED_SOCIAL_SERVICE_IDS, ensurePhoneRuntime, phoneBuildCacheRoot, phoneUpdateIsCurrent, reusableServiceLaunchBuild, serviceLaunchReceiptMatches, withStablePhoneSources } from "./ios-phone-update-cache.mjs";
+
+export { COMBINED_SOCIAL_SERVICE_IDS };
 
 const execFileAsync = promisify(execFile);
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -117,7 +119,6 @@ const REQUIRED_SOCIAL_APPS = [
 // Legacy targets remain available for source compatibility and simulator tests.
 const DEFAULT_SOCIAL_APPS = REQUIRED_SOCIAL_APPS.filter((app) => app.id === "instagram");
 const SOCIAL_APP_IDS = new Set(REQUIRED_SOCIAL_APPS.map((app) => app.id));
-export const COMBINED_SOCIAL_SERVICE_IDS = ["instagram", "youtube", "snapchat", "linkedin", "facebook", "x", "tiktok", "reddit"];
 const PERSONAL_TEAM_RENEWAL_WINDOW_MS = RENEWAL_WINDOW_MS;
 const appsForEdition = (edition) => edition === "enhanced"
   ? [...REQUIRED_SOCIAL_APPS, URL_FILTER_APP]
@@ -958,7 +959,7 @@ function signingVariantForCapabilities(capabilities, fallback = "unknown") {
   return "mixed-capabilities";
 }
 
-async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
+async function phoneStatus(selectedOptions, device, toolEnvironment, edition, pendingReceipt = null) {
   const [release, fingerprint, blocklist, explicitContentPolicy, youtubeParityScript] = await Promise.all([
     readRelease(edition),
     implementationFingerprint(edition),
@@ -995,7 +996,7 @@ async function phoneStatus(selectedOptions, device, toolEnvironment, edition) {
   const lockProfile = profiles.find((profile) => profile.identifier === PROFILE_IDENTIFIER);
   const obsoleteLauncherProfile = profiles.find((profile) => profile.identifier === LAUNCHER_PROFILE_IDENTIFIER);
   const obsoleteYouTubeWebClipProfile = profiles.find((profile) => profile.identifier === YOUTUBE_WEB_CLIP_PROFILE_IDENTIFIER);
-  const receipt = await readReceipt(device.udid || device.identifier);
+  const receipt = pendingReceipt ?? await readReceipt(device.udid || device.identifier);
   const deployedEdition = receiptPhoneEdition(receipt);
   const problems = [];
   if (release.sourceFingerprint !== fingerprint.hash) problems.push("Phone-facing sources changed after the current release; bump and deploy a new phone release.");
@@ -1174,6 +1175,7 @@ async function updatePhoneTransaction(selectedOptions) {
     previousReceipt,
     selectedSocialAppIds
   ));
+  const launchVerifications = new Map();
   if (pushNotifications !== (previousReceipt?.notificationPushEnvironment ?? "off")) socialAppIdSet.add("instagram");
   for (const social of targetedSocialApps) {
     const installed = installedApps.find((app) => app.bundleIdentifier === social.bundleId);
@@ -1183,6 +1185,8 @@ async function updatePhoneTransaction(selectedOptions) {
     if (!launch.ok) {
       console.warn(`${social.name} could not launch (${launch.detail}); forcing a fresh signed reinstall.`);
       socialAppIdSet.add(social.id);
+    } else {
+      launchVerifications.set(social.bundleId, launch);
     }
   }
   const socialAppIds = [...socialAppIdSet];
@@ -1230,22 +1234,25 @@ async function updatePhoneTransaction(selectedOptions) {
     }
   }
   phoneProgress("policy", "Validate the matching supervised policy");
-  let preparedPolicy = selectedOptions.noPolicy
-    ? null
-    : await prepareCurrentPolicy(release, selectedOptions.server, edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition, "combined");
+  const urlFilterService = edition === "enhanced" ? urlFilter.service : null;
+  const preview = await buildCurrentPolicyFromLiveState(selectedOptions.server, AbortSignal.timeout(5000), null, urlFilterService, "combined");
+  const previewFingerprint = sha256(preview);
   const obsoleteBeforeUpdate = installedApps
     .filter((app) => isLegacyPhoneBundleIdentifier(app.bundleIdentifier));
   const installedLockProfile = profileBeforeUpdate.profiles
     .find((profile) => profile.identifier === PROFILE_IDENTIFIER);
-  let policyAlreadyCurrent = Boolean(
-    preparedPolicy
-      && profileBeforeUpdate.available
-      && installedLockProfile
-      && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12))
-  );
-  if (preparedPolicy && !policyAlreadyCurrent && device.connection !== "wired" && await existingSupervisorKeybagPath()) {
-    throw new Error("The companion apps can update wirelessly, but this release must also replace the non-removable supervised policy. Connect the paired iPhone over USB for that protected supervisor-keybag transaction, then rerun the same command.");
-  }
+  const policyIsInstalled = (fingerprint) => profileBeforeUpdate.available && Boolean(installedLockProfile
+    && profileName(installedLockProfile).includes(fingerprint.slice(0, 12)));
+  const requirePolicyConnection = async (fingerprint) => {
+    if (!policyIsInstalled(fingerprint) && device.connection !== "wired" && await existingSupervisorKeybagPath()) {
+      throw new Error("The companion apps can update wirelessly, but this release must also replace the non-removable supervised policy. Connect the paired iPhone over USB for that protected supervisor-keybag transaction, then rerun the same command.");
+    }
+  };
+  await requirePolicyConnection(previewFingerprint);
+  let preparedPolicy = policyIsInstalled(previewFingerprint)
+    && previousReceipt?.policyFingerprint === previewFingerprint && previousReceipt.policyArtifactHash
+    ? { ...preservedPolicyReceipt(previousReceipt), lockPath: null }
+    : await prepareCurrentPolicy(release, preview, toolEnvironment, edition);
   // Do not install a build whose source changed while Xcode was compiling it.
   // Retry the normal transaction, retaining all app-and-policy checks.
   if ((await implementationFingerprint(edition)).hash !== release.sourceFingerprint) throw phoneSourcesChanged();
@@ -1285,59 +1292,63 @@ async function updatePhoneTransaction(selectedOptions) {
   }
 
   phoneProgress("launch", "Verify app launch and live policy");
-  await activateSocialContainer(selectedOptions.server, async () => {
-    const social = REQUIRED_SOCIAL_APPS[0];
-    return verifySocialAppLaunch(device.identifier, social, toolEnvironment);
+  const combined = DEFAULT_SOCIAL_APPS[0];
+  const { launch, settingsChanged } = await activateSocialContainer(selectedOptions.server, async () => {
+    return launchVerifications.get(combined.bundleId) ?? verifySocialAppLaunch(device.identifier, combined, toolEnvironment);
   });
-  preparedPolicy = await prepareCurrentPolicy(release, selectedOptions.server,
-    edition === "enhanced" ? urlFilter.service : null, toolEnvironment, edition);
-  policyAlreadyCurrent = Boolean(profileBeforeUpdate.available && installedLockProfile
-    && profileName(installedLockProfile).includes(preparedPolicy.policyFingerprint.slice(0, 12)));
+  launchVerifications.set(combined.bundleId, launch);
+  const livePolicy = await buildCurrentPolicyFromLiveState(selectedOptions.server, AbortSignal.timeout(5000), null, urlFilterService);
+  if (!livePolicy.equals(preview)) {
+    await requirePolicyConnection(sha256(livePolicy));
+    preparedPolicy = await prepareCurrentPolicy(release, livePolicy, toolEnvironment, edition);
+  }
 
-  let { policyFingerprint, policyArtifactHash } = preservedPolicyReceipt(selectedOptions.noPolicy ? previousReceipt : null);
+  const { policyFingerprint, policyArtifactHash } = preparedPolicy;
+  const policyAlreadyCurrent = policyIsInstalled(policyFingerprint);
   let liveUrlFilterAudit = null;
-  if (preparedPolicy) {
-    ({ policyFingerprint, policyArtifactHash } = preparedPolicy);
-    if (policyAlreadyCurrent) {
-      console.log(`Policy ${policyFingerprint.slice(0, 12)} is already installed; leaving it in place.`);
-    } else {
-      console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
-      await installConfigurationProfileWhenUnlocked(device, preparedPolicy.lockPath, toolEnvironment);
-    }
-    if (edition === "enhanced") {
-      liveUrlFilterAudit = await verifyLiveIosUrlFilter(device.identifier, urlFilter.service, toolEnvironment);
-    }
-    await persistPhoneEdition(edition);
+  if (policyAlreadyCurrent) {
+    console.log(`Policy ${policyFingerprint.slice(0, 12)} is already installed; leaving it in place.`);
+  } else {
+    console.log(`Installing policy ${policyFingerprint.slice(0, 12)}…`);
+    await installConfigurationProfileWhenUnlocked(device, preparedPolicy.lockPath, toolEnvironment);
   }
+  if (edition === "enhanced") {
+    liveUrlFilterAudit = await verifyLiveIosUrlFilter(device.identifier, urlFilter.service, toolEnvironment);
+  }
+  await persistPhoneEdition(edition);
 
-  const launchVerifications = new Map();
-  for (const social of targetedSocialApps) {
-    console.log(`Verifying installed ${social.name} launches and remains running…`);
-    const launch = await verifySocialAppLaunch(device.identifier, social, toolEnvironment);
-    if (!launch.ok) {
-      throw new Error(`${social.name} was installed but failed its required launch verification: ${launch.detail}`);
+  const previousServiceLaunchBuild = reusableServiceLaunchBuild(previousReceipt, {
+    device, installedApp: installedApps.find(app => app.bundleIdentifier === combined.bundleId),
+    edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications,
+    force: selectedOptions.force, replaceLegacy: selectedOptions.replaceLegacy
+  });
+  let serviceLaunches;
+  if (previousServiceLaunchBuild !== null) {
+    serviceLaunches = previousReceipt.serviceLaunches;
+    console.log(`Vigil launched. Retaining service launch checks from build ${previousServiceLaunchBuild} for the unchanged policy.`);
+  } else {
+    for (const social of targetedSocialApps) {
+      console.log(`Verifying installed ${social.name} launches and remains running…`);
+      const verifiedLaunch = await verifySocialAppLaunch(device.identifier, social, toolEnvironment);
+      if (!verifiedLaunch.ok) {
+        throw new Error(`${social.name} was installed but failed its required launch verification: ${verifiedLaunch.detail}`);
+      }
+      launchVerifications.set(social.bundleId, verifiedLaunch);
     }
-    launchVerifications.set(social.bundleId, launch);
-  }
 
-  const verifiedProfiles = await configurationProfileStatus(device.identifier, toolEnvironment);
-  if (!verifiedProfiles.available || !verifiedProfiles.profiles.some((profile) =>
-    profile.identifier === PROFILE_IDENTIFIER && profileName(profile).includes(policyFingerprint.slice(0, 12)))) {
-    throw new Error("The combined app is installed, but the exact live supervised policy is not verified; legacy companions were retained.");
-  }
-  if (containerBackup) {
-    const completion = join(containerBackup.path, "vigil-social-migration.json");
-    const preferences = await socialMigrationPreferences(containerBackup);
-    await writeFile(completion, JSON.stringify({ schemaVersion: 1, id: randomUUID(), complete: true, preferences }), { mode: 0o600 });
-    await runQuiet("xcrun", ["devicectl", "device", "copy", "to", "--device", device.identifier, "--source", completion, "--destination", "Documents/vigil-social-migration.json", "--domain-type", "appDataContainer", "--domain-identifier", REQUIRED_SOCIAL_APPS[0].bundleId], { env: toolEnvironment });
-  }
-  phoneProgress("services", "Verify protected service launches");
-  const serviceLaunches = await verifyCombinedServiceLaunches(device.identifier, toolEnvironment);
-  if (containerBackup) {
-    for (const original of containerBackup.apps.filter((app) => app.id !== "instagram")) {
-      console.log(`Retiring the separate ${original.id} app after verified backup, container launch, and policy installation…`);
-      await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, original.bundleId], { env: toolEnvironment });
+    const verifiedProfiles = await configurationProfileStatus(device.identifier, toolEnvironment);
+    if (!verifiedProfiles.available || !verifiedProfiles.profiles.some((profile) =>
+      profile.identifier === PROFILE_IDENTIFIER && profileName(profile).includes(policyFingerprint.slice(0, 12)))) {
+      throw new Error("The combined app is installed, but the exact live supervised policy is not verified; legacy companions were retained.");
     }
+    if (containerBackup) {
+      const completion = join(containerBackup.path, "vigil-social-migration.json");
+      const preferences = await socialMigrationPreferences(containerBackup);
+      await writeFile(completion, JSON.stringify({ schemaVersion: 1, id: randomUUID(), complete: true, preferences }), { mode: 0o600 });
+      await runQuiet("xcrun", ["devicectl", "device", "copy", "to", "--device", device.identifier, "--source", completion, "--destination", "Documents/vigil-social-migration.json", "--domain-type", "appDataContainer", "--domain-identifier", combined.bundleId], { env: toolEnvironment });
+    }
+    phoneProgress("services", "Verify protected service launches");
+    serviceLaunches = await verifyCombinedServiceLaunches(device.identifier, toolEnvironment);
   }
 
   const appReceiptRecords = new Map((previousReceipt?.apps || []).map((app) => [app.bundleId, app]));
@@ -1376,11 +1387,12 @@ async function updatePhoneTransaction(selectedOptions) {
     ...(previousReceipt?.signingCapabilities || {}),
     ...build.signingCapabilities
   };
-  await writeReceipt(deviceReceiptId, {
+  const receipt = {
     schemaVersion: 3,
     socialContainer: true,
     containerBackup: containerBackup?.path || previousReceipt?.containerBackup || null,
     serviceLaunches,
+    serviceLaunchBuild: previousServiceLaunchBuild ?? release.apps.instagram.build,
     edition,
     device: { identifier: device.identifier, udid: device.udid, name: device.name, model: device.model, osVersion: device.osVersion },
     release,
@@ -1397,16 +1409,26 @@ async function updatePhoneTransaction(selectedOptions) {
     apps: [...appReceiptRecords.values()],
     deployedAt: new Date().toISOString(),
     rebooted: false
-  });
-  const report = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
+  };
+  const report = await phoneStatus(selectedOptions, device, toolEnvironment, edition, receipt);
   if (report.fingerprint.hash !== release.sourceFingerprint) throw phoneSourcesChanged();
   printStatus(report);
-  if (report.problems.length) process.exitCode = 1;
-  else if (edition === "personal") {
+  if (report.problems.length) {
+    process.exitCode = 1;
+    return;
+  }
+  if (containerBackup) {
+    for (const original of containerBackup.apps.filter((app) => app.id !== "instagram")) {
+      console.log(`Retiring the separate ${original.id} app after verified backup, service launches, and policy installation…`);
+      await run("xcrun", ["devicectl", "device", "uninstall", "app", "--device", device.identifier, original.bundleId], { env: toolEnvironment });
+    }
+  }
+  await writeReceipt(deviceReceiptId, receipt);
+  if (edition === "personal") {
     await publishPhoneLauncherState(report.receipt, ROOT);
     await installPhoneRenewal(deviceReceiptId, selectedOptions.server, ROOT);
   }
-  if (!report.problems.length) phoneProgress("complete", `Updated — Vigil ${release.apps.instagram.version} (${release.apps.instagram.build})`);
+  phoneProgress("complete", `Updated — Vigil ${release.apps.instagram.version} (${release.apps.instagram.build})`);
 }
 
 function printBlocklistReadiness(readiness) {
@@ -2484,9 +2506,10 @@ export async function activateSocialContainer(server, verifyLaunch) {
   if (!launch?.ok) throw new Error(`Vigil failed launch verification; migration settings were not saved: ${launch?.detail || "unknown error"}`);
   const live = await downloadServerState(server, AbortSignal.timeout(5000));
   const patch = socialContainerSettings(live.state.deviceControls?.ios);
+  const settingsChanged = !socialContainerSettingsMatch(live.state.deviceControls?.ios, patch);
   // Routine updates of an already-migrated phone need no protected settings
   // edit. A real change still goes through the server's normal lock checks.
-  if (!socialContainerSettingsMatch(live.state.deviceControls?.ios, patch)) {
+  if (settingsChanged) {
     const response = await fetch(`${server}/api/devices/ios/settings`, {
       method: "POST",
       headers: { "x-vigil-intent": "vigil-app", "content-type": "application/json" },
@@ -2498,6 +2521,7 @@ export async function activateSocialContainer(server, verifyLaunch) {
   if (!socialContainerSettingsMatch(saved, patch)) {
     throw new Error("Vigil settings did not persist. Update the installed Mac app before retrying the phone migration.");
   }
+  return { launch, settingsChanged };
 }
 
 function socialContainerSettingsMatch(ios, patch) {
@@ -2541,8 +2565,7 @@ export async function activateLinkedInReplacement(server, verifyLaunch) {
   }
 }
 
-async function prepareCurrentPolicy(release, server, urlFilterService, toolEnvironment, edition, replaceLinkedIn = false) {
-  const profile = await buildCurrentPolicyFromLiveState(server, AbortSignal.timeout(5000), null, urlFilterService, replaceLinkedIn);
+async function prepareCurrentPolicy(release, profile, toolEnvironment, edition) {
   const policyFingerprint = sha256(profile);
   const stamped = await stampProfile(profile, `Vigil iPhone Lock • ${editionLabel(edition)} • ${release.version} (${release.build}) • ${policyFingerprint.slice(0, 12)}`);
   const policyArtifactHash = sha256(stamped);

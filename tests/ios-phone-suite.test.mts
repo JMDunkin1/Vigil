@@ -84,7 +84,7 @@ assert.match(
 );
 assert.match(
   phoneSuiteSource,
-  /policyAlreadyCurrent[\s\S]*?profileName\(installedLockProfile\)\.includes\(preparedPolicy\.policyFingerprint\.slice\(0, 12\)\)[\s\S]*?if \(policyAlreadyCurrent\)[\s\S]*?already installed; leaving it in place/u,
+  /profileName\(installedLockProfile\)\.includes\(fingerprint\.slice\(0, 12\)\)[\s\S]*?const policyAlreadyCurrent = policyIsInstalled\(policyFingerprint\);[\s\S]*?if \(policyAlreadyCurrent\)[\s\S]*?already installed; leaving it in place/u,
   "frequent phone updates must preserve an already-matching supervised policy instead of replacing it"
 );
 const disconnectedWirelessPhone = {
@@ -102,7 +102,7 @@ assert.match(
 );
 assert.match(
   phoneSuiteSource,
-  /preparedPolicy && !policyAlreadyCurrent && device\.connection !== "wired"[\s\S]*?non-removable supervised policy[\s\S]*?protected supervisor-keybag transaction/u,
+  /!policyIsInstalled\(fingerprint\) && device\.connection !== "wired"[\s\S]*?non-removable supervised policy[\s\S]*?protected supervisor-keybag transaction[\s\S]*?await requirePolicyConnection\(previewFingerprint\);[\s\S]*?"device", "install", "app"/u,
   "a wireless update must fail before app installation when a changed supervised policy still requires USB"
 );
 assert.equal(parseArguments(["bump", "minor"]).options.bump, "minor");
@@ -256,9 +256,13 @@ assert.match(
 assert.match(phoneSuiteSource, /PANIC_LOCK_PROFILE_ID[\s\S]*?title: "Panic"/u, "the phone audit must include Panic");
 assert.match(phoneSuiteSource, /console\.log\(`\$\{editionLabel\(edition\)\} four-level policy audit:`\)/u);
 assert.equal(
-  (phoneSuiteSource.match(/await phoneStatus\(selectedOptions, device, toolEnvironment, edition\)/gu) || []).length,
+  (phoneSuiteSource.match(/await phoneStatus\(selectedOptions, device, toolEnvironment, edition(?:, receipt)?\)/gu) || []).length,
   3,
   "initial, no-op verification, and post-update status must reuse the selected Xcode tool environment"
+);
+assert.match(phoneSuiteSource,
+  /serviceLaunches = await verifyCombinedServiceLaunches[\s\S]*?const report = await phoneStatus\(selectedOptions, device, toolEnvironment, edition, receipt\)[\s\S]*?if \(report\.problems\.length\) \{\s*process\.exitCode = 1;\s*return;\s*\}[\s\S]*?Retiring the separate[\s\S]*?await writeReceipt\(deviceReceiptId, receipt\)/u,
+  "the exact live policy and full migration service checks must succeed before separate apps are retired or a receipt is written"
 );
 const deviceControlCalls = phoneSuiteSource
   .split("\n")
@@ -673,7 +677,8 @@ try {
   };
   await assert.rejects(activateSocialContainer("http://localhost", async () => ({ ok: false })), /launch verification/u);
   assert.deepEqual(activationCalls, [], "failed launch does not touch settings");
-  await activateSocialContainer("http://localhost", async () => ({ ok: true }));
+  const launch = { ok: true, verifiedAt: "2026-11-01T19:00:00Z" };
+  assert.deepEqual(await activateSocialContainer("http://localhost", async () => launch), { launch, settingsChanged: false });
   assert.deepEqual(activationCalls, ["read", "read"], "already active container needs only reads under a settings lock");
   assert.deepEqual(containerState, activeContainer, "no-op keeps every policy field unchanged");
 
@@ -693,7 +698,7 @@ try {
   denySettings = false;
   containerState = { ...structuredClone(activeContainer), socialContainer: false };
   activationCalls.length = 0;
-  await activateSocialContainer("http://localhost", async () => ({ ok: true }));
+  assert.deepEqual(await activateSocialContainer("http://localhost", async () => launch), { launch, settingsChanged: true });
   assert.deepEqual(activationCalls, ["read", "save", "read"], "initial migration still persists and verifies");
   assert.equal(containerState.socialContainer, true);
   assert.equal(containerState.focusedSocial.snapchat.spotlight, true);

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from "node:fs/p
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { ensurePhoneRuntime, phoneBuildCacheRoot, phoneUpdateIsCurrent, serviceLaunchReceiptMatches, withStablePhoneSources } from "../scripts/ios-phone-update-cache.mjs";
+import { ensurePhoneRuntime, phoneBuildCacheRoot, phoneUpdateIsCurrent, reusableServiceLaunchBuild, serviceLaunchReceiptMatches, withStablePhoneSources } from "../scripts/ios-phone-update-cache.mjs";
 import { terminalCommand, updateFailureHelp } from "../scripts/vigil.mjs";
 import { installVigilCommand } from "../scripts/install-vigil-cli.mjs";
 
@@ -68,6 +68,36 @@ try {
   assert.equal(phoneUpdateIsCurrent(report, { ...options, force: true }), false);
   assert.equal(phoneUpdateIsCurrent(report, { ...options, replaceLegacy: true }), false);
   assert.equal(phoneUpdateIsCurrent(report, { pushNotifications: "development" }), false);
+
+  const device = { udid: "phone-1", osVersion: "27.3" };
+  const combinedApp = { bundleId: "tech.caseline.vigil.instagram", version: "0.3.258", build: 261, launchVerifiedAt: "2026-11-01T19:00:00Z" };
+  const verified = { ...report.receipt, device, apps: [combinedApp] };
+  const installedApp = { version: combinedApp.version, bundleVersion: "261" };
+  const routine = { ...options, device, installedApp, edition: "personal", policyFingerprint: policy, policyAlreadyCurrent: true };
+  assert.equal(reusableServiceLaunchBuild(verified, routine), 261, "legacy receipts identify the build where all services launched");
+  assert.equal(reusableServiceLaunchBuild({
+    ...verified, serviceLaunchBuild: 261, apps: [{ ...combinedApp, build: 262 }]
+  }, { ...routine, installedApp: { ...installedApp, bundleVersion: "262" } }), 261, "routine updates preserve the historical service verification build");
+  for (const changed of [
+    { edition: "enhanced" },
+    { policyFingerprint: "changed-policy" },
+    { policyAlreadyCurrent: false },
+    { settingsChanged: true },
+    { force: true },
+    { replaceLegacy: true },
+    { pushNotifications: "development" },
+    { installedApp: undefined },
+    { installedApp: { ...installedApp, bundleVersion: "260" } },
+    { device: { ...device, udid: "other-phone" } },
+    { device: { ...device, osVersion: "27.4" } }
+  ]) assert.equal(reusableServiceLaunchBuild(verified, { ...routine, ...changed }), null);
+  for (const changed of [
+    null,
+    { ...verified, socialContainer: false },
+    { ...verified, apps: [{ ...combinedApp, launchVerifiedAt: "invalid" }] },
+    { ...verified, serviceLaunches: verified.serviceLaunches.slice(0, -1) },
+    { ...verified, serviceLaunches: [{ service: "instagram", verifiedAt: "invalid" }, ...verified.serviceLaunches.slice(1)] }
+  ]) assert.equal(reusableServiceLaunchBuild(changed, routine), null);
 
   const started = Date.parse("2026-11-01T19:00:00Z");
   const selection = { combined: true, service: "snapchat", selectedAt: new Date(started).toISOString() };

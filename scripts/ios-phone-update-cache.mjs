@@ -3,6 +3,8 @@ import { lstat, mkdir, readFile, readdir, rename, stat, writeFile } from "node:f
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 
+export const COMBINED_SOCIAL_SERVICE_IDS = ["instagram", "youtube", "snapchat", "linkedin", "facebook", "x", "tiktok", "reddit"];
+
 const runtimeInputs = [
   "package.json", "package-lock.json", "tsconfig.json", "node_modules/typescript/package.json",
   "app", "src", "scripts", "public", "extension",
@@ -56,10 +58,32 @@ export function phoneBuildCacheRoot(root, edition, home = homedir()) {
   return join(home, "Library", "Caches", "Vigil", "phone-builds", repository, edition);
 }
 
+function hasCompleteServiceLaunches(receipt) {
+  const launches = Array.isArray(receipt?.serviceLaunches) ? receipt.serviceLaunches : [];
+  const verified = new Set(launches.filter(entry => Number.isFinite(Date.parse(entry?.verifiedAt))).map(entry => entry.service));
+  return COMBINED_SOCIAL_SERVICE_IDS.every(service => verified.has(service));
+}
+
+export function reusableServiceLaunchBuild(receipt, { device, installedApp, edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications, force, replaceLegacy }) {
+  if (force || replaceLegacy || settingsChanged || !policyAlreadyCurrent || !policyFingerprint
+    || edition !== "personal" || receipt?.edition !== edition || receipt.socialContainer !== true
+    || !device?.udid || receipt.device?.udid !== device.udid
+    || !device.osVersion || receipt.device.osVersion !== device.osVersion
+    || receipt.policyFingerprint !== policyFingerprint
+    || (receipt.notificationPushEnvironment ?? "off") !== pushNotifications
+    || !hasCompleteServiceLaunches(receipt)) return null;
+
+  const app = Array.isArray(receipt.apps) && receipt.apps.find(entry => entry?.bundleId === "tech.caseline.vigil.instagram");
+  if (!app?.version || installedApp?.version !== app.version || String(installedApp.bundleVersion) !== String(app.build)
+    || !Number.isFinite(Date.parse(app.launchVerifiedAt))) return null;
+  // Older receipts ran all services in the deployed build. Keep that build
+  // number when carrying the original evidence into a routine update.
+  const build = receipt.serviceLaunchBuild ?? app.build;
+  return Number.isInteger(build) && build > 0 ? build : null;
+}
+
 export function phoneUpdateIsCurrent(report, { pushNotifications, force = false, replaceLegacy = false } = {}) {
   const receipt = report?.receipt;
-  const required = ["instagram", "youtube", "snapchat", "linkedin", "facebook", "x", "tiktok", "reddit"];
-  const launches = new Set(receipt?.serviceLaunches?.filter(entry => Number.isFinite(Date.parse(entry.verifiedAt))).map(entry => entry.service));
   return !force && !replaceLegacy && report?.edition === "personal"
     && Array.isArray(report.problems) && report.problems.length === 0
     && report.profileVerification?.available === true && Boolean(report.lockProfile)
@@ -70,7 +94,7 @@ export function phoneUpdateIsCurrent(report, { pushNotifications, force = false,
     && receipt.release?.sourceFingerprint === report.fingerprint?.hash
     && receipt.release?.sourceFingerprint === report.release?.sourceFingerprint
     && receipt.notificationPushEnvironment === pushNotifications
-    && required.every(service => launches.has(service));
+    && hasCompleteServiceLaunches(receipt);
 }
 
 export function serviceLaunchReceiptMatches(selection, access, service, started) {

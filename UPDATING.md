@@ -12,16 +12,22 @@ You do not need to ask an agent or open a chat.
 
 The command shows progress and elapsed time, keeps the complete output in
 `~/Library/Logs/Vigil/updates`, and exits unsuccessfully if verification fails.
-It returns early when the installed app, signing receipt, all service receipts,
-current sources and exact live supervised policy are already verified.
+It returns early when the installed app, signing receipt, service verification
+history, current sources and exact live supervised policy are already verified.
 
 Changed updates reuse Xcode's incremental build cache in
 `~/Library/Caches/Vigil/phone-builds`. The first build with an empty cache takes
 longer. Build-tool reuse checks the contents of both source and compiled output;
 editing policy code or deleting/changing a compiled module invalidates it.
-Signing renewal still checks the app and every extension, and performs a clean
+Signing renewal checks the app and every extension, and performs a clean
 rebuild if Xcode has to replace stale provisioning profiles. Changed updates
-still validate all four protection levels, the live policy and every service.
+validate all four protection levels and verify the exact live supervised policy.
+A routine Personal update checks that the newly installed Vigil app launches
+and stays running, then retains the previous service verification build and
+timestamps if the same iPhone, iOS version and policy are verified. Migration,
+policy changes, missing service receipts and forced updates open and verify all
+eight services. An unchanged installed policy with a matching receipt can also
+reuse its existing signed profile.
 If source edits land while an update is building or verifying, it retries the
 verified transaction with the incremental cache, up to three attempts. Changes
 detected before installation stop that attempt before it touches the phone.
