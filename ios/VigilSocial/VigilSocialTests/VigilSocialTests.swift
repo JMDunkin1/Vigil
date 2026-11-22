@@ -8946,12 +8946,12 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("return null"))
         XCTAssertTrue(script.contains("Nothing from your friends yet."))
         XCTAssertFalse(script.contains("homeDigestLimit"))
-        XCTAssertTrue(script.contains("document.body?.append(state)"))
+        XCTAssertTrue(script.contains("slot.before(state)"))
         XCTAssertTrue(script.contains("renderFriendsState('loading')"))
         XCTAssertTrue(script.contains("renderFriendsState('empty')"))
         XCTAssertTrue(script.contains("friendshipCacheTTL = 6 * 60 * 60 * 1000"))
         XCTAssertTrue(script.contains("a[href^=\"/stories/\"]:not("))
-        XCTAssertTrue(script.contains(":is(main, [role=\"main\"]) button:has(img[alt*=\"profile picture\" i])"))
+        XCTAssertTrue(script.contains(":is(main, [role=\"main\"]) :is(button, [role=\"button\"]):has(img)"))
         XCTAssertTrue(script.contains("const homeStoryControls"))
         XCTAssertTrue(script.contains("const classifyHomeStory"))
         XCTAssertTrue(script.contains("fetchMutualFriendship(username)"))
@@ -8966,9 +8966,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("background: Canvas"))
         XCTAssertFalse(script.contains("querySelector('main') || document.body)?.prepend(state)"))
         XCTAssertTrue(script.contains("main [role=\"progressbar\"]"))
-        XCTAssertTrue(script.contains("state.dataset.vigilState === 'empty' && mode === 'loading'"))
+        XCTAssertTrue(script.contains("state.dataset.vigilState && mode === 'loading'"))
         XCTAssertTrue(script.contains("window.__vigilResetFriendsFeedForRefresh"))
-        XCTAssertTrue(script.contains("renderFriendsState('loading', true)"))
+        XCTAssertTrue(script.contains("renderFriendsState('refreshing')"))
         XCTAssertTrue(script.contains("prefers-color-scheme: dark"))
         XCTAssertTrue(script.contains("color: #f5f5f5 !important"))
     }
@@ -9825,17 +9825,25 @@ final class VigilSocialTests: XCTestCase {
               const rail = document.getElementById('story-rail').getBoundingClientRect();
               const header = document.getElementById('header').getBoundingClientRect();
               const bottom = document.getElementById('bottom').getBoundingClientRect();
-              const isCentered = (element) => {
-                const box = element?.getBoundingClientRect();
-                return !!box && box.height > 0 && box.top >= rail.bottom && box.bottom <= bottom.top
-                  && Math.abs(box.top + box.bottom - rail.bottom - bottom.top) < 32;
-              };
+              const card = status.getBoundingClientRect();
+              const media = status.querySelector('div').getBoundingClientRect();
+              const message = status.querySelector('[role="status"]');
+              const button = status.querySelector('button');
               const empty = status?.dataset.vigilState;
-              const messageCentered = isCentered(status?.querySelector('span'));
+              const messageCentered = Math.abs(
+                message.getBoundingClientRect().left + message.getBoundingClientRect().right - media.left - media.right
+              ) < 2;
+              const refreshAvailable = !button.disabled && button.textContent === 'Refresh'
+                && button.getBoundingClientRect().height >= 44 && button.getBoundingClientRect().bottom < bottom.top;
               window.__vigilResetFriendsFeedForRefresh();
-              return { exposed, empty, messageCentered, loaderCentered: isCentered(status?.querySelector('i')),
+              window.placeholderTop = card.top;
+              return { exposed, empty, messageCentered, refreshAvailable,
+                postShape: Math.abs(media.width - media.height) < 2 && card.height > media.height,
+                sameSlotWhileChecking: status.getBoundingClientRect().top === card.top
+                  && status.getBoundingClientRect().height === card.height && button.disabled
+                  && message.textContent === 'Checking for friends’ posts…',
                 storiesAtTop: rail.top >= header.bottom && rail.top <= header.bottom + 8,
-                statusBelowStories: status?.getBoundingClientRect().top >= rail.bottom,
+                statusBelowStories: Math.abs(card.top - rail.bottom) < 2,
                 ownVisible: document.querySelector('[aria-label="Your story"]').getBoundingClientRect().width > 0 };
             })()
             """#) as? [String: Any]
@@ -9843,22 +9851,37 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(pagination?["empty"] as? String, "empty")
         XCTAssertEqual(pagination?["storiesAtTop"] as? Bool, true, "An empty feed must not center the Stories tray")
         XCTAssertEqual(pagination?["statusBelowStories"] as? Bool, true, "The empty status must not cover Stories")
-        XCTAssertEqual(pagination?["messageCentered"] as? Bool, true, "Center the message between Stories and the bottom menu")
-        XCTAssertEqual(pagination?["loaderCentered"] as? Bool, true, "Keep the loading indicator in the same space")
+        XCTAssertEqual(pagination?["messageCentered"] as? Bool, true)
+        XCTAssertEqual(pagination?["refreshAvailable"] as? Bool, true)
+        XCTAssertEqual(pagination?["postShape"] as? Bool, true)
+        XCTAssertEqual(pagination?["sameSlotWhileChecking"] as? Bool, true)
         XCTAssertEqual(pagination?["ownVisible"] as? Bool, true, "Keep the original viewer control accessible")
         try await Task.sleep(nanoseconds: 150_000_000)
         let settled = try await webView.evaluateJavaScript(#"""
-            [...document.querySelectorAll('#feed > :is(article, [role="article"])')].every(post => getComputedStyle(post).display === 'none')
+            document.querySelector('#vigil-instagram-friends-empty button').disabled
+              && [...document.querySelectorAll('#feed > :is(article, [role="article"])')]
+                .every(post => getComputedStyle(post).display === 'none')
             """#) as? Bool
         XCTAssertEqual(settled, true)
+        let canRetry = try await webView.evaluateJavaScript(#"""
+            window.__vigilRestoreFriendsFeedAfterRefreshFailure();
+            !document.querySelector('#vigil-instagram-friends-empty button').disabled
+            """#) as? Bool
+        XCTAssertEqual(canRetry, true, "A failed refresh should leave the same button ready to retry")
         _ = try await webView.evaluateJavaScript(#"""
+            window.__vigilResetFriendsFeedForRefresh();
             document.getElementById('feed').insertAdjacentHTML('beforeend', '<div id="friend-post" role="article"><a href="/friend/">friend</a>Allowed post</div>');
             """#)
         try await Task.sleep(nanoseconds: 150_000_000)
-        let friendVisible = try await webView.evaluateJavaScript(
-            "getComputedStyle(document.getElementById('friend-post')).display !== 'none'"
-        ) as? Bool
-        XCTAssertEqual(friendVisible, true)
+        let replacement = try await webView.evaluateJavaScript(#"""
+            (() => {
+              const post = document.getElementById('friend-post');
+              return getComputedStyle(post).display !== 'none'
+                && Math.abs(post.getBoundingClientRect().top - window.placeholderTop) < 2
+                && !document.getElementById('vigil-instagram-friends-empty');
+            })()
+            """#) as? Bool
+        XCTAssertEqual(replacement, true, "The first verified post takes the placeholder's slot")
         _ = try await webView.evaluateJavaScript(#"""
             window.recycledPostExposed = false;
             const post = document.getElementById('friend-post');

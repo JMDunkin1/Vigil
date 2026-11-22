@@ -349,8 +349,8 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /document\.body\?\.append\(state\)/u,
-  "Instagram should show a centered out-of-flow spinner before its eventual empty state"
+  /state\.nextElementSibling !== slot\) slot\.before\(state\)/u,
+  "Instagram should place the placeholder at the start of its feed stream"
 );
 assert.match(instagramStableAdapterSource, /renderFriendsState\('loading'\)/u);
 assert.match(instagramStableAdapterSource, /renderFriendsState\('empty'\)/u);
@@ -366,18 +366,23 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /state\.dataset\.vigilState === 'empty' && mode === 'loading'/u,
+  /state\.dataset\.vigilState && mode === 'loading'/u,
   "a settled empty friend feed must not flash back to loading during background pagination"
 );
 assert.match(
   instagramStableAdapterSource,
-  /window\.__vigilResetFriendsFeedForRefresh[\s\S]*?renderFriendsState\('loading', true\)/u,
-  "an intentional pull-to-refresh must explicitly reset the settled friend feed to loading"
+  /window\.__vigilResetFriendsFeedForRefresh[\s\S]*?renderFriendsState\('refreshing'\)/u,
+  "an intentional refresh must explicitly reset the settled friend feed to checking"
 );
 assert.match(
   socialWebViewStoreSource,
-  /service == \.instagram[\s\S]*?__vigilResetFriendsFeedForRefresh[\s\S]*?webView\?\.reload\(\)/u,
-  "Instagram's native refresh control must request the friend-feed loading reset before reload"
+  /service == \.instagram[\s\S]*?__vigilResetFriendsFeedForRefresh[\s\S]*?webView\.reloadFromOrigin\(\)/u,
+  "Instagram's native refresh must reset the loading state and revalidate the feed with the server"
+);
+assert.match(
+  socialWebViewStoreSource,
+  /case "instagramFriendsFeedRefresh":[\s\S]*?isCurrentMainDocumentMessage[\s\S]*?url\.path == "\/"[\s\S]*?beginWebViewRefresh\(webView, for: service\)/u,
+  "the Instagram refresh button must share the native refresh path and be confined to the current Home document"
 );
 assert.match(
   instagramStableAdapterSource,

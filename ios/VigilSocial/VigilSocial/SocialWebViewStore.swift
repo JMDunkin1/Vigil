@@ -1414,22 +1414,38 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     @objc private func refreshWebView(_ sender: UIRefreshControl) {
         guard let webView = webViews.values.first(where: { $0.scrollView.refreshControl === sender }),
               let service = service(for: webView),
-              surfaceStates[service]?.allowsRefresh == true else {
+              beginWebViewRefresh(webView, for: service) else {
             sender.endRefreshing()
             return
         }
-        refreshingServices.insert(service)
+    }
+
+    @discardableResult
+    private func beginWebViewRefresh(_ webView: WKWebView, for service: SocialService) -> Bool {
+        guard surfaceStates[service]?.allowsRefresh == true,
+              refreshingServices.insert(service).inserted else { return false }
         setSurface(.unknown, for: service)
         if service == .instagram {
-            // A settled friend-feed empty state is sticky against background
-            // pagination, but an intentional pull must visibly begin a fresh
-            // loading cycle before WebKit swaps in the reloaded document.
+            let url = webView.url
             webView.evaluateJavaScript("window.__vigilResetFriendsFeedForRefresh?.();")
-            DispatchQueue.main.async { [weak webView] in
-                webView?.reload()
+            DispatchQueue.main.async { [weak self, weak webView] in
+                guard let self, let webView, self.webViews[service] === webView else { return }
+                if webView.url != url || webView.reloadFromOrigin() == nil {
+                    self.finishWebViewRefresh(webView, for: service, restoreInstagramFeed: true)
+                }
             }
         } else {
             webView.reload()
+        }
+        return true
+    }
+
+    private func finishWebViewRefresh(_ webView: WKWebView, for service: SocialService,
+                                      restoreInstagramFeed: Bool = false) {
+        let wasRefreshing = refreshingServices.remove(service) != nil
+        webView.scrollView.refreshControl?.endRefreshing()
+        if wasRefreshing, service == .instagram, restoreInstagramFeed {
+            webView.evaluateJavaScript("window.__vigilRestoreFriendsFeedAfterRefreshFailure?.();")
         }
     }
 
@@ -1483,6 +1499,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
+        case "instagramFriendsFeedRefresh":
+            guard service == .instagram, selectedService == .instagram,
+                  !instagramSuggestedReelsBlocked, !instagramSharedViewerScrollLocked,
+                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
+                  let webView = message.webView, webViews[service] === webView,
+                  let url = webView.url, url.path.isEmpty || url.path == "/" else { return }
+            beginWebViewRefresh(webView, for: service)
         case "instagramSearchOpen":
             guard service == .instagram, frame.isMainFrame,
                   Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
@@ -2857,8 +2880,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation?) {
         guard let service = service(for: webView) else { return }
-        refreshingServices.remove(service)
-        webView.scrollView.refreshControl?.endRefreshing()
+        finishWebViewRefresh(webView, for: service)
         updateAuxiliaryPageHealthIfNeeded(for: service, in: webView)
         if let url = webView.url, service.usesUnmodifiedAuthenticationDocument(url) {
             if service == .youtube { webView.isHidden = false }
@@ -2879,25 +2901,17 @@ extension SocialWebViewStore: WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation?,
         withError error: Error
     ) {
-        if let service = service(for: webView) {
-            refreshingServices.remove(service)
-        }
-        webView.scrollView.refreshControl?.endRefreshing()
-        if let service = service(for: webView) {
-            serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
-            recordNavigationFailure(error, for: service, in: webView)
-        }
+        guard let service = service(for: webView) else { return }
+        finishWebViewRefresh(webView, for: service, restoreInstagramFeed: true)
+        serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
+        recordNavigationFailure(error, for: service, in: webView)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation?, withError error: Error) {
-        if let service = service(for: webView) {
-            refreshingServices.remove(service)
-        }
-        webView.scrollView.refreshControl?.endRefreshing()
-        if let service = service(for: webView) {
-            serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
-            recordNavigationFailure(error, for: service, in: webView)
-        }
+        guard let service = service(for: webView) else { return }
+        finishWebViewRefresh(webView, for: service)
+        serviceNavigationDiagnostic += " (\((error as NSError).domain) \((error as NSError).code): \(error.localizedDescription))"
+        recordNavigationFailure(error, for: service, in: webView)
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {

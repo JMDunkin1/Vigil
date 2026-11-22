@@ -5293,47 +5293,10 @@ enum DOMAdapters {
           }
         }
         html[data-vigil-instagram-home-filter="true"] :is(main, [role="main"]):has(
-          [data-vigil-instagram-story-rail="true"], > #vigil-instagram-friends-empty
+          [data-vigil-instagram-story-rail="true"]
         ) {
           justify-content: flex-start !important;
         }
-        #vigil-instagram-friends-empty {
-          box-sizing: border-box !important;
-          align-self: stretch !important;
-          flex: 1 0 auto !important;
-          display: grid !important;
-          place-items: center !important;
-          /* The 48px bottom navigation overlays the feed column. */
-          padding: 20px 16px 68px !important;
-          pointer-events: none !important;
-          color: inherit !important;
-          font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
-          text-align: center !important;
-        }
-        #vigil-instagram-friends-empty > span {
-          display: none !important;
-          box-sizing: border-box !important;
-          max-width: 320px !important;
-          padding: 20px 22px !important;
-          border: 1px solid rgba(128, 128, 128, .3) !important;
-          border-radius: 14px !important;
-          background: rgba(128, 128, 128, .08) !important;
-        }
-        #vigil-instagram-friends-empty[data-vigil-state="empty"] > span {
-          display: block !important;
-        }
-        #vigil-instagram-friends-empty > i {
-          width: 24px !important;
-          height: 24px !important;
-          border: 2.5px solid rgba(128, 128, 128, .28) !important;
-          border-top-color: currentColor !important;
-          border-radius: 50% !important;
-          animation: vigil-instagram-friends-spin .72s linear infinite !important;
-        }
-        #vigil-instagram-friends-empty[data-vigil-state="empty"] > i {
-          display: none !important;
-        }
-        @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
         video {
           /* Instagram's web Reel/Story surface commonly fills a taller iPhone
              box with object-fit: cover, which discards the left and right of a
@@ -10039,47 +10002,10 @@ enum DOMAdapters {
             }
           }
           html[data-vigil-instagram-home-filter="true"] :is(main, [role="main"]):has(
-            [data-vigil-instagram-story-rail="true"], > #vigil-instagram-friends-empty
+            [data-vigil-instagram-story-rail="true"]
           ) {
             justify-content: flex-start !important;
           }
-          #vigil-instagram-friends-empty {
-            box-sizing: border-box !important;
-            align-self: stretch !important;
-            flex: 1 0 auto !important;
-            display: grid !important;
-            place-items: center !important;
-            /* The 48px bottom navigation overlays the feed column. */
-            padding: 20px 16px 68px !important;
-            pointer-events: none !important;
-            color: inherit !important;
-            font: 600 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif !important;
-            text-align: center !important;
-          }
-          #vigil-instagram-friends-empty > span {
-            display: none !important;
-            box-sizing: border-box !important;
-            max-width: 320px !important;
-            padding: 20px 22px !important;
-            border: 1px solid rgba(128, 128, 128, .3) !important;
-            border-radius: 14px !important;
-            background: rgba(128, 128, 128, .08) !important;
-          }
-          #vigil-instagram-friends-empty[data-vigil-state="empty"] > span {
-            display: block !important;
-          }
-          #vigil-instagram-friends-empty > i {
-            width: 24px !important;
-            height: 24px !important;
-            border: 2.5px solid rgba(128, 128, 128, .28) !important;
-            border-top-color: currentColor !important;
-            border-radius: 50% !important;
-            animation: vigil-instagram-friends-spin .72s linear infinite !important;
-          }
-          #vigil-instagram-friends-empty[data-vigil-state="empty"] > i {
-            display: none !important;
-          }
-          @keyframes vigil-instagram-friends-spin { to { transform: rotate(360deg); } }
           video {
             max-width: 100% !important;
             object-fit: contain !important;
@@ -11561,49 +11487,148 @@ enum DOMAdapters {
       };
       let emptyStateTimer = 0;
       let emptyStateSignature = '';
+      const friendsStateID = 'vigil-instagram-friends-empty';
       const removeFriendsState = () => {
         clearTimeout(emptyStateTimer);
         emptyStateTimer = 0;
         emptyStateSignature = '';
-        document.getElementById('vigil-instagram-friends-empty')?.remove();
+        document.getElementById(friendsStateID)?.remove();
       };
-      const renderFriendsState = (mode, force = false) => {
-        const stateID = 'vigil-instagram-friends-empty';
+      const renderFriendsState = (mode) => {
         const mainSelector = 'main, [role="main"]';
-        const storyMain = document.querySelector('[data-vigil-instagram-story-rail="true"]')?.closest(mainSelector);
-        const main = storyMain || document.querySelector(mainSelector);
-        // Keep the status in the feed's normal flow, below native Stories.
-        // A fixed viewport center can overlap a tray when every post is hidden.
+        const rail = document.querySelector('[data-vigil-instagram-story-rail="true"]');
+        const main = rail?.closest(mainSelector) || document.querySelector(mainSelector);
         if (!main) return;
-        let state = document.getElementById(stateID);
+        let state = document.getElementById(friendsStateID);
         if (!state) {
+          if (!document.getElementById('vigil-instagram-friends-style')) {
+            const style = document.createElement('style');
+            style.id = 'vigil-instagram-friends-style';
+            style.textContent = `
+              html[data-vigil-instagram-home-filter="true"] :is(main, [role="main"]):has(#vigil-instagram-friends-empty) {
+                justify-content: flex-start !important;
+              }
+              #vigil-instagram-friends-empty {
+                --vigil-post-outline: rgb(128 128 128 / 25%);
+                --vigil-post-shape: rgb(128 128 128 / 20%);
+                box-sizing: border-box;
+                width: 100%;
+                max-width: 470px;
+                min-width: 0;
+                flex: 0 0 auto;
+                margin: 0 auto;
+                border: 1px solid var(--vigil-post-outline);
+                border-radius: 8px;
+                overflow: hidden;
+                color: inherit;
+                font: 600 15px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+                text-align: center;
+              }
+              #vigil-instagram-friends-empty::before,
+              #vigil-instagram-friends-empty::after {
+                content: '';
+                display: block;
+              }
+              #vigil-instagram-friends-empty::before {
+                height: 52px;
+                background:
+                  radial-gradient(circle closest-side, var(--vigil-post-shape) 96%, transparent) 12px center / 32px 32px no-repeat,
+                  linear-gradient(var(--vigil-post-shape), var(--vigil-post-shape)) 54px center / 76px 8px no-repeat;
+              }
+              #vigil-instagram-friends-empty::after {
+                height: 8px;
+                width: 76px;
+                margin: 16px 12px;
+                border-radius: 4px;
+                background: var(--vigil-post-shape);
+              }
+              #vigil-instagram-friends-empty > div {
+                box-sizing: border-box;
+                aspect-ratio: 1;
+                display: grid;
+                place-content: center;
+                justify-items: center;
+                gap: 10px;
+                padding: 16px;
+                border-block: 1px solid var(--vigil-post-outline);
+                background: rgb(128 128 128 / 9%);
+              }
+              #vigil-instagram-friends-empty button {
+                appearance: none;
+                min-height: 44px;
+                min-width: 88px;
+                padding: 0 14px;
+                border: 1px solid var(--vigil-post-outline);
+                border-radius: 8px;
+                background: rgb(128 128 128 / 12%);
+                color: inherit;
+                font: inherit;
+                cursor: pointer;
+              }
+              #vigil-instagram-friends-empty button:disabled { opacity: .55; cursor: default; }
+              #vigil-instagram-friends-empty button:focus-visible {
+                outline: 2px solid currentColor;
+                outline-offset: 2px;
+              }
+            `;
+            document.documentElement.appendChild(style);
+          }
           state = document.createElement('div');
-          state.id = stateID;
-          state.setAttribute('role', 'status');
-          state.setAttribute('aria-live', 'polite');
-          const spinner = document.createElement('i');
-          spinner.setAttribute('aria-hidden', 'true');
+          state.id = friendsStateID;
+          const media = document.createElement('div');
           const message = document.createElement('span');
-          state.append(spinner, message);
+          message.setAttribute('role', 'status');
+          const refresh = document.createElement('button');
+          refresh.type = 'button';
+          refresh.textContent = 'Refresh';
+          refresh.addEventListener('click', (event) => {
+            if (!event.isTrusted || refresh.disabled || instagramRoute() !== 'feed' || window !== window.top) return;
+            window.__vigilBridge?.({ type: 'instagramFriendsFeedRefresh' });
+          });
+          media.append(message, refresh);
+          state.append(media);
         }
-        if (state.parentElement !== main) main.append(state);
-        // Once the settled empty result is visible, background pagination may
-        // continue checking newly inserted cards without flashing back to a
-        // loader. Only removeFriendsState(), called for a verified friend or a
-        // route change, may replace that settled result.
-        if (!force && state.dataset.vigilState === 'empty' && mode === 'loading') return;
+        // The card is a sibling of the feed stream so the entire unverified
+        // stream can remain closed underneath it, including recycled content.
+        let slot = homeCards().find((card) => main.contains(card))
+          || main.querySelector('[data-vigil-instagram-feed-region]');
+        for (let parent = slot?.parentElement; parent && parent !== main; parent = parent.parentElement) {
+          if (parent.hasAttribute('data-vigil-instagram-feed-region')) slot = parent;
+        }
+        if (slot) {
+          if (state.nextElementSibling !== slot) slot.before(state);
+        } else if (rail && rail !== main) {
+          if (rail.nextElementSibling !== state) rail.after(state);
+        } else if (!main.contains(state)) {
+          main.append(state);
+        }
+        // Background pagination stays quiet once the empty result has settled.
+        if (state.dataset.vigilState && mode === 'loading') return;
         state.dataset.vigilState = mode;
-        state.querySelector('span').textContent = friendshipLookupFailed
-          ? 'We could not find anything from friends right now.'
-          : 'Nothing from your friends yet.';
+        const message = state.querySelector('span');
+        const text = mode !== 'empty' ? 'Checking for friends’ posts…'
+          : friendshipLookupFailed ? 'We could not find anything from friends right now.'
+            : 'Nothing from your friends yet.';
+        if (message.textContent !== text) message.textContent = text;
+        state.querySelector('button').disabled = mode !== 'empty';
       };
       window.__vigilResetFriendsFeedForRefresh = () => {
-        if (instagramRoute() !== 'feed') return;
+        if (instagramRoute() !== 'feed' || !document.getElementById(friendsStateID)) return;
         clearTimeout(emptyStateTimer);
         emptyStateTimer = 0;
         emptyStateSignature = '';
         friendshipLookupFailed = false;
-        renderFriendsState('loading', true);
+        renderFriendsState('refreshing');
+      };
+      window.__vigilRestoreFriendsFeedAfterRefreshFailure = () => {
+        if (instagramRoute() !== 'feed') return;
+        if (document.getElementById(friendsStateID)?.dataset.vigilState === 'refreshing') {
+          friendshipLookupFailed = true;
+          renderFriendsState('empty');
+        }
+        window.__vigilBridge?.({ type: 'documentReady' });
+        lastSurface = '';
+        reportSurface();
       };
       const scheduleFriendsEmpty = (signature, delay) => {
         if (emptyStateTimer && emptyStateSignature === signature) return;
@@ -11646,11 +11671,12 @@ enum DOMAdapters {
           removeFriendsState();
           return;
         }
+        renderFriendsState('loading');
+        if (document.getElementById(friendsStateID)?.dataset.vigilState === 'refreshing') return;
         const checking = articles.length === 0 || articles.some((article) => (
           !article.dataset.vigilInstagramHomeRelationship
           || article.dataset.vigilInstagramHomeRelationship === 'pending'
         ));
-        renderFriendsState('loading');
         if (checking) {
           if (articles.length === 0) scheduleFriendsEmpty('no-articles', 4000);
           else {
@@ -12643,8 +12669,7 @@ enum DOMAdapters {
         const cards = homeCards();
         const protectedControls = [...homeStoryControls(), ...document.querySelectorAll([
           'nav', '[role="navigation"]', 'header', 'footer', '[role="dialog"]', '[aria-modal="true"]',
-          '[aria-label="Profile" i]', '[aria-label="Your profile" i]',
-          '#vigil-instagram-friends-empty'
+          '[aria-label="Profile" i]', '[aria-label="Your profile" i]'
         ].join(', '))].filter((control) => !control.closest('article, [role="article"]'));
         const safeRegion = (region) => region instanceof HTMLElement
           && !region.matches('html, body, main, [role="main"], article, [role="article"]')
