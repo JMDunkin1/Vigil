@@ -56,9 +56,9 @@ const youtubeBlockerRules = JSON.parse(await readFile(
   "utf8"
 )) as Array<{ action?: { type?: string; selector?: string }; trigger?: { "url-filter"?: string } }>;
 assert.equal(
-  youtubeBlockerRules.some((rule) => rule.action?.type === "css-display-none" && rule.action.selector?.includes("ytm-comments-entry-point-header-renderer")),
+  youtubeBlockerRules.some((rule) => rule.action?.type === "css-display-none" && rule.action.selector?.includes("ytm-compact-promoted-video-renderer")),
   true,
-  "the required YouTube content blocker must hide the mobile comments entry point"
+  "the Safari content blocker must hide mobile promoted video renderers"
 );
 const socialProjectSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilSocial.xcodeproj", "project.pbxproj"),
@@ -76,8 +76,8 @@ const youtubeInteractionSource = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Resources", "youtube-parity.js"),
   "utf8"
 );
-assert.match(youtubeInteractionSource, /ytd-comments/u,
-  "the Personal Team YouTube interaction script must keep comments hidden in its WKWebView path");
+assert.match(youtubeInteractionSource, /ytm-compact-promoted-video-renderer/u,
+  "the Personal Team YouTube interaction script must hide mobile promoted video renderers in WKWebView");
 const youtubeInteractionInfo = await readFile(
   join(projectRoot, "ios", "VigilSocial", "VigilYouTubeInteractionExtension", "Info.plist"),
   "utf8"

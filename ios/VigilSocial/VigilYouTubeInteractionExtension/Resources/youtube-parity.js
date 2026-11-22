@@ -14,7 +14,7 @@ function installYouTubeCommentAvatarMask() {
         return;
     // Reply expanders are siblings of the comment renderer and can show a
     // creator-thumbnail preview beside their show/hide replies controls.
-    const comments = ":is(ytd-comment-renderer, ytd-comment-view-model, ytd-comment-replies-renderer, ytm-comment-renderer, ytm-comment-view-model, ytd-comment-simplebox-renderer, ytm-comment-simplebox-renderer, ytm-comments-entry-point-header-renderer, ytm-comments-entry-point-teaser-renderer)";
+    const comments = ":is(ytd-comment-renderer, ytd-comment-view-model, ytd-comment-replies-renderer, ytm-comment-renderer, ytm-comment-view-model, ytm-comment-replies-renderer, ytd-comment-simplebox-renderer, ytm-comment-simplebox-renderer, ytm-comments-entry-point-header-renderer, ytm-comments-entry-point-teaser-renderer, comments-entry-point-teaser-view-model)";
     const avatars = ":is(#author-thumbnail, #author-photo, #creator-thumbnail, .comment-icon-container, .comment-icon, .comment-author-thumbnail, .ytmCommentViewModelAuthorThumbnail, .ytmCommentViewModelAuthorAvatar, .ytmCommentViewModelAvatar, .yt-spec-avatar-shape, yt-avatar-shape)";
     const avatar = `${comments} ${avatars}`;
     const style = document.createElement("style");
@@ -248,8 +248,6 @@ installYouTubeCommentAvatarMask();
   const STYLE_ID = 'vigil-youtube-parity-style';
   const MORE_VIDEOS_ATTRIBUTE = 'data-vigil-youtube-more-videos';
   const PLAYER_SELECTOR = 'ytm-player, ytd-player, #player-container-id, #player';
-  const COMMENT_CAROUSEL_CONTENT = ':is(yt-comment-teaser-carousel-item-view-model, '
-    + 'yt-comment-input-box-carousel-item-view-model, yt-comments-entry-point-message-view-model)';
   const SEEK_CONTROL_SELECTOR = [
     '[role="slider"]', '[aria-valuenow]', 'input[type="range"]',
     '.ytp-progress-bar', '.ytp-progress-list', '.ytp-scrubber-container'
@@ -291,34 +289,17 @@ installYouTubeCommentAvatarMask();
   };
   if (recoverFromShorts()) return;
 
-  // Mobile YouTube makes the watch page inert when it opens an engagement
-  // panel. Stop the comments panel before that happens, including entry paths
-  // that never tap the carousel. Other panels still use YouTube's own handler.
-  addEventListener('engagement-panel-push', event => {
-    const detail = event.detail;
-    const panel = detail?.ZF?.engagementPanelSectionListRenderer;
-    if ([detail?.identifier, panel?.targetId, panel?.panelIdentifier, panel?.identifier?.tag]
-      .includes('engagement-panel-comments-section')) event.stopImmediatePropagation();
-  }, true);
-
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
-    ytd-comments, ytd-comments-header-renderer, ytd-comment-thread-renderer,
-    ytd-item-section-renderer[section-identifier="comment-item-section"],
-    ytm-comments-entry-point-header-renderer, ytm-comments-header-renderer,
-    ytm-comment-section-renderer,
-    ytm-engagement-panel-section-list-renderer[target-id*="comments" i],
-    [section-identifier="comment-item-section"],
-    comments-entry-point-teaser-view-model, ${COMMENT_CAROUSEL_CONTENT},
-    yt-carousel-item-view-model:has(> ${COMMENT_CAROUSEL_CONTENT}),
-    yt-video-metadata-carousel-view-model:has(yt-carousel-item-view-model:only-child > ${COMMENT_CAROUSEL_CONTENT}),
-    [section-identifier="comments-entry-point"], #comments, #comments-button,
-    a[href*="#comments" i], button[aria-label*="comment" i],
     ytm-promoted-sparkles-web-renderer, ytd-promoted-sparkles-web-renderer,
     ytm-companion-ad-renderer, ytd-companion-slot-renderer,
     ytm-display-ad-renderer, ytd-display-ad-renderer,
     ytm-promoted-video-renderer, ytd-promoted-video-renderer,
+    ytm-compact-promoted-video-renderer, ytm-promoted-sparkles-text-search-renderer,
+    :is(yt-lockup-view-model, ytm-lockup-view-model, yt-carousel-item-view-model):has(
+      :is(.ytBadgeShapeLargeFontAdBadge, .ytBadgeShapeMediumFontAdBadge, .ytBadgeShapePromoted, .ytBadgeShapePromotedInverted)
+    ),
     ytm-ad-slot-renderer, ytd-ad-slot-renderer,
     ytm-in-feed-ad-layout-renderer, ytd-in-feed-ad-layout-renderer,
     ytd-banner-promo-renderer, #masthead-ad {

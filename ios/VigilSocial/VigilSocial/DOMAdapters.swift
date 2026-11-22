@@ -9491,9 +9491,13 @@ enum DOMAdapters {
       const youtubePlayerControlsSelector =
         '.html5-video-player .ytp-chrome-bottom, .html5-video-player .ytp-large-play-button, '
         + 'ytm-player-control-overlay-renderer';
+      // Mobile YouTube can hide the watch shell from accessibility while the
+      // comments sheet owns focus. The rendered panel is usable on its own.
+      const youtubeWatchPanelSelector =
+        'body[engagement-panel-open] ytm-engagement-panel-section-list-renderer';
       const healthVisibilitySelector = `${healthContentSelector}, `
         + `${youtubeTopbarSelector}, ${youtubeNavigationSelector}, `
-        + `${youtubeWatchSelector}, ${youtubePlayerSelector}, ${youtubePlayerControlsSelector}, `
+        + `${youtubeWatchSelector}, ${youtubePlayerSelector}, ${youtubePlayerControlsSelector}, ${youtubeWatchPanelSelector}, `
         + '#vigil-youtube-finished, a[href*="accounts.google.com"], a[href*="ServiceLogin"], a[href*="/signin"]';
       const firstVisibleYouTubeElement = (selector, maximum = 96) => {
         let inspected = 0;
@@ -9563,6 +9567,11 @@ enum DOMAdapters {
         if (routeKey !== healthRouteKey) {
           healthRouteKey = routeKey;
           blankStartedAt = now;
+        }
+        if (route === 'watch' && firstVisibleYouTubeElement(youtubeWatchPanelSelector)) {
+          blankStartedAt = 0;
+          publishHealth('ready');
+          return;
         }
         const text = String(document.body?.innerText || '').toLowerCase();
         if (healthTextSignalPattern.test(text)) {
@@ -9720,6 +9729,10 @@ enum DOMAdapters {
             scheduleReelSurfaceNormalization();
           }
           if (record.type === 'attributes') {
+            if (record.attributeName === 'engagement-panel-open') {
+              healthRelevant = true;
+              return;
+            }
             // Safety replies can reveal a player after the blank-page grace
             // period. Recheck health without rescanning its controls for every
             // owned verdict change.
@@ -9763,6 +9776,7 @@ enum DOMAdapters {
         subtree: true,
         attributes: true,
         attributeFilter: ['href', 'aria-label', 'aria-hidden', 'open', 'hidden', 'class', 'style',
+          'engagement-panel-open',
           'data-vigil-media-verdict', 'data-vigil-page-verdict',
           'data-vigil-content-subtree-pending', 'data-vigil-visual-effect-pending']
       });

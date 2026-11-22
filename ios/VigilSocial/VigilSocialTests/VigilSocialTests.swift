@@ -14288,65 +14288,104 @@ final class VigilSocialTests: XCTestCase {
     #endif
 
     @MainActor
-    func testYouTubeCommentsCannotOpenAnEngagementPanelOverTheWatchPage() async throws {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .nonPersistent()
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: try youtubeInteractionExtensionSource(), injectionTime: .atDocumentStart, forMainFrameOnly: true
-        ))
-        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
-        let loaded = expectation(description: "Mobile watch fixture loaded")
-        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
-        web.navigationDelegate = delegate
-        defer { withExtendedLifetime(delegate) { web.navigationDelegate = nil } }
-        web.loadHTMLString("""
-        <style>yt-video-metadata-carousel-view-model, yt-carousel-item-view-model { display: block; }</style>
-        <main id="watch">
+    func testYouTubeCommentsScrollWithoutCoveringTheWatchPageOrShowingAds() async throws {
+        let suite = #function
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let store = SocialWebViewStore(defaults: defaults, fixedService: .youtube, loadInitialPages: false)
+        let webView = store.webView(for: .youtube)
+        webView.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        let window = UIWindow(frame: webView.frame)
+        let viewController = UIViewController()
+        viewController.view.addSubview(webView)
+        window.rootViewController = viewController
+        window.isHidden = false
+        defer { webView.navigationDelegate = nil; webView.stopLoading(); window.isHidden = true }
+        webView.loadHTMLString("""
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <style>
+          ytm-watch, yt-video-metadata-carousel-view-model, ytm-engagement-panel-section-list-renderer,
+          ytm-comment-renderer, ytm-comment-replies-renderer { display: block; }
+          [hidden] { display: none !important; }
+          #rows { height: 160px; overflow: auto; }
+          .long-thread { height: 750px; }
+        </style>
+        <ytm-watch id="watch">
           <yt-video-metadata-carousel-view-model id="comments-carousel" role="button" aria-label="Commentaires">
-            <div class="ytVideoMetadataCarouselViewModelTitleSection">Commentaires</div>
-            <div><yt-carousel-item-view-model>
-              <yt-comment-teaser-carousel-item-view-model>Teaser</yt-comment-teaser-carousel-item-view-model>
-            </yt-carousel-item-view-model></div>
-          </yt-video-metadata-carousel-view-model>
-          <yt-video-metadata-carousel-view-model id="mixed-carousel">
-            <yt-carousel-item-view-model id="comment-tile">
-              <yt-comment-input-box-carousel-item-view-model>Comment</yt-comment-input-box-carousel-item-view-model>
+            <yt-carousel-item-view-model>
+              <yt-comment-teaser-carousel-item-view-model>Commentaires</yt-comment-teaser-carousel-item-view-model>
             </yt-carousel-item-view-model>
-            <yt-carousel-item-view-model id="other-tile">Chapters</yt-carousel-item-view-model>
           </yt-video-metadata-carousel-view-model>
-        </main>
+        </ytm-watch>
+        <panel-container><ytm-engagement-panel>
+          <ytm-engagement-panel-section-list-renderer id="panel" hidden>
+            <button id="close" aria-label="Close comments">Close</button>
+            <div id="rows">
+              <ytm-compact-promoted-video-renderer id="top-ad">Sponsored</ytm-compact-promoted-video-renderer>
+              <yt-lockup-view-model id="marked-ad"><span class="ytBadgeShapePromoted">Publicité</span></yt-lockup-view-model>
+              <ytm-comment-renderer id="pinned">
+                <ytw-pinned-comment-badge-renderer>Pinned by the author</ytw-pinned-comment-badge-renderer>
+                A regular comment about the sponsor.
+              </ytm-comment-renderer>
+              <ytm-comment-replies-renderer id="replies" class="long-thread">Thread replies</ytm-comment-replies-renderer>
+            </div>
+          </ytm-engagement-panel-section-list-renderer>
+        </ytm-engagement-panel></panel-container>
         <script>
-          const watch = document.getElementById('watch');
-          window.addEventListener('engagement-panel-push', ({detail}) => {
+          const watch = document.getElementById('watch'), panel = document.getElementById('panel');
+          const push = () => window.dispatchEvent(new CustomEvent('engagement-panel-push', {
+            detail: {identifier: 'engagement-panel-comments-section'}
+          }));
+          document.getElementById('comments-carousel').onclick = push;
+          window.addEventListener('engagement-panel-push', () => {
             document.body.setAttribute('engagement-panel-open', '');
+            watch.setAttribute('aria-hidden', 'true');
             watch.inert = true;
-            window.openedPanel = detail?.identifier;
+            panel.hidden = false;
           });
+          document.getElementById('close').onclick = () => {
+            document.body.removeAttribute('engagement-panel-open');
+            watch.removeAttribute('aria-hidden');
+            watch.inert = false;
+            panel.hidden = true;
+          };
         </script>
-        """, baseURL: URL(string: "https://m.youtube.com/watch?v=abcdefghijk"))
-        await fulfillment(of: [loaded], timeout: 5)
-        let result = try await web.evaluateJavaScript("""
+        """, baseURL: try XCTUnwrap(URL(string: "https://m.youtube.com/watch?v=fixture")))
+
+        for _ in 0..<80 where store.health[.youtube] != .ready {
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTAssertEqual(store.health[.youtube], .ready)
+        let result = try await webView.evaluateJavaScript("""
         (() => {
           const hidden = id => getComputedStyle(document.getElementById(id)).display === 'none';
-          const push = detail => window.dispatchEvent(new CustomEvent('engagement-panel-push', {detail}));
-          const comments = 'engagement-panel-comments-section';
-          push({identifier: comments});
-          push({ZF: {engagementPanelSectionListRenderer: {targetId: comments}}});
-          const watchUsable = !watch.inert && !document.body.hasAttribute('engagement-panel-open');
-          push({identifier: 'video-description-ep-identifier'});
+          const carouselVisible = !hidden('comments-carousel');
+          document.getElementById('comments-carousel').click();
+          const rows = document.getElementById('rows');
+          rows.scrollTop = 300;
+          rows.insertAdjacentHTML('beforeend', '<ytm-promoted-sparkles-text-search-renderer id="late-ad">Ad</ytm-promoted-sparkles-text-search-renderer><ytm-comment-renderer id="late-comment">Another comment</ytm-comment-renderer>');
           return {
-            watchUsable,
-            carouselHidden: hidden('comments-carousel'),
-            mixedCarouselPreserved: !hidden('mixed-carousel') && !hidden('other-tile'),
-            commentTileHidden: hidden('comment-tile'),
-            descriptionOpens: window.openedPanel === 'video-description-ep-identifier' && watch.inert
+            carouselVisible,
+            opened: !hidden('panel') && watch.inert,
+            scrollable: rows.scrollTop >= 300,
+            adsHidden: ['top-ad', 'marked-ad', 'late-ad'].every(hidden),
+            commentsVisible: ['pinned', 'replies', 'late-comment'].every(id => !hidden(id))
           };
         })()
         """)
         let checks = try XCTUnwrap(result as? [String: Bool])
-        for key in ["watchUsable", "carouselHidden", "mixedCarouselPreserved", "commentTileHidden", "descriptionOpens"] {
+        for key in ["carouselVisible", "opened", "scrollable", "adsHidden", "commentsVisible"] {
             XCTAssertEqual(checks[key], true, key)
         }
+        // Keep the background out of the health probe through the watch grace
+        // period and the adapter's delayed startup recheck.
+        try await Task.sleep(for: .seconds(7))
+        XCTAssertEqual(store.health[.youtube], .ready)
+        let closed = try await webView.evaluateJavaScript("""
+          document.getElementById('close').click();
+          panel.hidden && !watch.inert && !watch.hasAttribute('aria-hidden');
+        """) as? Bool
+        XCTAssertEqual(closed, true)
     }
 
     @MainActor

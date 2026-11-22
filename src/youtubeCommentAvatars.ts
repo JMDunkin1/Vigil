@@ -11,7 +11,7 @@ export function installYouTubeCommentAvatarMask(): void {
 
   // Reply expanders are siblings of the comment renderer and can show a
   // creator-thumbnail preview beside their show/hide replies controls.
-  const comments = ":is(ytd-comment-renderer, ytd-comment-view-model, ytd-comment-replies-renderer, ytm-comment-renderer, ytm-comment-view-model, ytd-comment-simplebox-renderer, ytm-comment-simplebox-renderer, ytm-comments-entry-point-header-renderer, ytm-comments-entry-point-teaser-renderer)";
+  const comments = ":is(ytd-comment-renderer, ytd-comment-view-model, ytd-comment-replies-renderer, ytm-comment-renderer, ytm-comment-view-model, ytm-comment-replies-renderer, ytd-comment-simplebox-renderer, ytm-comment-simplebox-renderer, ytm-comments-entry-point-header-renderer, ytm-comments-entry-point-teaser-renderer, comments-entry-point-teaser-view-model)";
   const avatars = ":is(#author-thumbnail, #author-photo, #creator-thumbnail, .comment-icon-container, .comment-icon, .comment-author-thumbnail, .ytmCommentViewModelAuthorThumbnail, .ytmCommentViewModelAuthorAvatar, .ytmCommentViewModelAvatar, .yt-spec-avatar-shape, yt-avatar-shape)";
   const avatar = `${comments} ${avatars}`;
   const style = document.createElement("style");
