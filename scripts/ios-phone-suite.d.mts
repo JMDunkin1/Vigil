@@ -9,6 +9,7 @@ export interface PhoneSuiteOptions {
   pushNotifications: "off" | "development" | "production" | null;
   noPolicy: boolean;
   replaceLegacy: boolean;
+  verifyServices: boolean;
   server: string;
 }
 

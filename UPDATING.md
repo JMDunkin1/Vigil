@@ -24,10 +24,11 @@ rebuild if Xcode has to replace stale provisioning profiles. Changed updates
 validate all four protection levels and verify the exact live supervised policy.
 A routine Personal update checks that the newly installed Vigil app launches
 and stays running, then retains the previous service verification build and
-timestamps if the same iPhone, iOS version and policy are verified. Migration,
-policy changes, missing service receipts and forced updates open and verify all
-eight services. An unchanged installed policy with a matching receipt can also
-reuse its existing signed profile.
+timestamps if the same iPhone, iOS version and policy are verified. This also
+applies to forced reinstalls. Migration, policy changes, missing service receipts
+and an explicit `--verify-services` run open and verify all eight services. An
+unchanged installed policy with a matching receipt can also reuse its existing
+signed profile.
 If source edits land while an update is building or verifying, it retries the
 verified transaction with the incremental cache, up to three attempts. Changes
 detected before installation stop that attempt before it touches the phone.
@@ -44,7 +45,8 @@ vigil status phone             # Read-only phone status
 vigil update mac               # Vigil's protected Mac updater
 vigil status mac               # Read-only Mac updater status
 vigil update phone --verbose   # Full build output
-vigil update phone --force     # Fresh release/reinstall and full verification
+vigil update phone --force           # Fresh release and reinstall
+vigil update phone --verify-services # Open and verify all eight services
 ```
 
 Install the terminal command once on another Mac, from the repository:

@@ -64,8 +64,8 @@ function hasCompleteServiceLaunches(receipt) {
   return COMBINED_SOCIAL_SERVICE_IDS.every(service => verified.has(service));
 }
 
-export function reusableServiceLaunchBuild(receipt, { device, installedApp, edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications, force, replaceLegacy }) {
-  if (force || replaceLegacy || settingsChanged || !policyAlreadyCurrent || !policyFingerprint
+export function reusableServiceLaunchBuild(receipt, { device, installedApp, edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications, replaceLegacy, verifyServices }) {
+  if (verifyServices || replaceLegacy || settingsChanged || !policyAlreadyCurrent || !policyFingerprint
     || edition !== "personal" || receipt?.edition !== edition || receipt.socialContainer !== true
     || !device?.udid || receipt.device?.udid !== device.udid
     || !device.osVersion || receipt.device.osVersion !== device.osVersion
@@ -82,9 +82,9 @@ export function reusableServiceLaunchBuild(receipt, { device, installedApp, edit
   return Number.isInteger(build) && build > 0 ? build : null;
 }
 
-export function phoneUpdateIsCurrent(report, { pushNotifications, force = false, replaceLegacy = false } = {}) {
+export function phoneUpdateIsCurrent(report, { pushNotifications, force = false, replaceLegacy = false, verifyServices = false } = {}) {
   const receipt = report?.receipt;
-  return !force && !replaceLegacy && report?.edition === "personal"
+  return !force && !replaceLegacy && !verifyServices && report?.edition === "personal"
     && Array.isArray(report.problems) && report.problems.length === 0
     && report.profileVerification?.available === true && Boolean(report.lockProfile)
     && report.serverState?.state?.deviceControls?.ios?.enabled === true

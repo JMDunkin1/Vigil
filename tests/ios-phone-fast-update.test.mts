@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { ensurePhoneRuntime, phoneBuildCacheRoot, phoneUpdateIsCurrent, reusableServiceLaunchBuild, serviceLaunchReceiptMatches, withStablePhoneSources } from "../scripts/ios-phone-update-cache.mjs";
+import { parseArguments } from "../scripts/ios-phone-suite.mjs";
 import { terminalCommand, updateFailureHelp } from "../scripts/vigil.mjs";
 import { installVigilCommand } from "../scripts/install-vigil-cli.mjs";
 
@@ -67,6 +68,7 @@ try {
   ]) assert.equal(phoneUpdateIsCurrent(changed, options), false, "fast completion requires the entire verified app-and-policy transaction");
   assert.equal(phoneUpdateIsCurrent(report, { ...options, force: true }), false);
   assert.equal(phoneUpdateIsCurrent(report, { ...options, replaceLegacy: true }), false);
+  assert.equal(phoneUpdateIsCurrent(report, { ...options, verifyServices: true }), false);
   assert.equal(phoneUpdateIsCurrent(report, { pushNotifications: "development" }), false);
 
   const device = { udid: "phone-1", osVersion: "27.3" };
@@ -75,6 +77,12 @@ try {
   const installedApp = { version: combinedApp.version, bundleVersion: "261" };
   const routine = { ...options, device, installedApp, edition: "personal", policyFingerprint: policy, policyAlreadyCurrent: true };
   assert.equal(reusableServiceLaunchBuild(verified, routine), 261, "legacy receipts identify the build where all services launched");
+  const { options: forcedReinstall } = parseArguments(["update", "--edition", "personal", "--app", "all", "--force"]);
+  assert.equal(phoneUpdateIsCurrent(report, { ...forcedReinstall, ...options }), false, "force still requests a fresh release");
+  assert.equal(reusableServiceLaunchBuild(verified, { ...forcedReinstall, ...routine }), 261, "force reuses service evidence when the live policy is unchanged");
+  const { options: fullVerification } = parseArguments(["update", "--edition", "personal", "--verify-services"]);
+  assert.equal(fullVerification.force, false, "an explicit service check needs no forced reinstall");
+  assert.equal(reusableServiceLaunchBuild(verified, { ...fullVerification, ...routine }), null);
   assert.equal(reusableServiceLaunchBuild({
     ...verified, serviceLaunchBuild: 261, apps: [{ ...combinedApp, build: 262 }]
   }, { ...routine, installedApp: { ...installedApp, bundleVersion: "262" } }), 261, "routine updates preserve the historical service verification build");
@@ -83,7 +91,7 @@ try {
     { policyFingerprint: "changed-policy" },
     { policyAlreadyCurrent: false },
     { settingsChanged: true },
-    { force: true },
+    { verifyServices: true },
     { replaceLegacy: true },
     { pushNotifications: "development" },
     { installedApp: undefined },
@@ -127,6 +135,10 @@ try {
   assert.equal(transactions, 3, "concurrent edits must never cause an unbounded update loop");
 
   assert.deepEqual(terminalCommand(["update"]), { command: "update", target: "phone", verbose: false, args: ["run", "--silent", "agent:update:social"] });
+  assert.deepEqual(terminalCommand(["update", "phone", "--verify-services"]), {
+    command: "update", target: "phone", verbose: false,
+    args: ["run", "--silent", "agent:update:social", "--", "--verify-services"]
+  });
   assert.deepEqual(terminalCommand(["update", "phone", "--verbose", "--device", "phone-1"]), { command: "update", target: "phone", verbose: true, args: ["run", "--silent", "agent:update:social", "--", "--device", "phone-1"] });
   assert.deepEqual(terminalCommand(["update", "mac"]), { command: "update", target: "mac", verbose: false, args: ["run", "--silent", "agent:update"] });
   assert.deepEqual(terminalCommand(["status", "mac"]), { command: "status", target: "mac", verbose: false, args: ["run", "--silent", "agent", "--", "update-status"] });

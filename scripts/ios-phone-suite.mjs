@@ -243,6 +243,7 @@ export function parseArguments(args) {
     allowEditionDowngrade: false,
     noPolicy: false,
     replaceLegacy: false,
+    verifyServices: false,
     server: DEFAULT_SERVER
   };
   if (command === "bump" && values[0] && !values[0].startsWith("-")) options.bump = values.shift();
@@ -261,6 +262,7 @@ export function parseArguments(args) {
     else if (value === "--replace-legacy") options.replaceLegacy = true;
     else if (value === "--allow-edition-downgrade") options.allowEditionDowngrade = true;
     else if (value === "--force") options.force = true;
+    else if (value === "--verify-services") options.verifyServices = true;
     else if (value === "--json") options.json = true;
     else if (["--help", "-h"].includes(value)) return { command: "help", options };
     else throw new Error(`Unknown option: ${value}`);
@@ -1160,6 +1162,7 @@ async function updatePhoneTransaction(selectedOptions) {
   const deviceReceiptId = device.udid || device.identifier;
   const previousReceipt = await readReceipt(deviceReceiptId);
   const pushNotifications = selectedOptions.pushNotifications ?? previousReceipt?.notificationPushEnvironment ?? "off";
+  const { force, replaceLegacy, verifyServices } = selectedOptions;
   validatePushEnvironment(pushNotifications);
   const [installedBeforeUpdate, profileBeforeUpdate] = await Promise.all([
     devicectlJson(["device", "info", "apps", "--device", device.identifier], toolEnvironment),
@@ -1214,7 +1217,7 @@ async function updatePhoneTransaction(selectedOptions) {
   console.log(`Apple toolchain: ${developerDir}`);
   if (socialAppIds.length === 0 && !includeUrlFilter) {
     const current = await phoneStatus(selectedOptions, device, toolEnvironment, edition);
-    if (phoneUpdateIsCurrent(current, { pushNotifications, force: selectedOptions.force, replaceLegacy: selectedOptions.replaceLegacy })) {
+    if (phoneUpdateIsCurrent(current, { pushNotifications, force, replaceLegacy, verifyServices })) {
       console.log("Already current — installed app, signing, source receipts, and exact live policy verified. No rebuild or reinstall needed.");
       phoneProgress("current", "Already current — app and live policy verified");
       return;
@@ -1320,7 +1323,7 @@ async function updatePhoneTransaction(selectedOptions) {
   const previousServiceLaunchBuild = reusableServiceLaunchBuild(previousReceipt, {
     device, installedApp: installedApps.find(app => app.bundleIdentifier === combined.bundleId),
     edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications,
-    force: selectedOptions.force, replaceLegacy: selectedOptions.replaceLegacy
+    replaceLegacy, verifyServices
   });
   let serviceLaunches;
   if (previousServiceLaunchBuild !== null) {
@@ -2949,6 +2952,7 @@ Options:
   --no-policy  Rejected; updates always verify the app and supervised policy together
   --allow-edition-downgrade  Explicitly permit Enhanced-to-Personal replacement
   --replace-legacy  Remove obsolete Sentinel/Browser/Social/Snapchat apps and retired launcher/YouTube Web Clip profiles
-  --force      Force a version bump even if phone inputs are unchanged
+  --force      Bump the release and reinstall even if phone inputs are unchanged
+  --verify-services  Open and verify all eight services during the update
   --json       JSON output for fingerprint`);
 }
