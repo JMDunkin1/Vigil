@@ -2282,27 +2282,53 @@ enum DOMAdapters {
         return "window.__vigilInstagramIncomingSharedURL = \(encoded);\n"
     }
 
-    // Instagram's notification renderer throws for one malformed system entry,
-    // taking down the whole page. Its template list already accepts null items.
-    // Keep the site's normal rendering, including valid destinationless types,
-    // and omit only the exact destination failure observed on the phone.
+    // Instagram's system entry renderer throws when a destination is missing
+    // or unparseable. Recover using its own non-link row rendering, keeping
+    // the text and timestamp and leaving the rest of the feed intact.
     static let instagramActivityFeedCompatibility = #"""
     (() => {
       if (window !== window.top || location.protocol !== 'https:'
           || !['instagram.com', 'www.instagram.com'].includes(location.hostname)
           || (location.port && location.port !== '443')
           || window.__vigilInstagramActivityFeedCompatibility) return;
-      let installed = false, skipped = 0, registered = false, timer = 0, deadline = 0;
+      let installed = false, recovered = 0, skipped = 0, registered = false, timer = 0, deadline = 0;
       let releaseFactoryHook = () => {};
       window.__vigilInstagramActivityFeedCompatibility = Object.freeze({
-        version: 2,
+        version: 3,
         get installed() { return installed; },
+        get recovered() { return recovered; },
         get skipped() { return skipped; }
       });
       const stop = () => {
         observer.disconnect();
         clearInterval(timer);
         clearTimeout(deadline);
+      };
+      const isDestinationError = error => error?.message === 'Destination is null for activity feed story';
+      const renderWithoutDestination = (render, receiver, args) => {
+        const destination = window.importNamespace?.('PolarisStoryDestination')
+          ?? window.require?.('PolarisStoryDestination');
+        const original = destination?.getDestination;
+        if (typeof original !== 'function') return null;
+        let removedDestination = false;
+        const resolve = function(...params) {
+          try { return Reflect.apply(original, this, params); }
+          catch (error) {
+            if (!isDestinationError(error)) throw error;
+            removedDestination = true;
+            return null;
+          }
+        };
+        // The native image start element already displays without a link when
+        // its destination is null. Scope the substitution to this sync retry.
+        try {
+          destination.getDestination = resolve;
+          if (destination.getDestination !== resolve) return null;
+          const result = Reflect.apply(render, receiver, args);
+          return removedDestination && result?.startElement?.destination === null ? result : null;
+        } finally {
+          if (destination.getDestination === resolve) destination.getDestination = original;
+        }
       };
       const install = module => {
         const original = module?.getItemTemplateConfigForSystemEntry;
@@ -2311,7 +2337,16 @@ enum DOMAdapters {
           try { return Reflect.apply(original, this, args); }
           catch (error) {
             if (/^\/notifications\/?$/.test(location.pathname)
-                && error?.message === 'Destination is null for activity feed story') {
+                && isDestinationError(error)) {
+              try {
+                const result = renderWithoutDestination(original, this, args);
+                if (result) {
+                  recovered++;
+                  return result;
+                }
+              } catch (_) {
+                // Preserve the existing skip if this entry still cannot render.
+              }
               skipped++;
               return null;
             }

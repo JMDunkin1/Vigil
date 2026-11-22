@@ -75,6 +75,54 @@ assert.equal(page.callbacks.length, 1, "Repeated installation must not stack mod
 assert.equal(module.getItemTemplateConfigForSystemEntry, wrapped);
 assert.equal((page.window.__vigilInstagramActivityFeedCompatibility as { skipped: number }).skipped, 2);
 
+const recovery = fixture();
+const destination = { getDestination(entry: { href?: string }) {
+  assert.equal(this, destination);
+  if (!entry.href) throw badDestination;
+  return entry.href;
+} };
+const originalDestination = destination.getDestination;
+let lookups = 0;
+recovery.window.require = (name: string) => {
+  assert.equal(name, "PolarisStoryDestination");
+  lookups++;
+  return destination;
+};
+type Entry = { text: string; timestamp: number; href?: string; brokenText?: boolean };
+const renderer = { getItemTemplateConfigForSystemEntry(entry: Entry, viewer: unknown) {
+  assert.equal(this, renderer);
+  assert.equal(viewer, "viewer");
+  const start = { type: "single_image", destination: destination.getDestination(entry) };
+  if (entry.brokenText) throw unrelated;
+  return { startElement: start, text: entry.text, timestamp: entry.timestamp };
+} };
+recovery.callbacks[0]!(renderer);
+const unread = { text: "New activity", timestamp: 700 };
+const older = { text: "Older activity", timestamp: 600, href: "/friend/" };
+assert.deepEqual(renderer.getItemTemplateConfigForSystemEntry(older, "viewer"), {
+  startElement: { type: "single_image", destination: "/friend/" }, text: older.text, timestamp: older.timestamp
+});
+assert.equal(lookups, 0, "Normal rows must stay on the original path");
+assert.deepEqual(renderer.getItemTemplateConfigForSystemEntry(unread, "viewer"), {
+  startElement: { type: "single_image", destination: null }, text: unread.text, timestamp: unread.timestamp
+});
+assert.equal(destination.getDestination, originalDestination, "The resolver must be restored after recovering the row");
+assert.equal(renderer.getItemTemplateConfigForSystemEntry({ ...unread, brokenText: true }, "viewer"), null,
+  "An entry that still fails to render must not take down the list");
+assert.equal(destination.getDestination, originalDestination, "The resolver must also be restored after a failed retry");
+Object.freeze(destination);
+assert.equal(renderer.getItemTemplateConfigForSystemEntry(unread, "viewer"), null,
+  "An incompatible or read-only resolver must retain the existing skip");
+assert.throws(() => renderer.getItemTemplateConfigForSystemEntry({ ...older, brokenText: true }, "viewer"),
+  error => error === unrelated, "An unrelated failure from the original render retains native behavior");
+recovery.location.pathname = "/direct/inbox/";
+assert.throws(() => renderer.getItemTemplateConfigForSystemEntry(unread, "viewer"),
+  error => error === badDestination, "Recovery must stay on Notifications");
+assert.equal(lookups, 3);
+const diagnostics = recovery.window.__vigilInstagramActivityFeedCompatibility as { recovered: number; skipped: number };
+assert.equal(diagnostics.recovered, 1);
+assert.equal(diagnostics.skipped, 2);
+
 for (const options of [{ host: "example.com" }, { host: "instagram.com.example.com" }, { frame: true }]) {
   assert.equal(fixture(options).callbacks.length, 0, "Foreign pages and embedded frames must remain untouched");
 }
@@ -176,4 +224,4 @@ assert.equal(vm.runInContext(`
   preserved;
 `, throwing.context), true, "Factory failures retain their original behavior");
 assert.equal((throwing.window.__vigilInstagramActivityFeedCompatibility as { installed: boolean }).installed, false);
-console.log("Instagram Notifications: first same-task render, late SPA visit, loader hook lifecycle/contracts, mixed entries, exact error scope, and frame boundaries passed.");
+console.log("Instagram Notifications: destinationless recovery, first render, late SPA visit, loader contracts, error scope, and frame boundaries passed.");

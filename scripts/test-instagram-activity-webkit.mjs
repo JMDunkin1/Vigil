@@ -77,14 +77,24 @@ const loader = `
   window.fixtureWaiters=[];
   window.requireLazy=(names,callback)=>fixtureWaiters.push(callback);
   window.__onBeforeModuleFactory=null;
-  window.fixtureRender=()=>{
+  const destinationError = 'Destination is null for activity feed story';
+  const destination = {getDestination(entry) {
+    if (this !== destination) throw new Error('Destination resolver receiver changed');
+    if (entry.bad) throw new Error(destinationError);
+    return entry.href;
+  }};
+  const originalDestination = destination.getDestination;
+  window.importNamespace = name => name === 'PolarisStoryDestination' ? destination : undefined;
+  window.fixtureRender=(showRows=false)=>{
     const record={id:'PolarisStoryTemplateConfigForSystemEntry',exports:null,
       factory:function(global,dependency,module,exports){
         if(arguments.length!==4||global!==window||dependency!=='dependency'||module.exports!==exports)
           throw new Error('Factory contract changed');
         exports.getItemTemplateConfigForSystemEntry=function(entry){
           if(this!==exports)throw new Error('Renderer receiver changed');
-          if(entry.bad)throw new Error('Destination is null for activity feed story');
+          if (showRows) return {text: entry.text, timestamp: entry.timestamp,
+            startElement: {type: 'single_image', destination: destination.getDestination(entry)}};
+          if(entry.bad)throw new Error(destinationError);
           return entry;
         };
       }};
@@ -92,13 +102,27 @@ const loader = `
     record.exports={};
     record.factory(...[window,'dependency',record,record.exports].slice(0,record.factory.length));
     try{
-      window.fixtureRendered=[{id:'before'},{bad:true},{id:'after'}]
+      const entries = showRows ? [
+        {bad: true, text: 'Your activity update', timestamp: 700},
+        {href: '/friend/', text: 'Older activity', timestamp: 600}
+      ] : [{id:'before'},{bad:true},{id:'after'}];
+      window.fixtureRendered=entries
         .map(entry=>record.exports.getItemTemplateConfigForSystemEntry(entry));
+      if (showRows) {
+        for (const entry of window.fixtureRendered.filter(Boolean)) {
+          const href = entry.startElement.destination;
+          const row = document.createElement(href ? 'a' : 'p');
+          if (href) row.href = href;
+          row.textContent = entry.text;
+          document.querySelector('main').append(row);
+        }
+        window.fixtureDestinationRestored = destination.getDestination === originalDestination;
+      }
     }catch(error){window.fixtureError=error.message}
     fixtureWaiters.forEach(callback=>callback(record.exports));
   };
 `;
-const html = (split, render) => `<!doctype html><html><body><h1>Notifications</h1><script>${loader}
+const html = (split, render, header = '<h1>Notifications</h1>') => `<!doctype html><html><body>${header}<main></main><script>${loader}
   ${split ? "</script><script>" : ""}${render ? "fixtureRender();" : ""}</script></body></html>`;
 const condition = "!window.fixtureError&&JSON.stringify(window.fixtureRendered)==='[{\"id\":\"before\"},null,{\"id\":\"after\"}]'"
   + "&&window.__vigilInstagramActivityFeedCompatibility.installed&&window.__vigilInstagramActivityFeedCompatibility.skipped===1"
@@ -112,6 +136,16 @@ const scenarios = [
     path: "/direct/inbox/", html: html(false, false), steps: [
       { delay: 16050, condition: "!window.__vigilInstagramActivityFeedCompatibility.installed" },
       { action: "history.pushState({},'', '/notifications/');fixtureRender()", condition }
+    ] },
+  { name: "Unread activity with a missing destination appears as a non-link row", documentStart: true,
+    path: "/", html: html(false, false, '<a href="/notifications/" aria-label="Notifications, 1 new">♥</a>'), steps: [
+      { condition: "document.querySelector('[aria-label=\"Notifications, 1 new\"]') !== null" },
+      { action: "history.pushState({},'', '/notifications/');fixtureRender(true)",
+        condition: "!window.fixtureError && document.querySelector('main > p')?.textContent === 'Your activity update'"
+          + " && document.querySelector('main > a')?.getAttribute('href') === '/friend/'"
+          + " && window.fixtureRendered[0].timestamp === 700 && window.fixtureDestinationRestored"
+          + " && window.__vigilInstagramActivityFeedCompatibility.recovered === 1"
+          + " && window.__vigilInstagramActivityFeedCompatibility.skipped === 0" }
     ] }
 ];
 const directory = await mkdtemp(join(tmpdir(), "vigil-instagram-activity-"));
