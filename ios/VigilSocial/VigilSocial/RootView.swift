@@ -336,12 +336,14 @@ private struct SocialServiceAccessView: View {
     let restriction: SocialRestriction?
     let onBack: () -> Void
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.colorSchemeContrast) private var contrast
     @State private var accessConfirmed = false
     @State private var checking = true
     @State private var reloadAttempt = 0
 
     private var serviceAvailable: Bool {
-        accessConfirmed && restriction == nil && !store.showsOfflinePage
+        accessConfirmed && restriction == nil && store.connectionIssue == nil
     }
 
     var body: some View {
@@ -350,9 +352,10 @@ private struct SocialServiceAccessView: View {
                 .opacity(serviceAvailable ? 1 : 0)
                 .allowsHitTesting(serviceAvailable)
                 .accessibilityHidden(!serviceAvailable)
-            if restriction == nil && store.showsOfflinePage {
-                SocialOfflineView(
+            if restriction == nil, let issue = store.connectionIssue {
+                SocialConnectionView(
                     service: store.fixedService,
+                    issue: issue,
                     reload: {
                         accessConfirmed = false
                         checking = true
@@ -364,20 +367,23 @@ private struct SocialServiceAccessView: View {
             } else if restriction == nil && !accessConfirmed && checking {
                 SocialLaunchScreen(service: store.fixedService)
             } else if restriction != nil || !accessConfirmed {
-                VStack(spacing: 8) {
+                VStack(spacing: 12) {
                     Text("Blocked")
-                        .font(.title3.weight(.semibold))
+                        .font(.title2.weight(contrast == .increased ? .regular : .light))
                         .accessibilityAddTraits(.isHeader)
-                    Button("Back", action: onBack)
-                        .font(.body)
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button(action: onBack) {
+                        Label("Back", systemImage: "chevron.backward")
+                            .font(.subheadline.weight(.medium))
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
                 .multilineTextAlignment(.center)
                 .padding(28)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .foregroundStyle(.primary)
-                .background(Color(uiColor: .systemBackground).ignoresSafeArea())
-                .tint(Color(uiColor: .systemBlue))
+                .background(Color(uiColor: colorScheme == .dark ? .systemGray4 : .systemGray6).ignoresSafeArea())
                 .overlay(alignment: .bottomTrailing) {
                     Text("V1-SOC-\(store.fixedService.rawValue.uppercased())-\(restriction != nil ? (restriction?.permanent == true ? "LOCK" : "ROUTINE") : "CONNECTION")")
                         .font(.system(size: 10, design: .monospaced))
@@ -423,16 +429,32 @@ private struct SocialServiceAccessView: View {
     }
 }
 
-private struct SocialOfflineView: View {
+private struct SocialConnectionView: View {
     let service: SocialService
+    let issue: SocialConnectionIssue
     let reload: () -> Void
     var onBack: (() -> Void)?
+    @ObservedObject private var networkPath = SocialWebViewStore.networkPath
+
+    private var isOffline: Bool { issue == .offline && !networkPath.usesWiFi }
 
     var body: some View {
         ContentUnavailableView {
-            Label("No Internet Connection", systemImage: "wifi.slash")
+            Label(
+                isOffline ? "No Internet Connection" : "Couldn’t Connect",
+                systemImage: isOffline ? "wifi.slash" : "wifi.exclamationmark"
+            )
         } description: {
-            Text("Connect to Wi-Fi or cellular data to reload \(service.displayName).")
+            VStack(spacing: 8) {
+                if networkPath.usesWiFi {
+                    Label("Wi-Fi connected", systemImage: "wifi")
+                }
+                if isOffline {
+                    Text("Connect to Wi-Fi or cellular data to reload \(service.displayName).")
+                } else {
+                    Text("Vigil couldn’t verify a connection to \(service.displayName).")
+                }
+            }
         } actions: {
             Button("Reload", systemImage: "arrow.clockwise", action: reload)
                 .buttonStyle(.borderedProminent)
@@ -497,7 +519,7 @@ struct RootView: View {
         // the established safe area remains unchanged.
         let webViewSafeAreaEdges: Edge.Set = []
         let surfaceColor = Self.surfaceColor(store: store, colorScheme: colorScheme)
-        let isOffline = store.showsOfflinePage
+        let connectionIssue = store.connectionIssue
         return ZStack {
             surfaceColor
                 .ignoresSafeArea()
@@ -529,11 +551,11 @@ struct RootView: View {
                         }
                     }
             }
-            .allowsHitTesting(!isOffline)
-            .accessibilityHidden(isOffline)
+            .allowsHitTesting(connectionIssue == nil)
+            .accessibilityHidden(connectionIssue != nil)
 
-            if isOffline {
-                SocialOfflineView(service: service, reload: store.reloadAfterConnectionFailure)
+            if let connectionIssue {
+                SocialConnectionView(service: service, issue: connectionIssue, reload: store.reloadAfterConnectionFailure)
             } else {
                 healthOverlay(
                     store.health[service] ?? .loading,

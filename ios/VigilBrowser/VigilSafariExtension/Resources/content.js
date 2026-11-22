@@ -1313,26 +1313,33 @@ body[data-vigil-block-page="1"] .message { margin: 16px auto 0; font-size: .75re
 }
 
 @supports (-webkit-touch-callout: none) {
-  :root:has(body[data-vigil-block-page="1"]) { color-scheme: light dark; background: Canvas; color: CanvasText; }
+  :root:has(body[data-vigil-block-page="1"]) {
+    color-scheme: light dark;
+    --block-paper: light-dark(#f2f2f7, #3a3a3c);
+    --block-ink: light-dark(#343438, #fafafa);
+    --block-secondary: light-dark(#52525b, #dadadd);
+    background: var(--block-paper);
+    color: var(--block-ink);
+  }
   body[data-vigil-block-page="1"] {
-    --block-link: #0066cc;
-    background: Canvas;
-    color: CanvasText;
+    background: var(--block-paper);
+    color: var(--block-ink);
   }
   body[data-vigil-block-page="1"] h1 {
     color: inherit;
-    font-size: 1.25rem;
-    font-weight: 600;
-    letter-spacing: normal;
+    font-size: 1.5rem;
+    font-weight: 300;
+    letter-spacing: -.01em;
   }
   body[data-vigil-block-page="1"] .escape-actions :is(a, button) {
-    color: var(--block-link);
-    font-size: 1rem;
+    color: var(--block-secondary);
+    font-size: .9375rem;
+    font-weight: 500;
   }
-  body[data-vigil-block-page="1"] .escape-actions :is(a, button):focus-visible { outline-color: var(--block-link); }
-  body[data-vigil-block-page="1"] .block-reference { color: color-mix(in srgb, CanvasText 58%, Canvas); }
-  @media (prefers-color-scheme: dark) {
-    body[data-vigil-block-page="1"] { --block-link: #409cff; }
+  body[data-vigil-block-page="1"] .escape-actions :is(a, button):focus-visible { outline-color: var(--block-secondary); }
+  body[data-vigil-block-page="1"] .block-reference { color: var(--block-secondary); }
+  @media (prefers-contrast: more) {
+    body[data-vigil-block-page="1"] h1 { font-weight: 400; }
   }
 }
 

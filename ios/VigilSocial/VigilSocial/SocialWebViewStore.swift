@@ -405,8 +405,8 @@ enum InstagramInformationalAccounts {
 final class SocialWebViewStore: NSObject, ObservableObject {
     @Published private(set) var selectedService: SocialService
     @Published private(set) var health: [SocialService: AdapterHealth] = [:]
-    @Published private var offlineRetryURL: URL?
-    @Published private var serviceAccessIsOffline = false
+    @Published private var failedConnection: SocialNavigationConnectionFailure?
+    @Published private var serviceAccessConnectionIssue: SocialConnectionIssue?
     @Published private(set) var audioPreferences: [SocialService: Bool] = [:]
     @Published private(set) var darkChromePreferences: [SocialService: Bool] = [:]
     @Published private(set) var snapchatChromeColor: UIColor?
@@ -493,10 +493,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private static let maximumConcurrentMediaClassifications = 4
     private static let maximumPendingMediaClassifications = 12
     private static let maximumMediaRetryTasks = 12
-    private static let networkPath = SocialNetworkPath()
+    static let networkPath = SocialNetworkPath()
     static let youtubePlaybackPositionNamespace = "VigilSocial.youtube.position.v2"
 
-    var showsOfflinePage: Bool { offlineRetryURL != nil || serviceAccessIsOffline }
+    var connectionIssue: SocialConnectionIssue? {
+        if serviceAccessConnectionIssue == .offline { return .offline }
+        return failedConnection?.issue ?? serviceAccessConnectionIssue
+    }
 
     init(
         defaults: UserDefaults = .standard,
@@ -569,12 +572,17 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     func confirmServiceAccess() async -> Bool {
         var confirmed = false
-        var canReportOffline = false
+        var checkingConnection = false
+        var connectionIssue: SocialConnectionIssue?
         defer {
             if !Task.isCancelled {
-                let offline = canReportOffline && !confirmed
-                    && accessRestriction?() != true && Self.networkPath.isOffline
-                if serviceAccessIsOffline != offline { serviceAccessIsOffline = offline }
+                let issue: SocialConnectionIssue?
+                if checkingConnection, !confirmed, accessRestriction?() != true {
+                    issue = Self.networkPath.isOffline ? .offline : connectionIssue
+                } else {
+                    issue = nil
+                }
+                if serviceAccessConnectionIssue != issue { serviceAccessConnectionIssue = issue }
             }
             if !confirmed, !serviceNavigationDiagnostic.isEmpty {
                 serviceAccessDetail += " Last navigation: " + serviceNavigationDiagnostic
@@ -595,9 +603,13 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         // The device path can diagnose a failed check. Only the protected
         // WebKit probe below can confirm access.
-        canReportOffline = true
-        guard offlineRetryURL == nil, !Self.networkPath.isOffline else {
+        checkingConnection = true
+        guard !Self.networkPath.isOffline else {
             serviceAccessDetail = "The internet connection is offline."
+            return false
+        }
+        if let failedConnection {
+            serviceAccessDetail = failedConnection.detail
             return false
         }
         guard let url = view.url else {
@@ -635,42 +647,49 @@ final class SocialWebViewStore: NSObject, ObservableObject {
                     try {
                         const response = await fetch(target.href, {
                             method, cache: 'no-store', credentials: 'include',
-                            redirect: 'error', signal: controller.signal
+                            redirect: 'manual', signal: controller.signal
                         });
                         // A server declining HEAD still demonstrates reachability.
                         // Redirects, opaque responses and system-filter failures do not.
-                        const allowed = response.status >= 200 && response.status < 600 && response.url === target.href;
+                        const allowed = response.type !== 'opaqueredirect' && !response.redirected
+                            && response.status >= 200 && response.status < 600 && response.url === target.href;
                         // Only headers establish reachability. A fallback GET
                         // must not keep downloading a full social page on every
                         // live policy check after that decision is available.
                         try { response.body?.cancel().catch(() => {}); } catch (_) {}
                         if (!allowed) diagnostics.push(method + ' rejected (HTTP ' + response.status + ', exact URL ' + (response.url === target.href) + ')');
-                        return allowed;
+                        return allowed ? 'allowed' : 'rejected';
                     } catch (error) {
                         diagnostics.push(method + ' failed: ' + error.name + ': ' + error.message);
-                        return false;
+                        return error.name === 'TypeError' || error.name === 'AbortError' ? 'unreachable' : 'rejected';
                     }
                     finally { clearTimeout(timeout); }
                 }
                 const robots = new URL('/robots.txt', location.origin);
-                if (await check(robots, 'HEAD', 2000)) return {allowed: true};
+                const head = await check(robots, 'HEAD', 2000);
+                if (head === 'allowed') return {allowed: true};
                 // Some services reject HEAD or their robots resource in a signed-in
                 // session. Probe the exact permitted document through the same
                 // policy-filtered WebKit process; never use URLSession or cached DOM.
                 const document = new URL(location.href);
                 document.hash = '';
-                const allowed = await check(document, 'GET', 4000);
-                return {allowed, detail: diagnostics.join('; ')};
+                const get = await check(document, 'GET', 4000);
+                return {
+                    allowed: get === 'allowed',
+                    unreachable: head === 'unreachable' && get === 'unreachable',
+                    detail: diagnostics.join('; ')
+                };
                 """, arguments: [:], in: nil, contentWorld: .defaultClient)
             // A navigation or a newly active routine invalidates an in-flight result.
             guard !Task.isCancelled, view.url == url, !view.isLoading,
-                  offlineRetryURL == nil, !Self.networkPath.isOffline,
+                  failedConnection == nil, !Self.networkPath.isOffline,
                   accessRestriction?() != true else {
                 serviceAccessIsSettling = view.isLoading || view.url != url
                 return false
             }
             let reply = result as? [String: Any]
             confirmed = reply?["allowed"] as? Bool == true
+            if !confirmed, reply?["unreachable"] as? Bool == true { connectionIssue = .unreachable }
             if !confirmed, let detail = reply?["detail"] as? String, !detail.isEmpty {
                 serviceAccessDetail = detail
             }
@@ -1002,12 +1021,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     }
 
     func reloadAfterConnectionFailure() {
-        guard showsOfflinePage, accessRestriction?() != true else { return }
+        guard connectionIssue != nil, accessRestriction?() != true else { return }
         let service = fixedService
         let view = webView(for: service)
-        let url = offlineRetryURL ?? Self.offlineRecoveryURL(view.url, for: service)
-        if offlineRetryURL != nil { offlineRetryURL = nil }
-        if serviceAccessIsOffline { serviceAccessIsOffline = false }
+        let url = failedConnection?.retryURL ?? Self.offlineRecoveryURL(view.url, for: service)
+        if failedConnection != nil { failedConnection = nil }
+        if serviceAccessConnectionIssue != nil { serviceAccessConnectionIssue = nil }
         if service == .instagram, instagramSuggestedReelsBlocked {
             retry(service)
             return
@@ -2483,16 +2502,8 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         if nsError.domain == "WebKitErrorDomain", nsError.code == 102 {
             return
         }
-        if nsError.domain == NSURLErrorDomain,
-           nsError.code == NSURLErrorNotConnectedToInternet
-            || (nsError.code == NSURLErrorNetworkConnectionLost && Self.networkPath.isOffline) {
-            let failedURL = nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL
-            lastConfirmedServiceAccess = nil
-            offlineRetryURL = Self.offlineRecoveryURL(failedURL ?? webView.url, for: service)
-            setSurface(.unknown, for: service)
-            return
-        }
-        if !instagramSuggestedReelsBlocked, Self.shouldPreserveInstagramSurface(
+        let issue = Self.navigationConnectionIssue(for: nsError, pathOffline: Self.networkPath.isOffline)
+        if issue != .offline, !instagramSuggestedReelsBlocked, Self.shouldPreserveInstagramSurface(
             after: nsError,
             service: service,
             hadUsableContent: servicesWithUsableContent.contains(service)
@@ -2502,7 +2513,16 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             )
             return
         }
-        health[service] = .degraded(error.localizedDescription)
+        if let issue {
+            let failedURL = nsError.userInfo[NSURLErrorFailingURLErrorKey] as? URL
+            lastConfirmedServiceAccess = nil
+            failedConnection = SocialNavigationConnectionFailure(
+                issue: issue,
+                retryURL: Self.offlineRecoveryURL(failedURL ?? webView.url, for: service),
+                detail: error.localizedDescription
+            )
+        }
+        if issue != .offline { health[service] = .degraded(error.localizedDescription) }
         setSurface(.unknown, for: service)
     }
 
@@ -2521,18 +2541,18 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         service: SocialService,
         hadUsableContent: Bool
     ) -> Bool {
-        guard service == .instagram,
-              hadUsableContent,
-              error.domain == NSURLErrorDomain else { return false }
-        return [
-            NSURLErrorTimedOut,
-            NSURLErrorCannotFindHost,
-            NSURLErrorCannotConnectToHost,
-            NSURLErrorNetworkConnectionLost,
-            NSURLErrorDNSLookupFailed,
-            NSURLErrorResourceUnavailable,
-            NSURLErrorNotConnectedToInternet
-        ].contains(error.code)
+        service == .instagram && hadUsableContent && navigationConnectionIssue(for: error, pathOffline: false) != nil
+    }
+
+    private nonisolated static func navigationConnectionIssue(for error: NSError, pathOffline: Bool) -> SocialConnectionIssue? {
+        guard error.domain == NSURLErrorDomain else { return nil }
+        switch error.code {
+        case NSURLErrorNotConnectedToInternet: return .offline
+        case NSURLErrorNetworkConnectionLost where pathOffline: return .offline
+        case NSURLErrorTimedOut, NSURLErrorCannotFindHost, NSURLErrorCannotConnectToHost,
+             NSURLErrorNetworkConnectionLost, NSURLErrorDNSLookupFailed, NSURLErrorResourceUnavailable: return .unreachable
+        default: return nil
+        }
     }
 
     private func isAdvisoryHealthMessage(_ detail: String) -> Bool {
@@ -2831,7 +2851,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation?) {
         youtubeAllowsLandscape = false
         guard let service = service(for: webView) else { return }
-        if offlineRetryURL != nil { offlineRetryURL = nil }
+        if failedConnection != nil { failedConnection = nil }
         if service == .youtube {
             stopYouTubeExternalPlayback(); lastConfirmedServiceAccess = nil
             youtubeProtectionVerified = false
@@ -2939,15 +2959,32 @@ extension SocialWebViewStore: WKNavigationDelegate {
     }
 }
 
+enum SocialConnectionIssue: Equatable {
+    case offline
+    case unreachable
+}
+
+private struct SocialNavigationConnectionFailure {
+    let issue: SocialConnectionIssue
+    let retryURL: URL
+    let detail: String
+}
+
 @MainActor
-private final class SocialNetworkPath {
+final class SocialNetworkPath: ObservableObject {
     private let monitor = NWPathMonitor()
     private(set) var isOffline = false
+    @Published private(set) var usesWiFi = false
 
     init() {
         monitor.pathUpdateHandler = { [weak self] path in
             let isOffline = path.status == .unsatisfied
-            Task { @MainActor in self?.isOffline = isOffline }
+            let usesWiFi = path.status == .satisfied && path.usesInterfaceType(.wifi)
+            Task { @MainActor in
+                guard let self else { return }
+                self.isOffline = isOffline
+                if self.usesWiFi != usesWiFi { self.usesWiFi = usesWiFi }
+            }
         }
         monitor.start(queue: DispatchQueue(label: "tech.caseline.vigil.social.network-path"))
     }

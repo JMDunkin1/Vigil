@@ -1146,13 +1146,23 @@ final class VigilSocialTests: XCTestCase {
         _ = try await view.evaluateJavaScript("globalThis.fetch = async () => ({status:200,url:'https://www.linkedin.com/robots.txt'}); true;")
         let denied = await store.confirmServiceAccess()
         XCTAssertFalse(denied, "A page must not forge the system-policy check")
-        XCTAssertFalse(store.showsOfflinePage, "A denied policy probe must not appear offline on a connected device")
+        XCTAssertNil(store.connectionIssue, "A denied policy probe must not appear offline on a connected device")
+        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => { throw new TypeError('Load failed'); }; return true;",
+                                               arguments: [:], in: nil, contentWorld: .defaultClient)
+        let unreachable = await store.confirmServiceAccess()
+        XCTAssertFalse(unreachable, "A connection failure still denies access")
+        XCTAssertEqual(store.connectionIssue, .unreachable)
         _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:405,url:'https://www.linkedin.com/robots.txt'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
         let permitted = await store.confirmServiceAccess()
         XCTAssertTrue(permitted, "A server declining HEAD must not strand the sign-in form")
-        _ = try await view.callAsyncJavaScript("globalThis.fetch = async () => ({status:200,url:'https://blocked.example/'}); return true;", arguments: [:], in: nil, contentWorld: .defaultClient)
+        XCTAssertNil(store.connectionIssue)
+        _ = try await view.callAsyncJavaScript("""
+            globalThis.fetch = async () => ({type:'opaqueredirect',status:0,url:''});
+            return true;
+            """, arguments: [:], in: nil, contentWorld: .defaultClient)
         let redirected = await store.confirmServiceAccess()
         XCTAssertFalse(redirected)
+        XCTAssertNil(store.connectionIssue, "A redirect is a rejection, even though Fetch conceals its destination")
     }
 
     @MainActor
@@ -1170,7 +1180,7 @@ final class VigilSocialTests: XCTestCase {
             store.webView(view, didFailProvisionalNavigation: nil,
                           withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet,
                                              userInfo: [NSURLErrorFailingURLErrorKey: URL(string: attempted)!]))
-            XCTAssertTrue(store.showsOfflinePage)
+            XCTAssertEqual(store.connectionIssue, .offline)
             let allowed = await store.confirmServiceAccess()
             XCTAssertFalse(allowed, "An offline page cannot produce an access receipt")
             XCTAssertFalse(store.serviceAccessIsSettling)
@@ -1178,7 +1188,7 @@ final class VigilSocialTests: XCTestCase {
             store.accessRestriction = { true }
             store.reloadAfterConnectionFailure()
             XCTAssertFalse(view.isLoading)
-            XCTAssertTrue(store.showsOfflinePage)
+            XCTAssertEqual(store.connectionIssue, .offline)
 
             store.accessRestriction = { false }
             let reloaded = expectation(description: "Offline reload for \(service)")
@@ -3833,7 +3843,7 @@ final class VigilSocialTests: XCTestCase {
         try await waitForJavaScriptCondition("document.readyState === 'complete'", in: webView)
         store.webView(webView, didFailProvisionalNavigation: nil,
                       withError: NSError(domain: NSURLErrorDomain, code: NSURLErrorTimedOut))
-        XCTAssertFalse(store.showsOfflinePage)
+        XCTAssertEqual(store.connectionIssue, .unreachable)
         guard case .degraded = store.health[.snapchat] else {
             return XCTFail("The failed handoff must offer recovery")
         }
