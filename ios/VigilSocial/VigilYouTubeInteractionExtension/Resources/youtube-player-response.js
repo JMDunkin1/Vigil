@@ -228,30 +228,55 @@
 
     const watchID = () => location.pathname === '/watch'
       ? new URL(location.href).searchParams.get('v') : location.pathname.match(/^\/live\/([\w-]{11})/)?.[1];
-    const initialized = new WeakMap();
-    let manualChoice = '';
+    let currentID, manualChoice = false;
+    const observed = new WeakSet();
+    const style = document.createElement('style');
+    style.textContent = 'html[data-vigil-cc-off] .html5-video-player .ytp-caption-window-container{visibility:hidden!important}';
+    const syncRoute = () => {
+      const id = watchID();
+      if (currentID !== id) { currentID = id; manualChoice = false; }
+      const root = document.documentElement;
+      if (root) {
+        if (!style.isConnected) root.append(style);
+        root.toggleAttribute('data-vigil-cc-off', Boolean(id && !manualChoice));
+      }
+      return id;
+    };
+    const selectCaptions = () => {
+      syncRoute(); manualChoice = true;
+      document.documentElement?.removeAttribute('data-vigil-cc-off');
+    };
     document.addEventListener('click', event => {
-      if (event.isTrusted && event.target.closest?.(
-        '.ytp-subtitles-button,ytm-closed-captioning-button,.ytp-settings-menu,.ytp-settings-button'
-      )) manualChoice = watchID();
+      if (event.isTrusted && event.target.closest?.('.ytp-subtitles-button,ytm-closed-captioning-button')) selectCaptions();
     }, true);
     document.addEventListener('keydown', event => {
       if (event.isTrusted && event.key?.toLowerCase() === 'c' && !event.metaKey && !event.ctrlKey
-          && !event.target.closest?.('input,textarea,[contenteditable="true"]')) manualChoice = watchID();
+          && !event.target.closest?.('input,textarea,[contenteditable="true"]')) selectCaptions();
     }, true);
-    const applyAtStartup = event => {
-      const video = event.target, id = watchID();
-      const player = video.closest?.('#movie_player,.html5-video-player');
-      if (!player || video.tagName !== 'VIDEO' || !id || id === manualChoice || initialized.get(video) === id) return;
-      // A native HLS track and YouTube's own caption renderer are independent.
-      // Leave metadata and chapter tracks available to the player.
+    const apply = video => {
+      if (!syncRoute() || manualChoice || video.tagName !== 'VIDEO') return;
+      const player = video.closest('#movie_player,.html5-video-player,ytm-player,ytd-player');
+      if (!player) return;
+      if (!observed.has(video)) {
+        observed.add(video);
+        for (const name of ['addtrack', 'change']) video.textTracks.addEventListener(name, () => apply(video));
+      }
       for (const track of Array.from(video.textTracks)) {
         if ((track.kind === 'captions' || track.kind === 'subtitles') && track.mode === 'showing') track.mode = 'disabled';
       }
       if (player.isSubtitlesOn?.()) player.unloadModule?.('captions');
-      if (event.type === 'playing') initialized.set(video, id);
     };
-    for (const name of ['loadeddata', 'playing']) document.addEventListener(name, applyAtStartup, true);
+    const reconcile = () => {
+      if (syncRoute() && !manualChoice) document.querySelectorAll('video').forEach(apply);
+    };
+    for (const name of ['loadedmetadata', 'loadeddata', 'playing', 'webkitbeginfullscreen',
+      'webkitendfullscreen', 'webkitpresentationmodechanged']) {
+      document.addEventListener(name, event => apply(event.target), true);
+    }
+    document.addEventListener('fullscreenchange', reconcile, true);
+    // YouTube can load its own caption module after the native transition
+    // finishes without emitting any TextTrackList or media event.
+    window.setInterval(reconcile, 750);
   }
 
   installPhoneCaptionDefault();

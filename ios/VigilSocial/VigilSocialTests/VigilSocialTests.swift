@@ -14269,11 +14269,11 @@ final class VigilSocialTests: XCTestCase {
           video.dispatchEvent(new Event('playing'));
           const initial = cc.mode;
           cc.mode = 'showing';
-          video.dispatchEvent(new Event('playing'));
+          video.dispatchEvent(new Event('webkitendfullscreen'));
           return [initial, cc.mode, JSON.parse(sessionStorage.getItem('yt-player-caption-persistence')).data];
         })()
         """) as? [String]
-        XCTAssertEqual(result, ["disabled", "showing", "false"])
+        XCTAssertEqual(result, ["disabled", "disabled", "false"])
     }
 
     private func youtubeInteractionExtensionSource() throws -> String {
