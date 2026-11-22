@@ -248,6 +248,8 @@ installYouTubeCommentAvatarMask();
   const STYLE_ID = 'vigil-youtube-parity-style';
   const MORE_VIDEOS_ATTRIBUTE = 'data-vigil-youtube-more-videos';
   const PLAYER_SELECTOR = 'ytm-player, ytd-player, #player-container-id, #player';
+  const COMMENT_CAROUSEL_CONTENT = ':is(yt-comment-teaser-carousel-item-view-model, '
+    + 'yt-comment-input-box-carousel-item-view-model, yt-comments-entry-point-message-view-model)';
   const SEEK_CONTROL_SELECTOR = [
     '[role="slider"]', '[aria-valuenow]', 'input[type="range"]',
     '.ytp-progress-bar', '.ytp-progress-list', '.ytp-scrubber-container'
@@ -289,6 +291,16 @@ installYouTubeCommentAvatarMask();
   };
   if (recoverFromShorts()) return;
 
+  // Mobile YouTube makes the watch page inert when it opens an engagement
+  // panel. Stop the comments panel before that happens, including entry paths
+  // that never tap the carousel. Other panels still use YouTube's own handler.
+  addEventListener('engagement-panel-push', event => {
+    const detail = event.detail;
+    const panel = detail?.ZF?.engagementPanelSectionListRenderer;
+    if ([detail?.identifier, panel?.targetId, panel?.panelIdentifier, panel?.identifier?.tag]
+      .includes('engagement-panel-comments-section')) event.stopImmediatePropagation();
+  }, true);
+
   const style = document.createElement('style');
   style.id = STYLE_ID;
   style.textContent = `
@@ -297,6 +309,10 @@ installYouTubeCommentAvatarMask();
     ytm-comments-entry-point-header-renderer, ytm-comments-header-renderer,
     ytm-comment-section-renderer,
     ytm-engagement-panel-section-list-renderer[target-id*="comments" i],
+    [section-identifier="comment-item-section"],
+    comments-entry-point-teaser-view-model, ${COMMENT_CAROUSEL_CONTENT},
+    yt-carousel-item-view-model:has(> ${COMMENT_CAROUSEL_CONTENT}),
+    yt-video-metadata-carousel-view-model:has(yt-carousel-item-view-model:only-child > ${COMMENT_CAROUSEL_CONTENT}),
     [section-identifier="comments-entry-point"], #comments, #comments-button,
     a[href*="#comments" i], button[aria-label*="comment" i],
     ytm-promoted-sparkles-web-renderer, ytd-promoted-sparkles-web-renderer,

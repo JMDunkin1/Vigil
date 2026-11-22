@@ -14288,6 +14288,68 @@ final class VigilSocialTests: XCTestCase {
     #endif
 
     @MainActor
+    func testYouTubeCommentsCannotOpenAnEngagementPanelOverTheWatchPage() async throws {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: try youtubeInteractionExtensionSource(), injectionTime: .atDocumentStart, forMainFrameOnly: true
+        ))
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        let loaded = expectation(description: "Mobile watch fixture loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        web.navigationDelegate = delegate
+        defer { withExtendedLifetime(delegate) { web.navigationDelegate = nil } }
+        web.loadHTMLString("""
+        <style>yt-video-metadata-carousel-view-model, yt-carousel-item-view-model { display: block; }</style>
+        <main id="watch">
+          <yt-video-metadata-carousel-view-model id="comments-carousel" role="button" aria-label="Commentaires">
+            <div class="ytVideoMetadataCarouselViewModelTitleSection">Commentaires</div>
+            <div><yt-carousel-item-view-model>
+              <yt-comment-teaser-carousel-item-view-model>Teaser</yt-comment-teaser-carousel-item-view-model>
+            </yt-carousel-item-view-model></div>
+          </yt-video-metadata-carousel-view-model>
+          <yt-video-metadata-carousel-view-model id="mixed-carousel">
+            <yt-carousel-item-view-model id="comment-tile">
+              <yt-comment-input-box-carousel-item-view-model>Comment</yt-comment-input-box-carousel-item-view-model>
+            </yt-carousel-item-view-model>
+            <yt-carousel-item-view-model id="other-tile">Chapters</yt-carousel-item-view-model>
+          </yt-video-metadata-carousel-view-model>
+        </main>
+        <script>
+          const watch = document.getElementById('watch');
+          window.addEventListener('engagement-panel-push', ({detail}) => {
+            document.body.setAttribute('engagement-panel-open', '');
+            watch.inert = true;
+            window.openedPanel = detail?.identifier;
+          });
+        </script>
+        """, baseURL: URL(string: "https://m.youtube.com/watch?v=abcdefghijk"))
+        await fulfillment(of: [loaded], timeout: 5)
+        let result = try await web.evaluateJavaScript("""
+        (() => {
+          const hidden = id => getComputedStyle(document.getElementById(id)).display === 'none';
+          const push = detail => window.dispatchEvent(new CustomEvent('engagement-panel-push', {detail}));
+          const comments = 'engagement-panel-comments-section';
+          push({identifier: comments});
+          push({ZF: {engagementPanelSectionListRenderer: {targetId: comments}}});
+          const watchUsable = !watch.inert && !document.body.hasAttribute('engagement-panel-open');
+          push({identifier: 'video-description-ep-identifier'});
+          return {
+            watchUsable,
+            carouselHidden: hidden('comments-carousel'),
+            mixedCarouselPreserved: !hidden('mixed-carousel') && !hidden('other-tile'),
+            commentTileHidden: hidden('comment-tile'),
+            descriptionOpens: window.openedPanel === 'video-description-ep-identifier' && watch.inert
+          };
+        })()
+        """)
+        let checks = try XCTUnwrap(result as? [String: Bool])
+        for key in ["watchUsable", "carouselHidden", "mixedCarouselPreserved", "commentTileHidden", "descriptionOpens"] {
+            XCTAssertEqual(checks[key], true, key)
+        }
+    }
+
+    @MainActor
     func testYouTubeAdBlockerRulesCompileWithYouTubeScope() async throws {
         let sourceURL = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent().deletingLastPathComponent()

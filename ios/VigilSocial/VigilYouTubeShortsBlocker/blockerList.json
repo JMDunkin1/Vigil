@@ -33,6 +33,13 @@
     }
   },
   {
+    "trigger": { "url-filter": "youtube\\.com" },
+    "action": {
+      "type": "css-display-none",
+      "selector": "[section-identifier='comment-item-section'], comments-entry-point-teaser-view-model, yt-comment-teaser-carousel-item-view-model, yt-comment-input-box-carousel-item-view-model, yt-comments-entry-point-message-view-model, yt-carousel-item-view-model:has(> :is(yt-comment-teaser-carousel-item-view-model, yt-comment-input-box-carousel-item-view-model, yt-comments-entry-point-message-view-model)), yt-video-metadata-carousel-view-model:has(yt-carousel-item-view-model:only-child > :is(yt-comment-teaser-carousel-item-view-model, yt-comment-input-box-carousel-item-view-model, yt-comments-entry-point-message-view-model))"
+    }
+  },
+  {
     "trigger": {
       "url-filter": "^https?://([^/]+\\.)?doubleclick\\.net/",
       "if-domain": [
