@@ -3138,6 +3138,11 @@ enum DOMAdapters {
       let mediaSources = new WeakMap();
       let postCarousel = null;
       let postLayoutCaptured = false;
+      let captionRequest = null;
+      let captionReader = null;
+      let captionButton = null;
+      const captionSelector = '[data-testid*="caption" i], [itemprop="caption"], [aria-label="Caption" i]';
+      let alignedPermalinkCards = new WeakSet();
       const sharedStoryKey = 'vigil.instagram.shared-story.v1';
       let sharedStory = null;
       try { sharedStory = JSON.parse(sessionStorage.getItem(sharedStoryKey) || 'null'); } catch (_) {}
@@ -3235,6 +3240,11 @@ enum DOMAdapters {
         const activationRegions = locked ? [...document.querySelectorAll('button, [role="button"], a[href]')]
           .filter(control => sheetOpeningControl(control) || viewerClosingControl(control))
           .map(control => nativeGestureRegion(control, true)).filter(Boolean).slice(0, 24) : [];
+        // The reader consumes its own drags. This type of region leaves the
+        // root WKWebView scroller disabled, including at the caption's edges.
+        const readerRegion = locked && nativeGestureRegion(captionReader?.dialog, true);
+        if (readerRegion) activationRegions.unshift(readerRegion);
+        activationRegions.length = Math.min(activationRegions.length, 24);
         const carouselRegions = locked && postCarousel && !postCarousel.rejected
           ? [nativeGestureRegion(postCarousel.viewport)].filter(Boolean) : [];
         const diagnostics = window.__vigilInstagramDiagnostics === true ? {
@@ -3323,9 +3333,60 @@ enum DOMAdapters {
         html[data-vigil-single-reel] [data-vigil-instagram-recipient-sheet="true"] {
           overscroll-behavior: contain !important;
         }
+        html[data-vigil-single-reel] dialog.vigil-instagram-caption[open] {
+          box-sizing: border-box !important;
+          inline-size: min(calc(100% - 24px), 34rem) !important;
+          max-block-size: 75dvh !important;
+          padding: 16px !important;
+          border: 0 !important;
+          border-radius: 14px !important;
+          color: #fff !important;
+          background: #252525 !important;
+          overflow: hidden !important;
+          display: flex !important;
+          flex-direction: column !important;
+          font: normal 1rem/1.5 system-ui, sans-serif !important;
+        }
+        dialog.vigil-instagram-caption::backdrop { background: rgba(0, 0, 0, .64); }
+        html[data-vigil-single-reel] dialog.vigil-instagram-caption,
+        html[data-vigil-single-reel] dialog.vigil-instagram-caption * {
+          touch-action: none !important;
+          overscroll-behavior: none !important;
+        }
+        dialog.vigil-instagram-caption > button {
+          align-self: end !important;
+          flex: none !important;
+          min-block-size: 44px !important;
+          color: #fff !important;
+          background: transparent !important;
+          font: inherit !important;
+        }
+        dialog.vigil-instagram-caption > div {
+          min-block-size: 0 !important;
+          overflow-y: auto !important;
+          white-space: pre-wrap !important;
+          overflow-wrap: anywhere !important;
+        }
+        html[data-vigil-single-reel] button.vigil-instagram-read-caption {
+          position: fixed !important;
+          inset-inline-start: 12px !important;
+          inset-block-end: max(84px, calc(env(safe-area-inset-bottom) + 72px)) !important;
+          z-index: 1000 !important;
+          padding: 0 14px !important;
+          min-block-size: 44px !important;
+          border: 1px solid #777 !important;
+          border-radius: 22px !important;
+          background: #252525 !important;
+          color: #fff !important;
+          font: normal 14px/1.2 system-ui, sans-serif !important;
+        }
       `;
       document.documentElement.appendChild(style);
       const reset = () => {
+        closeCaption();
+        captionRequest = null;
+        clearCaptionButton();
+        alignedPermalinkCards = new WeakSet();
         pinnedID = '';
         pinnedKind = '';
         pinnedURL = '';
@@ -4001,6 +4062,211 @@ enum DOMAdapters {
         const routes = [...card.querySelectorAll('a[href]')].map(link => mediaRoute(link.href)).filter(Boolean);
         return routes.length > 0 && routes.every(matchesPinnedItem);
       };
+      const selectedPermalinkCard = target => {
+        if (directPath || !['p', 'reel'].includes(pinnedKind) || !matchesPinnedItem(mediaRoute(location.href))) return null;
+        if (pinnedKind === 'p') return pinnedCard?.contains(target)
+          && pinnedCard.dataset.vigilSingleReelCard === 'allowed' ? pinnedCard : null;
+        const card = target.closest('article, [role="article"], [data-vigil-instagram-reels-card="true"]');
+        return card?.querySelector('video') && (!modalContext || modalContext.contains(card))
+          && exactPostCard(card) ? card : null;
+      };
+      const alignClippedPermalink = card => {
+        if (!card || alignedPermalinkCards.has(card) || captionRequest || captionReader
+            || (window.visualViewport?.scale || 1) !== 1 || !activeViewer(card) || inSheet(card)) return;
+        const viewportTop = window.visualViewport?.offsetTop || 0;
+        const bounds = card.getBoundingClientRect();
+        for (let scroller = card.parentElement; scroller; scroller = scroller.parentElement) {
+          if (modalContext && !modalContext.contains(scroller)) return;
+          const root = scroller === document.scrollingElement;
+          if (!root && !/auto|scroll|hidden/.test(getComputedStyle(scroller).overflowY)) continue;
+          if (scroller.scrollHeight <= scroller.clientHeight) continue;
+          const top = root ? viewportTop : Math.max(viewportTop, scroller.getBoundingClientRect().top + scroller.clientTop);
+          const previous = scroller.scrollTop, clipped = top - bounds.top;
+          if (clipped <= 2 || clipped > previous + 1 || bounds.bottom <= top
+              || lockedScroll.has(scroller) && Math.abs(lockedScroll.get(scroller) - previous) > 1) return;
+          scroller.scrollTo({ top: previous - clipped, behavior: 'instant' });
+          // A snap container can reject the requested offset. Keep its old
+          // position unless the selected card actually reached the top.
+          if (Math.abs(card.getBoundingClientRect().top - top) > 2) {
+            scroller.scrollTo({ top: previous, behavior: 'instant' });
+            return;
+          }
+          alignedPermalinkCards.add(card);
+          lockedScroll.set(scroller, scroller.scrollTop);
+          return;
+        }
+      };
+      const captionMore = /^(?:[.\s…]*(?:(?:see|show|read) )?more|read (?:the )?caption)$/i;
+      const controlSelector = 'button, [role="button"], a[href]';
+      const captionText = (source, control) => {
+        const parts = [];
+        const walker = document.createTreeWalker(source, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
+          acceptNode(node) {
+            if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+            if (node === control || node.matches('button, script, style, [aria-hidden="true"], [hidden]')) return NodeFilter.FILTER_REJECT;
+            return node.matches('br') ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+          }
+        });
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          parts.push(node.nodeType === Node.TEXT_NODE ? node.textContent : '\n');
+        }
+        return parts.join('').trim();
+      };
+      const moreLabel = element => captionMore.test((element.getAttribute('aria-label') || element.textContent).trim());
+      const captionOnly = source => !source.matches('article, [role="article"], [role="dialog"], [aria-modal="true"]')
+        && !source.querySelector('video, img, iframe, input, textarea, article, [role="article"], [role="dialog"]');
+      const requestCaption = target => {
+        const card = selectedPermalinkCard(target);
+        if (!card || inSheet(target) || target.closest('a[href]')) return;
+        const button = target.closest(controlSelector);
+        const control = button && moreLabel(button) ? button : moreLabel(target) ? target : null;
+        if (!control) return;
+        let source = control.parentElement?.closest(captionSelector);
+        if (!source) {
+          // Mobile Instagram also uses an unlabeled More inside a text row.
+          // Limit that fallback to the same small, media-free branch.
+          for (source = control.parentElement; source && source !== card; source = source.parentElement) {
+            if (!captionOnly(source) || [...source.querySelectorAll('button, [role="button"]')].some(
+              action => action !== control && !control.contains(action))) return;
+            if (captionText(source, control).length >= 12) break;
+          }
+        }
+        if (!source || source === card || !card.contains(source) || !captionOnly(source)) return;
+        const request = { card, source, control, initialText: captionText(source, control) };
+        captionRequest = request;
+        setTimeout(() => { if (captionRequest === request) captionRequest = null; }, 1200);
+      };
+      const clearCaptionButton = () => {
+        captionButton?.remove();
+        captionButton = null;
+      };
+      const closeCaption = () => {
+        if (!captionReader) return;
+        const { dialog, returnFocus } = captionReader;
+        captionReader = null;
+        dialog.close();
+        dialog.remove();
+        returnFocus?.focus?.({ preventScroll: true });
+      };
+      const reconcileCaption = () => {
+        if (captionReader && !selectedPermalinkCard(captionReader.source)) {
+          closeCaption();
+          reportNativeScrollLock(true);
+        }
+        const request = captionRequest;
+        if (!request) return;
+        const { card, control, initialText } = request;
+        let { source } = request;
+        const prefix = initialText.replace(/[\s.…]+$/, '');
+        if (!card.contains(source) && source.matches(captionSelector) && prefix) {
+          const replacements = [...card.querySelectorAll(captionSelector)].filter(candidate =>
+            captionOnly(candidate) && captionText(candidate).startsWith(prefix));
+          if (replacements.length === 1) source = replacements[0];
+        }
+        if (selectedPermalinkCard(source) !== card || !activeModal(source)) return;
+        const text = captionText(source, control);
+        const expanded = text.length > initialText.length || control.getAttribute('aria-expanded') === 'true';
+        if (!expanded || !text) return;
+        captionRequest = null;
+        openCaption(source, text);
+      };
+      const openCaption = (source, text) => {
+        captureReelScroll(source);
+        const dialog = document.createElement('dialog');
+        dialog.className = 'vigil-instagram-caption';
+        dialog.setAttribute('aria-label', 'Caption');
+        const close = document.createElement('button');
+        close.type = 'button';
+        close.textContent = 'Close';
+        const body = document.createElement('div');
+        body.tabIndex = 0;
+        body.textContent = text;
+        dialog.append(close, body);
+        document.body.append(dialog);
+        captionReader = { dialog, body, close, source, returnFocus: document.activeElement, touchY: null };
+        dialog.showModal();
+        reportNativeScrollLock(true);
+      };
+      const updateCaptionButton = card => {
+        const source = !captionReader && activeViewer(card)
+          && [...card.querySelectorAll(captionSelector)].find(node => captionOnly(node) && activeModal(node));
+        if (!source || inSheet(source) || allRecipientSheets().some(activeViewer)
+            || [...document.querySelectorAll('[data-vigil-instagram-comments-sheet="true"]')].some(activeViewer)) {
+          clearCaptionButton();
+          return;
+        }
+        const viewport = window.visualViewport;
+        let top = viewport?.offsetTop || 0, bottom = top + (viewport?.height || innerHeight);
+        for (let parent = source.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+          if (/hidden|clip|auto|scroll/.test(getComputedStyle(parent).overflowY)) {
+            const parentTop = parent.getBoundingClientRect().top + parent.clientTop;
+            top = Math.max(top, parentTop);
+            bottom = Math.min(bottom, parentTop + parent.clientHeight);
+          }
+        }
+        // A collapsed caption needs Instagram's More action to load the rest.
+        // Only offer the reader directly when the full text is already here.
+        const more = [...source.querySelectorAll('button, [role="button"], span')].find(moreLabel);
+        const bounds = source.getBoundingClientRect();
+        const clipped = bounds.top < top - 2 || bounds.bottom > bottom + 2 || source.scrollHeight > source.clientHeight + 2;
+        const text = clipped ? captionText(source, more) : '';
+        if (!text || more && nativeGestureRegion(more, true)) { clearCaptionButton(); return; }
+        if (!captionButton) {
+          captionButton = document.createElement('button');
+          captionButton.type = 'button';
+          captionButton.className = 'vigil-instagram-read-caption';
+          captionButton.textContent = 'Read caption';
+          document.body.append(captionButton);
+        }
+        captionButton.onclick = event => {
+          if (selectedPermalinkCard(source) !== card) return;
+          event.stopPropagation();
+          if (more) more.click();
+          else openCaption(source, text);
+        };
+      };
+      const handleCaptionInput = event => {
+        const reader = captionReader;
+        if (!reader) return;
+        // Window capture keeps Instagram's rail from seeing a caption drag.
+        // Only the reader's plain-text box can change its own offset.
+        const inside = reader.dialog.contains(event.target);
+        if (event.type === 'scroll') {
+          if (inside) event.stopImmediatePropagation();
+          return;
+        }
+        if (event.type === 'touchstart') reader.touchY = inside && reader.body.contains(event.target)
+          && event.touches.length === 1 ? event.touches[0].clientY : null;
+        if (event.type === 'touchmove' && reader.touchY !== null && event.touches.length === 1) {
+          const y = event.touches[0].clientY;
+          reader.body.scrollTop += reader.touchY - y;
+          reader.touchY = y;
+        }
+        if (['touchend', 'touchcancel'].includes(event.type)) reader.touchY = null;
+        if (event.type === 'wheel' && inside) reader.body.scrollTop += event.deltaY
+          * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? reader.body.clientHeight : 1);
+        if ((event.type === 'click' && event.target === reader.close) || (event.type === 'keydown' && event.key === 'Escape')) {
+          closeCaption();
+          reconcile();
+        }
+        if (event.type === 'keydown' && inside && event.key !== 'Escape') {
+          const { body } = reader;
+          const distances = { ArrowDown: 40, ArrowUp: -40, PageDown: body.clientHeight, PageUp: -body.clientHeight,
+            Home: -body.scrollHeight, End: body.scrollHeight };
+          if (Object.hasOwn(distances, event.key)) body.scrollTop += distances[event.key];
+          else if (event.key === ' ' && event.target === body) body.scrollTop += event.shiftKey ? -body.clientHeight : body.clientHeight;
+          else {
+            event.stopImmediatePropagation();
+            return;
+          }
+        }
+        if (event.type === 'touchstart' || event.type === 'touchend' || event.type === 'pointerdown' || event.type === 'pointerup') {
+          // Preserve the browser-generated click for Close.
+          event.stopImmediatePropagation();
+        } else {
+          cancel(event);
+        }
+      };
       const loadedRelayCarouselManifest = (reference, value) => {
         // Current Polaris passes fragment references instead of the legacy
         // Sidecar model. Read only already-loaded records; never fetch a new
@@ -4340,14 +4606,24 @@ enum DOMAdapters {
       };
       const reconcile = () => {
         lastDirectThreadPath = directThreadPath(location.href) || lastDirectThreadPath;
-        if (blockSuggestedReels()) return;
+        if (blockSuggestedReels()) { closeCaption(); clearCaptionButton(); return; }
         normalizeRecipientSheets();
         if (!syncRoute() || !concealmentScope) return;
+        reconcileCaption();
         carouselManifestRefreshed = false;
         freshCarouselManifest = null;
         // Reel playback may change CDN/blob sources and remount its player.
         // Contain input without granting permission to a particular video URL.
-        if (pinnedKind === 'reel') return;
+        if (pinnedKind === 'reel') {
+          let selected = null;
+          if (!directPath) for (const video of (modalContext || document).querySelectorAll('video')) {
+            const card = selectedPermalinkCard(video);
+            if (card && activeViewer(card)) { selected = card; break; }
+          }
+          alignClippedPermalink(selected);
+          updateCaptionButton(selected);
+          return;
+        }
         const videos = [...(modalContext || document).querySelectorAll('video')];
         if (pinnedVideo && !pinnedVideo.isConnected && pinnedSource) {
           // A harmless React remount may replace the node, but only the exact
@@ -4383,6 +4659,7 @@ enum DOMAdapters {
           pinnedCard = media ? cardFor(media) : null;
         }
         if (!pinnedCard) {
+          clearCaptionButton();
           // React inserts empty player shells before the post has measurable
           // layout. Keep those cards concealed, but do not bind their sources
           // or permanently reject them before a selected card exists. Doing
@@ -4525,6 +4802,9 @@ enum DOMAdapters {
         cardDecisions.forEach((allowed, card) => {
           mark(card, 'data-vigil-single-reel-card', allowed ? 'allowed' : 'blocked');
         });
+        const selected = selectedPermalinkCard(pinnedCard);
+        alignClippedPermalink(selected);
+        updateCaptionButton(selected);
         if (pinnedCard?.isConnected && concealmentScope?.contains(pinnedCard)) {
           for (let node = pinnedCard; node && (!modalContext || modalContext.contains(node)); node = node.parentElement) {
             if (inSheet(node)) continue;
@@ -4571,6 +4851,10 @@ enum DOMAdapters {
         viewerAcquisitionUntil = performance.now() + 1500;
         if (!viewerAcquisitionFrame) viewerAcquisitionFrame = requestAnimationFrame(acquireViewer);
       };
+      for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel', 'pointerdown', 'pointermove',
+        'pointerup', 'pointercancel', 'mousedown', 'mouseup', 'wheel', 'keydown', 'click', 'contextmenu', 'scroll']) {
+        window.addEventListener(type, handleCaptionInput, { capture: true, passive: false });
+      }
       window.addEventListener('touchstart', event => {
         if (event.touches.length === 1) directPress = { x: event.touches[0].clientX, y: event.touches[0].clientY };
         rememberViewerClosing(event.target);
@@ -4673,6 +4957,7 @@ enum DOMAdapters {
         if (blocksDestination(link?.href) || (syncRoute() && next && !inSheet(next))) cancel(event);
         else if (syncRoute() && pinnedKind === 'story' && !inSheet(event.target)
             && !event.target?.closest?.('a[href], button, [role="button"]')) cancel(event);
+        else if (pinnedID && event.target instanceof Element) requestCaption(event.target);
       }, true);
       window.addEventListener('scroll', event => {
         if (!syncRoute() || inSheet(event.target)) return;
@@ -4722,7 +5007,7 @@ enum DOMAdapters {
         if (pinnedID && records.some(record => sheetLayoutTarget(record.target)
             && (record.type === 'childList' || ['style', 'class', 'hidden', 'aria-hidden'].includes(record.attributeName)))) scheduleNativeGeometry();
       }).observe(document.documentElement, {
-        childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'hidden', 'role', 'aria-modal', 'aria-label', 'placeholder', 'type', 'name', 'data-vigil-instagram-comments-sheet']
+        childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['src', 'srcset', 'href', 'style', 'class', 'aria-hidden', 'aria-expanded', 'hidden', 'role', 'aria-modal', 'aria-label', 'placeholder', 'type', 'name', 'data-vigil-instagram-comments-sheet']
       });
       reconcile();
     })();
