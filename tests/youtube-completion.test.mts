@@ -8,7 +8,7 @@ const renderSource = source.slice(source.indexOf('  function render()'), source.
 const ids = ['video000000', 'video000001', 'video000002', 'video000003'];
 function fixture(bodyReady = true) {
   class Node {
-    id = ''; className = ''; href = ''; textContent = ''; isConnected = false;
+    id = ''; className = ''; href = ''; src = ''; textContent = ''; isConnected = false;
     children: Node[] = [];
     attributes = new Map<string, string>();
     events = new Map<string, (event: unknown) => void>();
@@ -30,32 +30,39 @@ function fixture(bodyReady = true) {
   const navigations: string[] = [];
   const initial = { day: '2026-10-28', slots: ids.map(videoId => ({ videoId, title: videoId, locked: false, removed: false })),
     usedMs: 0, grace: { status: 'unused', usedMs: 0, videoId: null }, external: [] };
-  const api = runInNewContext(`let state = initial, finishedScreen, finishedSignature = '', id = '', playing = false, lease, settlingPlayback = false;
+  const api = runInNewContext(`let state = initial, finishedScreen, finishedSignature = '', id = '', playing = false, lease, settlingPlayback = false, watchLaterSnapshot;
     const topFrame = true, verifiedWatchPages = new Set(), currentID = () => id;
     ${screenSource}
     ${renderSource}
     ({update: updateFinishedScreen, render, state: () => state, set: value => {state = value;}, route: value => {id = value;},
       verify: value => verifiedWatchPages.add(state.day + ':' + value), screen: () => finishedScreen,
-      play: value => { playing = Boolean(value); lease = value ? {videoId: value} : null; }})`, {
+      play: value => { playing = Boolean(value); lease = value ? {videoId: value} : null; },
+      playlist: value => { watchLaterSnapshot = value; }})`, {
     initial, document, panel, statusLine, window: {}, location: { assign: (url: string) => navigations.push(url) }
   });
   const content = () => api.screen()?._content as Node;
   const grid = () => content()?.children.find(node => node.className === 'cards');
   const cards = () => grid()?.children.map(item => item.children[0]) || [];
   const links = () => cards().filter(card => card.tag === 'a');
-  const heading = () => content()?.querySelector('h1')?.textContent;
-  return { api, document, body, panel, statusLine, navigations, content, grid, cards, links, heading };
+  const completion = () => content()?.children.find(node => node.className === 'finished-message');
+  const heading = () => (completion() || content())?.querySelector('h1')?.textContent;
+  return { api, document, body, panel, statusLine, navigations, content, grid, cards, links, completion, heading };
 }
 test('four saved videos show their thumbnails and titles alongside the remaining time', () => {
   const f = fixture(), state = f.api.state();
   state.slots[0].title = 'A saved video title';
+  const thumbnail = `https://i.ytimg.com/vi/${ids[0]}/hqdefault.jpg`;
+  f.api.playlist({ day: state.day, cards: [{videoId: ids[0], channel: 'The creator', duration: '12:34', thumbnail}] });
   f.api.render();
   assert.equal(f.heading(), 'Today’s saved videos');
   assert.deepEqual(f.content().children.map(node => node.tag), ['div', 'h1', 'div']);
-  assert.equal(f.content().children[0].children.length, 2);
+  assert.equal(f.content().children[0].children.length, 1);
   assert.equal(f.cards().length, 4);
   assert.deepEqual(f.cards().map(card => card.children[0].children[0].tag), ['img', 'img', 'img', 'img']);
+  assert.equal(f.cards()[0].children[0].children[0].src, thumbnail);
   assert.equal(f.cards()[0].children[1].children[0].textContent, 'A saved video title');
+  assert.equal(f.cards()[0].children[1].children[1].textContent, 'The creator');
+  assert.equal(f.cards()[0].children[0].children[1].textContent, '12:34');
   assert.equal(f.statusLine.textContent, '120 min left');
   assert.equal(f.panel.attributes.has('data-duplicate-status'), false);
 
@@ -66,7 +73,7 @@ test('four saved videos show their thumbnails and titles alongside the remaining
   f.api.render();
   assert.match(f.heading()!, /run out of watch time/);
   assert.deepEqual(f.content().children.map(node => node.tag), ['div', 'h1']);
-  assert.equal(f.content().children[0].children.length, 2);
+  assert.equal(f.content().children[0].children.length, 1);
   assert.equal(f.panel.attributes.has('data-duplicate-status'), true);
 });
 test('time exhaustion takes priority with any number of saves and on saved or verified external routes', () => {
@@ -98,6 +105,7 @@ test('watched cards keep their position and the final grid remains visible with 
   const state = f.api.state(); state.slots[0].completed = true;
   f.api.update(); assert.equal(f.links().length, 3);
   assert.deepEqual(f.cards().map(card => card.attributes.has('data-inactive')), [true, false, false, false]);
+  assert.equal(f.cards()[0].children[0].querySelector('img'), undefined);
   assert.deepEqual(f.links().map(card => card.href), ids.slice(1).map(id => '/watch?v=' + id));
   f.api.route(ids[0]); f.api.verify(ids[0]); f.api.update();
   assert.equal(f.api.screen().hidden, false, 'a cached check cannot reopen a finished save');
@@ -107,9 +115,10 @@ test('watched cards keep their position and the final grid remains visible with 
   for (const slot of state.slots) slot.completed = true;
   for (const grace of ['unused', 'ended']) {
     state.grace.status = grace;
-    f.api.update(); assert.equal(f.heading(), 'Today’s saved videos');
+    f.api.update(); assert.equal(f.heading(), 'You’ve watched all your saved videos for today.');
+    assert.equal(f.completion()?.attributes.get('role'), 'status');
     assert.equal(f.links().length, 0);
-    assert.deepEqual(f.cards().map(card => card.children[0].children[1].textContent), Array(4).fill('Watched'));
+    assert.deepEqual(f.cards().map(card => card.children[0].children.map(child => child.textContent)), Array(4).fill(['Watched']));
   }
 });
 test('first activation directly opens a save and polling does not replace the clicked card', () => {

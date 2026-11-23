@@ -6,6 +6,7 @@ import { defaultState } from '../src/defaults.js';
 import { youtubeAction } from '../src/youtubeLimits.js';
 
 const source = await readFile(new URL('../extension/youtube-limits.js', import.meta.url), 'utf8');
+const textSource = source.slice(source.indexOf('  const textOf'), source.indexOf('  const validTitle'));
 const parserSource = source.slice(source.indexOf('  function watchLaterRemoval('), source.indexOf('  async function readWatchLaterStart('));
 const continuationSource = source.slice(source.indexOf('  function watchLaterContinuationTokens('), source.indexOf('  async function watchLaterBrowseHeaders('));
 const runnerSource = source.slice(source.indexOf('  // BEGIN WATCH LATER BULK CLEAR'), source.indexOf('  function exportWatchLater('));
@@ -15,9 +16,7 @@ const apiUrl = '/youtubei/v1/browse/edit_playlist';
 function item(videoId: string) {
   return { videoId, title: videoId, removal: { apiUrl, action: { action: 'ACTION_REMOVE_VIDEO', removedVideoId: videoId } } };
 }
-const parse = runInNewContext(`${continuationSource}\n${parserSource}\n({watchLaterRemoval,watchLaterPage})`, {
-  textOf: (value: string | { simpleText?: string }) => typeof value === 'string' ? value : value.simpleText || ''
-});
+const parse = runInNewContext(`${textSource}\n${continuationSource}\n${parserSource}\n({watchLaterRemoval,watchLaterPage})`);
 function renderer(videoId = ids[0]) {
   return { videoId, title: 'Saved video', menu: { menuRenderer: { items: [{ menuServiceItemRenderer: { serviceEndpoint: {
     commandMetadata: { webCommandMetadata: { apiUrl } },
@@ -45,6 +44,18 @@ test('foreign URLs, other playlists, add commands, mismatched videos and ambiguo
   ]) {
     const v = renderer(); change(v); assert.equal(parse.watchLaterRemoval(v), null);
   }
+});
+test('Watch Later entries carry display details and only their own YouTube thumbnail', () => {
+  const official = `https://i.ytimg.com/vi/${ids[0]}/hqdefault.jpg`;
+  const video = { ...renderer(), shortBylineText: { runs: [{ text: 'The creator' }] },
+    lengthText: { simpleText: '12:34' }, thumbnail: { thumbnails: [
+      { url: official }, { url: 'https://example.com/photo.jpg' },
+      { url: `https://i.ytimg.com/vi/${ids[1]}/hqdefault.jpg` }
+    ] } };
+  const page = parse.watchLaterPage({ playlistVideoListRenderer: { contents: [{ playlistVideoRenderer: video }] } });
+  assert.equal(page.cards[0].channel, 'The creator');
+  assert.equal(page.cards[0].duration, '12:34');
+  assert.equal(page.cards[0].thumbnail, official);
 });
 test('a known empty playlist message is valid, while errors, unselected tabs and mixed video content are not empty', () => {
   const empty = () => ({ contents: { twoColumnBrowseResultsRenderer: { tabs: [{ tabRenderer: { selected: true,

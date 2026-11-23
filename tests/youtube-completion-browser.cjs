@@ -56,10 +56,10 @@ async function main() {
     assert.equal(complete.links.length,4);
     assert.deepEqual(complete.images,slots.map(slot=>[`https://i.ytimg.com/vi/${slot.videoId}/mqdefault.jpg`,1]));
     assert.deepEqual(complete.titles,slots.map(slot=>slot.title));
-    const appearance = await win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),main=root.querySelector('main');window.fixtureEntrance=main.getAnimations()[0];return {background:getComputedStyle(host).backgroundColor,text:getComputedStyle(main).color,row:getComputedStyle(root.querySelector('a')).backgroundColor,animation:getComputedStyle(main).animationName}})()`);
+    const appearance = await win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),main=root.querySelector('main');window.fixtureEntrance=main.getAnimations()[0];return {background:getComputedStyle(host).backgroundColor,text:getComputedStyle(main).color,entry:getComputedStyle(root.querySelector('a')).backgroundColor,animation:getComputedStyle(main).animationName}})()`);
     assert.equal(appearance.background,'rgb(15, 15, 15)','native theme wins over the page’s white section styling');
     assert.equal(appearance.text,'rgb(241, 241, 241)');
-    assert.equal(appearance.row,'rgb(33, 33, 33)');
+    assert.equal(appearance.entry,'rgba(0, 0, 0, 0)');
     assert.equal(appearance.animation,'vigil-content-in');
     await win.webContents.executeJavaScript(`__testReply.slots[0].locked=false; history.pushState({},'', '/watch?v=other000002')`);
     await wait(750);
@@ -86,7 +86,16 @@ async function main() {
       await win.webContents.executeJavaScript(`Object.assign(__testReply,${JSON.stringify(changes)}); history.pushState({},'',${JSON.stringify(route)})`);
       await wait(750);
     };
-    const screen = () => win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host);return {hidden:host.hidden,heading:root.querySelector('h1').textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),cards:[...root.querySelectorAll('.card')].map(card=>{const box=card.getBoundingClientRect();return {title:card.querySelector('.title').textContent,status:card.querySelector('.card-status')?.textContent,filter:getComputedStyle(card.querySelector('img')).filter,outline:getComputedStyle(card).borderTopStyle,box:[box.x,box.y,box.width,box.height]}}),opacity:getComputedStyle(host).opacity}})()`);
+    const screen = () => win.webContents.executeJavaScript(`(()=>{
+      const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),heading=root.querySelector('h1');
+      const message=root.querySelector('.finished-message'),headingBox=heading.getBoundingClientRect();
+      return {hidden:host.hidden,heading:heading.textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),
+        cards:[...root.querySelectorAll('.card')].map(card=>{
+          const box=card.getBoundingClientRect(),poster=card.querySelector('.poster');
+          return {title:card.querySelector('.title').textContent,status:card.querySelector('.card-status')?.textContent,
+            photo:!!poster.querySelector('img'),outline:getComputedStyle(poster).borderTopStyle,box:[box.x,box.y,box.width,box.height]};
+        }),centered:!!message && Math.abs(headingBox.y+headingBox.height/2-innerHeight/2)<1,opacity:getComputedStyle(host).opacity};
+    })()`);
     const before = await screen();
     const completed = slots.map((slot,index)=>({...slot,completed:index===0}));
     await refresh({slots:completed},'/watch?v=other000003');
@@ -94,16 +103,19 @@ async function main() {
     assert.equal(partial.links.length,3,'only unwatched cards remain playable');
     assert.deepEqual(partial.cards.map(card=>card.box),before.cards.map(card=>card.box),'completion keeps the grid geometry');
     assert.equal(partial.cards[0].status,'Watched');
-    assert.equal(partial.cards[0].filter,'grayscale(1)');
+    assert.equal(partial.cards[0].photo,false);
     assert.equal(partial.cards[0].outline,'solid');
-    assert.equal(partial.cards[1].filter,'none');
+    assert.equal(partial.cards[1].photo,true);
     await refresh({},`/watch?v=${ids[0]}`);
     assert.equal((await screen()).hidden,false,'a cached successful check cannot reopen a completed saved video');
     await refresh({slots:completed.map(slot=>({...slot,completed:true}))},'/watch?v=other000004');
     const done = await screen();
-    assert.equal(done.heading,'Today’s saved videos');
+    assert.equal(done.heading,'You’ve watched all your saved videos for today.');
+    assert.equal(done.centered,true);
     assert.equal(done.links.length,0);
     assert.deepEqual(done.cards.map(card=>card.status),Array(4).fill('Watched'));
+    assert.ok(done.cards.every(card=>!card.photo && card.outline==='solid'));
+    assert.deepEqual(done.cards.map(card=>card.box),before.cards.map(card=>card.box));
     assert.deepEqual(done.cards.map(card=>card.title),slots.map(slot=>slot.title));
     assert.equal(done.opacity,'1','the opaque surface never reveals the underlying feed during entrance');
     for (const saved of [slots, [slots[0],null,null,null]]) {
