@@ -11,6 +11,7 @@ export const APP_NAME = "Vigil";
 export const PORT = Number(process.env.VIGIL_PORT || 8787);
 export const REQUIRED_EXTENSION_VERSION = "0.3.21";
 export const BUILT_IN_CHROME_EXTENSION_ID = "pioggnehmhgehdlncoddbhcbcjmmcpge";
+export const STORE_CHROME_EXTENSION_ID = "onmphjimnjpdjoiajahghcjbnkjihhdh";
 export const DEFAULT_ADULT_BLOCKLIST_SOURCE_ID = "blocklistproject-porn";
 export const MINIMUM_DEFAULT_ADULT_BLOCKLIST_DOMAINS = 600_000;
 export const DEFAULT_ADULT_BLOCKLIST_PRELOAD_LIMIT = 100;
@@ -452,6 +453,8 @@ export const BRICK_ALLOWED_SITES = [
 ];
 
 export const IOS_UNGUARDED_BROWSER_BUNDLE_IDS = [
+  // ChatGPT opens external pages in an embedded viewer without the Safari guards.
+  "com.openai.chat",
   "com.google.chrome.ios",
   "org.mozilla.ios.Firefox",
   "org.mozilla.ios.Focus",
@@ -514,6 +517,8 @@ export const IOS_UNGUARDED_BROWSER_BUNDLE_IDS = [
   "Fairy-Tools.Downloader-Deluxe"
 ];
 
+export const IOS_STEAM_MOBILE_BUNDLE_ID = "com.valvesoftware.Steam";
+
 export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
   // The BuiltIn web filter alone does not provide Vigil's Safari page and
   // navigation guards. Browsers without those guards must remain unavailable.
@@ -530,6 +535,7 @@ export const DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS = [
   "com.hammerandchisel.discord",
   "com.pinterest",
   // Browser content guards cannot protect these native apps' adult-content surfaces.
+  IOS_STEAM_MOBILE_BUNDLE_ID,
   "com.reddit.Reddit",
   "xyz.blueskyweb.app",
   "com.tumblr.tumblr",

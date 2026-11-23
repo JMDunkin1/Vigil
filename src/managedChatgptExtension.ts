@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { BUILT_IN_CHROME_EXTENSION_ID } from "./defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID } from "./defaults.js";
 import { toPlist } from "./plist.js";
 
 const runFile = promisify(execFile);
@@ -68,6 +68,7 @@ export function compareExtensionVersions(left: string, right: string): number {
 export async function prepareExtensionRelease(source: string, destination: string, options: {
   version?: string;
   recoveryOf?: string;
+  storePublicKey?: string;
 } = {}): Promise<ExtensionRelease> {
   const sourcePath = resolve(source);
   const destinationPath = resolve(destination);
@@ -80,6 +81,10 @@ export async function prepareExtensionRelease(source: string, destination: strin
   if (await pathExists(destinationPath)) throw new Error("Release already exists; retain it and choose a new destination.");
   const original = await packageInventory(sourcePath);
   const manifest = validateManifest(JSON.parse((await readFile(join(sourcePath, "manifest.json"))).toString()), original);
+  if (options.storePublicKey) {
+    if (manifestExtensionId(options.storePublicKey) !== STORE_CHROME_EXTENSION_ID) throw new Error("Unexpected Chrome Web Store public key.");
+    manifest.key = options.storePublicKey;
+  }
   if (options.version && compareExtensionVersions(options.version, manifest.version) <= 0) {
     throw new Error("A repair must use a higher version; Chromium does not normally downgrade extensions.");
   }
@@ -91,19 +96,28 @@ export async function prepareExtensionRelease(source: string, destination: strin
       if (sha256(bytes) !== entry.sha256) throw new Error("Extension source changed during snapshot preparation.");
       const output = join(temporary, "payload", entry.path);
       await mkdir(dirname(output), { recursive: true, mode: 0o700 });
-      await writeFile(output, entry.path === "manifest.json" && options.version
-        ? `${JSON.stringify({ ...manifest, version: options.version }, null, 2)}\n` : bytes, { flag: "wx", mode: 0o600 });
+      await writeFile(output, entry.path === "manifest.json" && (options.version || options.storePublicKey)
+        ? `${JSON.stringify({ ...manifest, version: options.version || manifest.version }, null, 2)}\n` : bytes, { flag: "wx", mode: 0o600 });
     }
     if (JSON.stringify(await packageInventory(sourcePath)) !== JSON.stringify(original)) {
       throw new Error("Extension source changed during snapshot preparation.");
     }
     const files = await packageInventory(join(temporary, "payload"));
     const archive = join(temporary, ARCHIVE_NAME);
-    await runFile("/usr/bin/zip", ["-q", archive, ...files.map(entry => entry.path)], { cwd: join(temporary, "payload") });
+    // Google rejects the unpacked manifest key. Stage the store manifest separately
+    // so the verified local payload retains its identity for recovery.
+    const uploadDir = join(temporary, "upload");
+    await mkdir(uploadDir);
+    const storeManifest = { ...manifest, version: options.version || manifest.version } as Record<string, unknown>;
+    delete storeManifest.key;
+    await writeFile(join(uploadDir, "manifest.json"), JSON.stringify(storeManifest, null, 2) + "\n");
+    await runFile("/usr/bin/zip", ["-q", archive, "manifest.json"], { cwd: uploadDir });
+    await runFile("/usr/bin/zip", ["-q", archive, ...files.map(entry => entry.path).filter(path => path !== "manifest.json")], { cwd: join(temporary, "payload") });
+    await rm(uploadDir, { recursive: true });
     const inventory = (await runFile("/usr/bin/unzip", ["-Z1", archive])).stdout.trim().split("\n").sort();
     if (JSON.stringify(inventory) !== JSON.stringify(files.map(entry => entry.path))) throw new Error("Archive inventory mismatch.");
     const receipt: ExtensionRelease = {
-      schemaVersion: 1, kind: "unsigned-store-upload", extensionId: BUILT_IN_CHROME_EXTENSION_ID,
+      schemaVersion: 1, kind: "unsigned-store-upload", extensionId: manifestExtensionId(manifest.key),
       version: options.version || manifest.version, createdAt: new Date().toISOString(), files,
       payloadSha256: sha256(JSON.stringify(files)), contentSha256: await contentFingerprint(join(temporary, "payload"), files),
       archiveSha256: sha256(await readFile(archive)),
@@ -124,12 +138,12 @@ export async function verifyExtensionRelease(directory: string): Promise<Extensi
   for (const file of [RECEIPT_NAME, ARCHIVE_NAME]) await assertFile(join(directory, file));
   const receipt = JSON.parse(await readFile(join(directory, RECEIPT_NAME), "utf8")) as ExtensionRelease;
   if (receipt.schemaVersion !== 1 || receipt.kind !== "unsigned-store-upload"
-    || receipt.extensionId !== BUILT_IN_CHROME_EXTENSION_ID || !Array.isArray(receipt.files)) {
+    || ![BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID].includes(receipt.extensionId) || !Array.isArray(receipt.files)) {
     throw new Error("Unsupported or mismatched extension release receipt.");
   }
   const files = await packageInventory(join(directory, "payload"));
   const manifest = validateManifest(JSON.parse(await readFile(join(directory, "payload", "manifest.json"), "utf8")), files);
-  if (manifest.version !== receipt.version || JSON.stringify(files) !== JSON.stringify(receipt.files)
+  if (manifestExtensionId(manifest.key) !== receipt.extensionId || manifest.version !== receipt.version || JSON.stringify(files) !== JSON.stringify(receipt.files)
     || sha256(JSON.stringify(files)) !== receipt.payloadSha256
     || await contentFingerprint(join(directory, "payload"), files) !== receipt.contentSha256
     || sha256(await readFile(join(directory, ARCHIVE_NAME))) !== receipt.archiveSha256) {
@@ -160,7 +174,7 @@ export function managedChatgptProfile(release: ExtensionRelease, publication: Ex
     || publication.publishedVersion !== release.version) {
     throw new Error("Do not apply an install policy: this exact release is not recorded as published in the Chrome Web Store.");
   }
-  if (release.extensionId !== BUILT_IN_CHROME_EXTENSION_ID || !/^[a-f0-9]{64}$/u.test(release.payloadSha256)) {
+  if (release.extensionId !== STORE_CHROME_EXTENSION_ID || !/^[a-f0-9]{64}$/u.test(release.payloadSha256)) {
     throw new Error("Invalid managed companion identity or payload receipt.");
   }
   versionParts(release.version);
@@ -203,6 +217,12 @@ function assertRehearsal(release: ExtensionRelease, working: ExtensionRelease | 
 
 interface Manifest extends Record<string, unknown> { version: string; key: string }
 
+function manifestExtensionId(publicKey: string): string {
+  const key = createPublicKey({ key: Buffer.from(publicKey, "base64"), format: "der", type: "spki" });
+  const der = key.export({ format: "der", type: "spki" });
+  return sha256(der).slice(0, 32).replace(/[0-9a-f]/gu, character => String.fromCharCode(97 + Number.parseInt(character, 16)));
+}
+
 function validateManifest(value: unknown, files: Array<{ path: string }>): Manifest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid extension manifest.");
   const manifest = value as Manifest;
@@ -210,10 +230,7 @@ function validateManifest(value: unknown, files: Array<{ path: string }>): Manif
     throw new Error("Only Vigil's existing Manifest V3 companion can be packaged.");
   }
   versionParts(manifest.version);
-  const key = createPublicKey({ key: Buffer.from(manifest.key, "base64"), format: "der", type: "spki" });
-  const der = key.export({ format: "der", type: "spki" });
-  const id = sha256(der).slice(0, 32).replace(/[0-9a-f]/gu, character => String.fromCharCode(97 + Number.parseInt(character, 16)));
-  if (id !== BUILT_IN_CHROME_EXTENSION_ID) throw new Error("The release would change Vigil's trusted extension identity.");
+  if (![BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID].includes(manifestExtensionId(manifest.key))) throw new Error("The release would change Vigil's trusted extension identity.");
   const paths = new Set(files.map(file => file.path));
   const references: string[] = [];
   const visit = (entry: unknown): void => {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { accountStatusFromGroups, parseGroups } from "../src/account.js";
 import { apiRequestGuard, CONTROL_INTENT_HEADER, CONTROL_INTENT_VALUE, deviceUsageSyncAuthorization, EXTENSION_ID_HEADER, EXTENSION_TOKEN_HEADER, extensionCorsHeaders, extensionRequestGuard, extensionTrustSummary, isLoopbackHostHeader, isLoopbackRemoteAddress, isTrustedExtensionRequest, localControlRequestGuard, publicHostGuard } from "../src/apiSecurity.js";
 import { parseBoolean } from "../src/booleans.js";
-import { BUILT_IN_CHROME_EXTENSION_ID } from "../src/defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID } from "../src/defaults.js";
 import { iosMdmReadiness, normalizeIosMdmSettings } from "../src/iosMdm.js";
 import { normalizeLimitRule } from "../src/limits.js";
 
@@ -240,6 +240,7 @@ try {
     }
   }).ok, false);
   assert.equal(isTrustedExtensionRequest({ origin: "chrome-extension://abc" }), false);
+  assert.equal(isTrustedExtensionRequest({ origin: `chrome-extension://${STORE_CHROME_EXTENSION_ID}` }, LOCAL_TRANSPORT), true);
   assert.equal(extensionRequestGuard({
     method: "POST",
     ...LOCAL_TRANSPORT,
@@ -271,7 +272,7 @@ try {
     tokenConfigured: false,
     tokenSupplied: false,
     tokenHeader: EXTENSION_TOKEN_HEADER,
-    configuredOriginCount: 3,
+    configuredOriginCount: 4,
     suggestedOriginEnv: "VIGIL_EXTENSION_ORIGIN=chrome-extension://attacker-extension",
     suggestedIdEnv: "VIGIL_EXTENSION_ID=attacker-extension",
     suggestedTokenEnv: "VIGIL_EXTENSION_TOKEN=<shared-token>"

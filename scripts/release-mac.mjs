@@ -281,9 +281,9 @@ async function verifyPublishedBrowserCompanion() {
     readFile("build/browser-store.json", "utf8").then(JSON.parse),
     readFile("src/defaults.ts", "utf8")
   ]);
-  const builtInExtensionId = defaultsSource.match(/BUILT_IN_CHROME_EXTENSION_ID\s*=\s*"([a-p]{32})"/u)?.[1];
+  const builtInExtensionId = defaultsSource.match(/STORE_CHROME_EXTENSION_ID\s*=\s*"([a-p]{32})"/u)?.[1];
   if (!builtInExtensionId) throw new Error("Vigil's trusted browser companion ID could not be read.");
-  const digest = createHash("sha256").update(Buffer.from(String(manifest.key || ""), "base64")).digest().subarray(0, 16).toString("hex");
+  const digest = createHash("sha256").update(Buffer.from(String(storeConfig.publicKey || ""), "base64")).digest().subarray(0, 16).toString("hex");
   const extensionId = digest.replace(/[0-9a-f]/gu, (nibble) => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(nibble, 16)));
   if (storeConfig.extensionId !== extensionId) throw new Error("The Chrome Web Store item ID does not match the browser companion manifest key.");
   if (storeConfig.extensionId !== builtInExtensionId) throw new Error("The Chrome Web Store item ID does not match Vigil's trusted companion origin.");

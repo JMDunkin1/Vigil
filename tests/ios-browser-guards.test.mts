@@ -6,10 +6,11 @@ import { recordValue } from "./test-helpers.mjs";
 
 const safari = "com.apple.mobilesafari";
 const companion = "tech.caseline.vigil.instagram";
+const unavailableApps = [...IOS_UNGUARDED_BROWSER_BUNDLE_IDS, "com.valvesoftware.Steam"];
 const customBlock = "example.previously.blocked";
 // Pin the reported hole and the current identities that the previous inventory
 // missed. Blocking startpage.com cannot prevent direct Reddit navigation here.
-for (const id of ["com.startpage.app", "com.ecosia.ecosiaapp", "com.qwant.mobile",
+for (const id of ["com.openai.chat", "com.startpage.app", "com.ecosia.ecosiaapp", "com.qwant.mobile",
   "com.Presearch.BrowseriOS", "com.kagi.kagiiOS", "com.vivaldi.browser",
   "com.miketigas.OnionBrowser", "company.thebrowser.ArcMobile2"]) {
   assert.ok(IOS_UNGUARDED_BROWSER_BUNDLE_IDS.includes(id), `native browser regression: ${id}`);
@@ -19,10 +20,10 @@ assert.equal(new Set(IOS_UNGUARDED_BROWSER_BUNDLE_IDS.map(id => id.toLowerCase()
 const settings = normalizeIosSettings({
   enabled: true,
   blockedAppBundleIds: [customBlock],
-  allowedAppBundleIds: [safari, companion, ...IOS_UNGUARDED_BROWSER_BUNDLE_IDS.map(id => id.toUpperCase())]
+  allowedAppBundleIds: [safari, companion, ...unavailableApps.map(id => id.toUpperCase())]
 });
 assert.ok(settings.blockedAppBundleIds.includes(customBlock), "existing custom restrictions must survive migration");
-for (const id of IOS_UNGUARDED_BROWSER_BUNDLE_IDS) {
+for (const id of unavailableApps) {
   assert.ok(settings.blockedAppBundleIds.includes(id), `${id} must be blocked even when omitted from saved settings`);
   assert.ok(!settings.allowedAppBundleIds.some(value => value.toLowerCase() === id.toLowerCase()), `${id} cannot be restored through an allowlist`);
 }
@@ -36,7 +37,7 @@ for (const focused of [false, true]) for (const mode of ["denylist", "allowlist"
     enabled: true,
     mode,
     blockedAppBundleIds: [customBlock],
-    allowedAppBundleIds: [safari, companion, ...IOS_UNGUARDED_BROWSER_BUNDLE_IDS]
+    allowedAppBundleIds: [safari, companion, ...unavailableApps]
   };
   state.profiles[0]!.mode = mode === "allowlist" ? "allowlist" : "blocklist";
   if (focused) state.activeSessions.phone = {
@@ -53,7 +54,7 @@ for (const focused of [false, true]) for (const mode of ["denylist", "allowlist"
   const effectiveAllowlist = focused && mode === "allowlist";
   const appList = (effectiveAllowlist ? restrictions.allowListedAppBundleIDs : restrictions.blockedAppBundleIDs) as string[];
   assert.ok(Array.isArray(appList));
-  for (const id of IOS_UNGUARDED_BROWSER_BUNDLE_IDS) {
+  for (const id of unavailableApps) {
     assert.equal(appList.includes(id), !effectiveAllowlist, `${focused ? "focus" : "baseline"} ${mode} must make ${id} unavailable`);
   }
   assert.equal(appList.includes(safari), effectiveAllowlist, "guarded Safari must remain available");

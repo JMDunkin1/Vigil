@@ -21,7 +21,7 @@ import type { InAppRequest, InAppResponse } from "../src/server/inAppTransport.j
 import { fetchVigilStateHealth } from "../src/vigilHealth.js";
 import { createVigilAppUpdateController } from "./updater.js";
 import type { VigilAppUpdateController } from "./updater.js";
-import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { STORE_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
 import {
   markUpdateRecoveryCommitIntent,
   readUpdateRecoveryManifest,
@@ -781,7 +781,7 @@ async function handleSetupOpen(event: IpcMainInvokeEvent, value: unknown): Promi
 
 function packagedBrowserStoreConfig(): { extensionId: string; published: boolean; publishedVersion: string | null } {
   if (!app.isPackaged) {
-    return { extensionId: BUILT_IN_CHROME_EXTENSION_ID, published: false, publishedVersion: null };
+    return { extensionId: STORE_CHROME_EXTENSION_ID, published: false, publishedVersion: null };
   }
   try {
     const value = JSON.parse(readFileSync(join(process.resourcesPath, "browser-store.json"), "utf8")) as {
@@ -789,7 +789,7 @@ function packagedBrowserStoreConfig(): { extensionId: string; published: boolean
       published?: unknown;
       publishedVersion?: unknown;
     };
-    if (value.extensionId !== BUILT_IN_CHROME_EXTENSION_ID) throw new Error("Browser-store item ID does not match Vigil's trusted companion ID.");
+    if (value.extensionId !== STORE_CHROME_EXTENSION_ID) throw new Error("Browser-store item ID does not match Vigil's trusted companion ID.");
     if (typeof value.published !== "boolean") throw new Error("Browser-store publication status is malformed.");
     if (!(typeof value.publishedVersion === "string" || value.publishedVersion === null)) {
       throw new Error("Browser-store published version is malformed.");
@@ -804,7 +804,7 @@ function packagedBrowserStoreConfig(): { extensionId: string; published: boolean
     };
   } catch (error) {
     console.error("Vigil could not verify its browser-store release configuration.", error);
-    return { extensionId: BUILT_IN_CHROME_EXTENSION_ID, published: false, publishedVersion: null };
+    return { extensionId: STORE_CHROME_EXTENSION_ID, published: false, publishedVersion: null };
   }
 }
 

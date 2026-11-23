@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { BUILT_IN_CHROME_EXTENSION_ID, PORT } from "../src/defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID, PORT } from "../src/defaults.js";
 import { isDirectRun } from "../src/directRun.js";
 import { verifyChromeWebStoreRelease } from "../src/extensionStoreVerification.js";
 import { managedChatgptProfile, prepareExtensionRecovery, prepareExtensionRelease, verifyExtensionRelease } from "../src/managedChatgptExtension.js";
@@ -15,10 +15,13 @@ export async function runManagedChatgptExtension(args = process.argv.slice(2)): 
     // This is the active Electron partition, not the similarly named obsolete profile.
     const profile = join(homedir(), "Library", "Application Support", "Codex", "Default", "Partitions", "codex-browser-app", "Secure Preferences");
     const preferences = JSON.parse(await readFile(profile, "utf8"));
-    const entry = preferences.extensions?.settings?.[BUILT_IN_CHROME_EXTENSION_ID];
+    const entries = preferences.extensions?.settings || {};
+    const extensionId = entries[STORE_CHROME_EXTENSION_ID] || !entries[BUILT_IN_CHROME_EXTENSION_ID]
+      ? STORE_CHROME_EXTENSION_ID : BUILT_IN_CHROME_EXTENSION_ID;
+    const entry = entries[extensionId];
     const manifest = entry?.path ? JSON.parse(await readFile(join(entry.path, "manifest.json"), "utf8")) : null;
     console.log(JSON.stringify({
-      profile, installed: Boolean(entry), extensionId: BUILT_IN_CHROME_EXTENSION_ID,
+      profile, installed: Boolean(entry), extensionId, storeEntryPresent: Boolean(entries[STORE_CHROME_EXTENSION_ID]),
       version: manifest?.version || null, source: entry?.path || null,
       disableReasons: entry?.disable_reasons || [], installationSource: entry?.location === 4 ? "unpacked" : entry?.location ?? null,
       policyInstalled: entry?.location === 7 || entry?.location === 9,
@@ -30,7 +33,8 @@ export async function runManagedChatgptExtension(args = process.argv.slice(2)): 
   if (command === "prepare") {
     const [source, output] = values;
     if (!source || !output || values.length !== 2) throw new Error("Usage: prepare <compiled-extension-folder> <new-release-folder>");
-    console.log(JSON.stringify(await prepareExtensionRelease(source, output), null, 2));
+    const store = JSON.parse(await readFile(join(process.cwd(), "build", "browser-store.json"), "utf8"));
+    console.log(JSON.stringify(await prepareExtensionRelease(source, output, { storePublicKey: store.publicKey }), null, 2));
     return;
   }
   if (command === "verify") {

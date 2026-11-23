@@ -9,7 +9,8 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { launchAgentDataDirFromPlist, launchAgentDataRootsConflict } from "../src/dataPaths.js";
-import { BUILT_IN_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID, REQUIRED_EXTENSION_VERSION } from "../src/defaults.js";
+import { prepareExtensionRelease } from "../src/managedChatgptExtension.js";
 import { isDirectRun } from "../src/directRun.js";
 import { packageableRuntimePath } from "../src/runtimePackaging.js";
 import { plistStringForKey } from "../src/plist.js";
@@ -234,7 +235,7 @@ const extensionKeyHash = createHash("sha256").update(Buffer.from(String(manifest
 assert.equal(extensionKeyHash.replace(/[0-9a-f]/g, (nibble) => String.fromCharCode("a".charCodeAt(0) + Number.parseInt(nibble, 16))), BUILT_IN_CHROME_EXTENSION_ID);
 const browserStoreRoot = existsSync(join(process.cwd(), "build", "browser-store.json")) ? process.cwd() : resolve(process.cwd(), "..", "..");
 const browserStore = JSON.parse(await readFile(join(browserStoreRoot, "build", "browser-store.json"), "utf8")) as Record<string, unknown>;
-assert.equal(browserStore.extensionId, BUILT_IN_CHROME_EXTENSION_ID, "the browser-store item must match Vigil's trusted extension origin");
+assert.equal(browserStore.extensionId, STORE_CHROME_EXTENSION_ID, "the browser-store item must match Vigil's trusted extension origin");
 assert.equal(typeof browserStore.published, "boolean", "browser-store publication must be an explicit release gate");
 assert.equal(
   typeof browserStore.publishedVersion === "string" || browserStore.publishedVersion === null,
@@ -248,8 +249,18 @@ assert.match(String(scripts["package:extension:release"]), /package-browser-exte
 assert.equal(stringArrayValue(manifest.permissions, "extension permissions").includes("declarativeNetRequest"), true);
 
 const extensionPackager = await readFile(join(browserStoreRoot, "scripts", "package-browser-extension.mjs"), "utf8");
-for (const requiredStoreAsset of ["blocked.html", "rules.json", "icons/icon-128.png"]) {
-  assert.match(extensionPackager, new RegExp(`"${requiredStoreAsset.replace(".", "\\.")}"`, "u"));
+const archiveTest = await mkdtemp(join(tmpdir(), "vigil-store-package-"));
+try {
+  const packageDir = join(archiveTest, "release");
+  const release = await prepareExtensionRelease(join(browserStoreRoot, "dist/runtime/extension"), packageDir, { storePublicKey: String(browserStore.publicKey) });
+  assert.equal(release.extensionId, STORE_CHROME_EXTENSION_ID);
+  for (const path of ["blocked.html", "rules.json", "icons/icon-128.png", "reddit-review-background.js", "search-break-background.js"]) {
+    assert.ok(release.files.some(file => file.path === path), path);
+  }
+  const uploaded = await execFileAsync("/usr/bin/unzip", ["-p", join(packageDir, "store-upload.zip"), "manifest.json"]);
+  assert.equal(JSON.parse(uploaded.stdout).key, undefined);
+} finally {
+  await rm(archiveTest, { recursive: true, force: true });
 }
 assert.match(extensionPackager, /publishedVersion !== manifest\.version/u, "release packaging must reject a stale published-version gate");
 

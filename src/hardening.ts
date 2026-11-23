@@ -57,14 +57,16 @@ export function buildHostsBlock(
 ): string {
   const domains = managedBlockDomains(state, now);
   const lines = [HOSTS_BEGIN];
-  const blockedHosts = new Set<string>();
+  // Exact names only. Steam shares CDN addresses with game downloads, so these
+  // browsing surfaces must stay out of the resolved-address firewall rules.
+  const blockedHosts = new Set(["store.steampowered.com", "steamcommunity.com", "www.steamcommunity.com"]);
   for (const domain of domains) {
     for (const host of [domain, `www.${domain}`]) {
       blockedHosts.add(host);
-      lines.push(`0.0.0.0 ${host}`);
     }
   }
 
+  for (const host of blockedHosts) lines.push(`0.0.0.0 ${host}`);
   lines.push(HOSTS_END);
   const safeSearchLines = [
     SAFE_SEARCH_HOSTS_BEGIN,

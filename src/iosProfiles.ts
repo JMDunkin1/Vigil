@@ -12,6 +12,7 @@ import {
   DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS,
   DEFAULT_IOS_BLOCKED_APP_BUNDLE_IDS,
   DEFAULT_PRIORITY_ADULT_BLOCKED_SITES,
+  IOS_STEAM_MOBILE_BUNDLE_ID,
   IOS_UNGUARDED_BROWSER_BUNDLE_IDS,
   SOFT_BLOCK_PROFILE_ID,
   defaultState
@@ -54,7 +55,7 @@ const IOS_SUPPLEMENTAL_ADULT_SITE_KEYS = new Set<string>(IOS_SUPPLEMENTAL_ADULT_
 const IOS_PRIMARY_ADULT_BLOCKED_SITES = DEFAULT_PRIORITY_ADULT_BLOCKED_SITES.filter(site => !IOS_SUPPLEMENTAL_ADULT_SITE_KEYS.has(site));
 const MIN_PRIORITY_DOMAIN_BREADTH = 173 + IOS_PRIMARY_ADULT_BLOCKED_SITES.length;
 const IOS_BUNDLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9.-]*$/;
-const IOS_UNGUARDED_BROWSER_BUNDLE_ID_KEYS = new Set(IOS_UNGUARDED_BROWSER_BUNDLE_IDS.map((value) => value.toLowerCase()));
+const IOS_ALWAYS_UNAVAILABLE_APP_KEYS = new Set([...IOS_UNGUARDED_BROWSER_BUNDLE_IDS, IOS_STEAM_MOBILE_BUNDLE_ID].map((value) => value.toLowerCase()));
 const IOS_EXPLICIT_SEARCH_TERM_KEYS = new Set(DEFAULT_EXPLICIT_SEARCH_TERMS.map(normalizedExplicitSearchTerm));
 // The companion filter can recognize these typo variants directly. Avoid
 // spending seven scarce BuiltIn-filter URL slots per typo and displacing the
@@ -168,7 +169,7 @@ export function normalizeIosSettings(body: UnknownRecord = {}, existing: Partial
       ...normalizeBundleIds(body.blockedAppBundleIds ?? body.blockedApps ?? current.blockedAppBundleIds ?? [])
     ]),
     allowedAppBundleIds: normalizeBundleIds(body.allowedAppBundleIds ?? body.allowedApps ?? current.allowedAppBundleIds ?? DEFAULT_IOS_ALLOWED_APP_BUNDLE_IDS)
-      .filter((bundleId) => !IOS_UNGUARDED_BROWSER_BUNDLE_ID_KEYS.has(bundleId.toLowerCase())),
+      .filter((bundleId) => !IOS_ALWAYS_UNAVAILABLE_APP_KEYS.has(bundleId.toLowerCase())),
     deniedUrls: normalizeUrlList(body.deniedUrls ?? current.deniedUrls ?? []),
     allowedUrls: normalizeUrlList(body.allowedUrls ?? current.allowedUrls ?? []),
     focusedSocial: normalizeFocusedSocialSettings(body.focusedSocial ?? current.focusedSocial, current.focusedSocial),

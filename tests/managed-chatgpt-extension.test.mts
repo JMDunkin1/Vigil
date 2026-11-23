@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BUILT_IN_CHROME_EXTENSION_ID } from "../src/defaults.js";
+import { STORE_CHROME_EXTENSION_ID } from "../src/defaults.js";
 import { parsePlist } from "../src/plist.js";
 import { CHATGPT_POLICY_DOMAIN, CHROME_WEB_STORE_UPDATE_URL, compareExtensionVersions, managedChatgptProfile, prepareExtensionRecovery, prepareExtensionRelease, verifyExtensionRelease } from "../src/managedChatgptExtension.js";
 import type { ManagedClientRehearsal } from "../src/managedChatgptExtension.js";
@@ -31,7 +31,8 @@ try {
   await mkdir(join(source, "_metadata"));
   await writeFile(join(source, "_metadata", "ignored.json"), "{}\n");
   const baselineDirectory = join(root, "baseline");
-  const baseline = await prepareExtensionRelease(source, baselineDirectory);
+  const { publicKey: storePublicKey } = JSON.parse(await readFile("build/browser-store.json", "utf8"));
+  const baseline = await prepareExtensionRelease(source, baselineDirectory, { storePublicKey });
   assert.equal(baseline.kind, "unsigned-store-upload", "a ZIP must never claim to be a signed installable CRX");
   assert.deepEqual(await verifyExtensionRelease(baselineDirectory), baseline);
   assert.equal(baseline.files.some(file => file.path.includes("_metadata")), false);
@@ -48,16 +49,16 @@ try {
   }
   assert.equal(compareExtensionVersions("1.2", "1.2.0.0"), 0);
   assert.equal(compareExtensionVersions("0.3.100", "0.3.99"), 1);
-  const publication = { extensionId: BUILT_IN_CHROME_EXTENSION_ID, published: true, publishedVersion: baseline.version };
+  const publication = { extensionId: STORE_CHROME_EXTENSION_ID, published: true, publishedVersion: baseline.version };
   assert.throws(() => managedChatgptProfile(baseline, { ...publication, published: false }, { locked: false }), /not recorded as published/);
   assert.throws(() => managedChatgptProfile(baseline, { ...publication, publishedVersion: "0.3.13" }, { locked: false }), /not recorded as published/);
   const trial = parsePlist(managedChatgptProfile(baseline, publication, { locked: false })) as unknown as PolicyProfile;
   const trialSettings = trial.PayloadContent[0].PayloadContent[CHATGPT_POLICY_DOMAIN].Forced[0].mcx_preference_settings.ExtensionSettings;
-  assert.deepEqual(Object.keys(trialSettings), [BUILT_IN_CHROME_EXTENSION_ID], "no global extension or browser restrictions");
-  assert.equal(trialSettings[BUILT_IN_CHROME_EXTENSION_ID].installation_mode, "normal_installed");
-  assert.equal(trialSettings[BUILT_IN_CHROME_EXTENSION_ID].update_url, CHROME_WEB_STORE_UPDATE_URL);
-  assert.equal(trialSettings[BUILT_IN_CHROME_EXTENSION_ID].override_update_url, true);
-  assert.equal(trialSettings[BUILT_IN_CHROME_EXTENSION_ID].minimum_version_required, undefined, "version floors must not obstruct recovery");
+  assert.deepEqual(Object.keys(trialSettings), [STORE_CHROME_EXTENSION_ID], "no global extension or browser restrictions");
+  assert.equal(trialSettings[STORE_CHROME_EXTENSION_ID].installation_mode, "normal_installed");
+  assert.equal(trialSettings[STORE_CHROME_EXTENSION_ID].update_url, CHROME_WEB_STORE_UPDATE_URL);
+  assert.equal(trialSettings[STORE_CHROME_EXTENSION_ID].override_update_url, true);
+  assert.equal(trialSettings[STORE_CHROME_EXTENSION_ID].minimum_version_required, undefined, "version floors must not obstruct recovery");
   assert.equal(trial.PayloadRemovalDisallowed, false);
   assert.throws(() => managedChatgptProfile(baseline, publication, { locked: true }), /actual ChatGPT update and recovery/);
   const now = new Date("2026-10-08T21:15:00Z");
@@ -68,7 +69,7 @@ try {
       restoredContentSha256: baseline.contentSha256, deliveredVersion: "0.3.16", passed: true }
   };
   // A real update must change versions, so use a separately packaged candidate.
-  const candidate = await prepareExtensionRelease(source, join(root, "candidate"), { version: "0.3.15" });
+  const candidate = await prepareExtensionRelease(source, join(root, "candidate"), { version: "0.3.15", storePublicKey });
   rehearsal.update.toVersion = candidate.version;
   rehearsal.update.payloadSha256 = candidate.payloadSha256;
   rehearsal.recovery.fromVersion = candidate.version;

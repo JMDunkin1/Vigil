@@ -12,6 +12,9 @@ import { now } from "./test-helpers.mjs";
 {
   const state = defaultState();
   const block = buildHostsBlock(state);
+  const blockedNames = new Set(block.split("\n").filter(line => line.startsWith("0.0.0.0 ")).map(line => line.slice(8)));
+  for (const host of ["store.steampowered.com", "steamcommunity.com", "www.steamcommunity.com"]) assert.ok(blockedNames.has(host));
+  for (const host of ["steampowered.com", "login.steampowered.com", "api.steampowered.com", "steamcontent.com"]) assert.ok(!blockedNames.has(host));
   const hosts = `127.0.0.1 localhost\n\n${block}\n\n255.255.255.255 broadcasthost\n`;
   assert.equal(hostsBlockMatches(extractHostsBlock(hosts), block), true);
   assert.match(block, /0\.0\.0\.0 pornhub\.com/);

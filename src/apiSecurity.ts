@@ -2,7 +2,7 @@ import { youtubeTokenMatches } from "./youtubeConnection.js";
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { truthy } from "./booleans.js";
-import { BUILT_IN_CHROME_EXTENSION_ID } from "./defaults.js";
+import { BUILT_IN_CHROME_EXTENSION_ID, STORE_CHROME_EXTENSION_ID } from "./defaults.js";
 import type { UnknownRecord } from "./types.js";
 
 export const CONTROL_INTENT_HEADER = "x-vigil-intent";
@@ -355,6 +355,7 @@ function isTrustedExtensionOrigin(value: string): boolean {
 function configuredExtensionOrigins(): Set<string> {
   const origins = [
     ...extensionIdOrigins([BUILT_IN_CHROME_EXTENSION_ID]),
+    `chrome-extension://${STORE_CHROME_EXTENSION_ID}`,
     ...csvEnv("VIGIL_EXTENSION_ORIGINS"),
     ...csvEnv("VIGIL_EXTENSION_ORIGIN"),
     ...extensionIdOrigins(csvEnv("VIGIL_EXTENSION_IDS")),
