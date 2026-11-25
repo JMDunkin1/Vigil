@@ -53,6 +53,14 @@ assert.equal(phoneBlocklistMatchesHost(decoded, "child.nested.example.com"), "ne
 assert.equal(phoneBlocklistMatchesHost(decoded, "allowed.example.edu"), "");
 assert.equal(phoneBlocklistMatchesHost(decoded, "notexample.com"), "");
 
+// Cross several encoder slabs and sparse-index blocks, including a partial
+// final block. The decoder independently checks every serialized block offset.
+const manyDomains = Array.from({ length: 50_003 }, (_, index) => `site-${index}.example.net`);
+const large = buildPhoneBlocklistArtifact({ ...input, domains: manyDomains, sourceDomainCount: manyDomains.length });
+assert.ok(large.metadata.payloadBytes > 2 * 64 * 1024);
+assert.deepEqual(decodePhoneBlocklistArtifact(large.bytes).reversedDomains,
+  manyDomains.map(domain => domain.split(".").reverse().join(".")).sort());
+
 const tampered = Buffer.from(first.bytes);
 tampered[tampered.length - 1] ^= 0xff;
 assert.throws(() => decodePhoneBlocklistArtifact(tampered), /integrity check failed/);

@@ -157,7 +157,7 @@ if (redditReviewHost(location.href)) {
 
 function installReviewReader(post: string): void {
   const hidden = "[data-vigil-review-hidden], header, nav, aside, footer, [role='navigation'], [role='search'], #header, #sr-header-area, .side, .footer-parent, reddit-search-large, reddit-search-small, shreddit-composer, shreddit-recommendation-feed, shreddit-related-posts, [slot='right-sidebar'], [slot='left-sidebar'], #right-sidebar-container, #left-sidebar-container, textarea, [contenteditable='true'], input[type='search'], .arrow, .reply-button, .commentarea > form";
-  const roots = new Set<Document | ShadowRoot>();
+  const roots = new Map<Document | ShadowRoot, MutationObserver>();
   const styles = new WeakMap<Document | ShadowRoot, HTMLStyleElement>();
   const labels = new WeakMap<HTMLAnchorElement, HTMLSpanElement>();
   const metadata = new WeakMap<Element, HTMLDivElement>();
@@ -181,14 +181,19 @@ function installReviewReader(post: string): void {
   const scan = () => {
     queued = false;
     observe(document);
-    for (const root of roots) {
-      if (root instanceof ShadowRoot && !root.host.isConnected) { roots.delete(root); continue; }
+    for (const [root, observer] of roots) {
+      if (root instanceof ShadowRoot && !root.host.isConnected) {
+        observer.disconnect();
+        roots.delete(root);
+        continue;
+      }
       observe(root);
       for (const element of root.querySelectorAll("*")) if (element.shadowRoot) observe(element.shadowRoot);
       for (const anchor of root.querySelectorAll<HTMLAnchorElement>("a[href]")) {
-        if (redditReviewHost(anchor.href) && redditReviewPostId(anchor.href) !== post) hide(anchor);
+        const appControl = reviewAppControl(anchor);
+        if (appControl || (redditReviewHost(anchor.href) && redditReviewPostId(anchor.href) !== post)) hide(anchor);
         let label = labels.get(anchor);
-        if (identityLink(anchor) && !reviewAppControl(anchor) && anchor.textContent?.trim()) {
+        if (!appControl && identityLink(anchor) && anchor.textContent?.trim()) {
           if (!label) {
             label = document.createElement("span");
             label.setAttribute("data-vigil-review-label", "");
@@ -242,7 +247,6 @@ function installReviewReader(post: string): void {
       for (const button of root.querySelectorAll("button, [role='button']")) {
         if (reviewSocialControl(button)) hide(button);
       }
-      for (const anchor of root.querySelectorAll("a[href]")) if (reviewAppControl(anchor)) hide(anchor);
     }
   };
   const schedule = () => { if (!queued) { queued = true; queueMicrotask(scan); } };
@@ -256,8 +260,9 @@ function installReviewReader(post: string): void {
     }
     if (!style.isConnected) (root === document ? document.documentElement : root).append(style);
     if (roots.has(root)) return;
-    roots.add(root);
-    new MutationObserver(schedule).observe(root, { childList: true, subtree: true, attributes: true,
+    const observer = new MutationObserver(schedule);
+    roots.set(root, observer);
+    observer.observe(root, { childList: true, subtree: true, attributes: true,
       attributeFilter: ["href", "permalink", "content-href", "id", "data-fullname", "aria-label", "title", "author", "data-author", "slot"], characterData: true });
   };
   scan();

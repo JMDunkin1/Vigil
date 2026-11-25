@@ -157,11 +157,13 @@ struct NavigationFilter: Sendable {
         if blocklist?.matchingDomain(for: host) != nil {
             return .block(reason: "This website is blocked by Vigil.")
         }
-        let candidates = Self.decodedCandidates(url.absoluteString)
-        if rules.blockedURLFragments.contains(where: { fragment in
-            candidates.contains(where: { $0.contains(fragment.lowercased()) })
-        }) {
-            return .block(reason: "This page is blocked by Vigil.")
+        if !rules.blockedURLFragments.isEmpty {
+            let candidates = Self.decodedCandidates(url.absoluteString)
+            if rules.blockedURLFragments.contains(where: { fragment in
+                candidates.contains(where: { $0.contains(fragment.lowercased()) })
+            }) {
+                return .block(reason: "This page is blocked by Vigil.")
+            }
         }
         if BroadenedExplicitMedia.containsSemanticURL(url) {
             return .block(reason: "This page is blocked by Vigil.")
@@ -251,15 +253,17 @@ struct NavigationFilter: Sendable {
         return onSearchRoute && name.range(of: #"^(q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|p|k|s|wd|word|tags|tag)\[(\d*|q|query|searchquery|search_query|search|searchterm|search_term|keyword|keywords|term|text|word|tags|tag)\]$"#, options: .regularExpression) != nil
     }
 
+    private static let searchRouteExpression = try! NSRegularExpression(pattern: #"(?:^|/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=/|$)"#, options: .caseInsensitive)
+    private static let percentRunExpression = try! NSRegularExpression(pattern: "(?:%[0-9a-fA-F]{2})+")
+
     private static func searchRouteText(_ value: String) -> String? {
         var route = value
         if route.hasPrefix("#") { route.removeFirst() }
         if route.hasPrefix("!") { route.removeFirst() }
         route = String(route.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
         let path = decodedCandidates(route).last ?? route
-        let expression = try! NSRegularExpression(pattern: #"(?:^|/)(advancedsearch(?:\.(?:php|json|html|aspx))?|search(?:\.(?:php|json|html|aspx))?|results?|find|browse|tags?|tagged|hashtag|r|tag-[^/?#]+|catalog|products?|items?|collections?|categories?|galler(?:y|ies)|art|all|paintings|photography|drawings|sculpture)(?=/|$)"#, options: .caseInsensitive)
         let text = path as NSString
-        guard let match = expression.firstMatch(in: path, range: NSRange(location: 0, length: text.length)) else { return nil }
+        guard let match = searchRouteExpression.firstMatch(in: path, range: NSRange(location: 0, length: text.length)) else { return nil }
         let marker = text.substring(with: match.range(at: 1))
         let start = marker.hasPrefix("tag-") ? match.range(at: 1).location : NSMaxRange(match.range)
         return text.substring(from: start).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
@@ -309,9 +313,9 @@ struct NavigationFilter: Sendable {
     }
 
     private static func decodePercentRuns(_ value: String) -> String {
-        guard let expression = try? NSRegularExpression(pattern: "(?:%[0-9a-fA-F]{2})+") else { return value }
+        guard value.utf8.contains(0x25) else { return value }
         let result = NSMutableString(string: value)
-        let matches = expression.matches(in: value, range: NSRange(location: 0, length: (value as NSString).length))
+        let matches = percentRunExpression.matches(in: value, range: NSRange(location: 0, length: (value as NSString).length))
         for match in matches.reversed() {
             let encoded = result.substring(with: match.range)
             let decoded = encoded.removingPercentEncoding ?? bytewisePercentDecode(encoded)

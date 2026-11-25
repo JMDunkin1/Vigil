@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { normalizeUsageDay, syncDeviceUsageSnapshot } from "../src/usage.js";
+import { normalizeUsageDay, syncDeviceUsageSnapshot, usageLimitBuckets } from "../src/usage.js";
 import type { UsageSegment, UsageState } from "../src/types.js";
 
 const now = new Date(2026, 8, 17, 12);
@@ -55,6 +55,16 @@ for (let trial = 0; trial < 200; trial += 1) {
   assert.equal(normalized.totalSeconds, 100, "overlapping devices must count wall time only once");
   assert.deepEqual(normalized.apps, { Mac: 50, "First Phone": 20, "Second Phone": 30 },
     "phone priority and stable insertion order must survive overlap and removal of the first winner");
+}
+
+// Limit progress reads device counters even when their timelines overlap.
+{
+  const bucket = {
+    totalSeconds: 60, apps: { Safari: 60 }, sites: {}, opens: { apps: {}, sites: {} },
+    get segments(): UsageSegment[] { throw new Error("Limit counters must not traverse the timeline."); }
+  };
+  assert.deepEqual(usageLimitBuckets({ devices: { computer: bucket, phone: bucket } }).map(item => item.apps.Safari), [60, 60]);
+  assert.deepEqual(usageLimitBuckets({ apps: { Safari: 120 }, devices: {} }).map(item => item.apps.Safari), [120]);
 }
 
 console.log("Usage timeline efficiency regressions passed.");

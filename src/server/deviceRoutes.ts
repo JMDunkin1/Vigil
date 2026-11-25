@@ -7,8 +7,8 @@ import { activeLimitPolicy } from "../limits.js";
 import { assertProtectedEditAllowed } from "../protection.js";
 import { DATA_DIR, addEvent, saveState, saveUsage } from "../store.js";
 import { configuredIosPhoneProfileOptions } from "../iosUrlFilterServiceConfiguration.js";
-import type { VigilState, UnknownRecord, UsageBucket, UsageState } from "../types.js";
-import { normalizeUsageDay, syncDeviceUsageSnapshot, usageSummary } from "../usage.js";
+import type { VigilState, UnknownRecord, UsageState } from "../types.js";
+import { deviceUsageCounters, syncDeviceUsageSnapshot, usageSummary } from "../usage.js";
 import { readBody, sendDownload, sendJson } from "./http.js";
 import { publicIosState } from "./statePayload.js";
 
@@ -140,8 +140,7 @@ function evaluateDeviceLimitBlocks(
   now: Date
 ): string[] {
   const before = new Set((state.limitBlocks || []).filter((block) => new Date(block.until) > now).map((block) => block.id));
-  const day = normalizeUsageDay(usage[result.dayKey] || {});
-  const bucket = day.devices?.[result.device] as UsageBucket | undefined;
+  const bucket = deviceUsageCounters(usage[result.dayKey])[result.device];
   if (!bucket) return [];
 
   for (const [app, seconds] of Object.entries(bucket.apps || {})) {

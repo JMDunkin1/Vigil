@@ -393,7 +393,7 @@ if (redditReviewHost(location.href)) {
 }
 function installReviewReader(post) {
     const hidden = "[data-vigil-review-hidden], header, nav, aside, footer, [role='navigation'], [role='search'], #header, #sr-header-area, .side, .footer-parent, reddit-search-large, reddit-search-small, shreddit-composer, shreddit-recommendation-feed, shreddit-related-posts, [slot='right-sidebar'], [slot='left-sidebar'], #right-sidebar-container, #left-sidebar-container, textarea, [contenteditable='true'], input[type='search'], .arrow, .reply-button, .commentarea > form";
-    const roots = new Set();
+    const roots = new Map();
     const styles = new WeakMap();
     const labels = new WeakMap();
     const metadata = new WeakMap();
@@ -422,8 +422,9 @@ function installReviewReader(post) {
     const scan = () => {
         queued = false;
         observe(document);
-        for (const root of roots) {
+        for (const [root, observer] of roots) {
             if (root instanceof ShadowRoot && !root.host.isConnected) {
+                observer.disconnect();
                 roots.delete(root);
                 continue;
             }
@@ -432,10 +433,11 @@ function installReviewReader(post) {
                 if (element.shadowRoot)
                     observe(element.shadowRoot);
             for (const anchor of root.querySelectorAll("a[href]")) {
-                if (redditReviewHost(anchor.href) && redditReviewPostId(anchor.href) !== post)
+                const appControl = reviewAppControl(anchor);
+                if (appControl || (redditReviewHost(anchor.href) && redditReviewPostId(anchor.href) !== post))
                     hide(anchor);
                 let label = labels.get(anchor);
-                if (identityLink(anchor) && !reviewAppControl(anchor) && anchor.textContent?.trim()) {
+                if (!appControl && identityLink(anchor) && anchor.textContent?.trim()) {
                     if (!label) {
                         label = document.createElement("span");
                         label.setAttribute("data-vigil-review-label", "");
@@ -500,9 +502,6 @@ function installReviewReader(post) {
                 if (reviewSocialControl(button))
                     hide(button);
             }
-            for (const anchor of root.querySelectorAll("a[href]"))
-                if (reviewAppControl(anchor))
-                    hide(anchor);
         }
     };
     const schedule = () => { if (!queued) {
@@ -522,8 +521,9 @@ function installReviewReader(post) {
             (root === document ? document.documentElement : root).append(style);
         if (roots.has(root))
             return;
-        roots.add(root);
-        new MutationObserver(schedule).observe(root, { childList: true, subtree: true, attributes: true,
+        const observer = new MutationObserver(schedule);
+        roots.set(root, observer);
+        observer.observe(root, { childList: true, subtree: true, attributes: true,
             attributeFilter: ["href", "permalink", "content-href", "id", "data-fullname", "aria-label", "title", "author", "data-author", "slot"], characterData: true });
     };
     scan();

@@ -47,11 +47,10 @@ export function buildPhoneBlocklistArtifact(input: {
   generatedAt: string;
   source: AdultBlocklistSourceSnapshot;
 }): PhoneBlocklistArtifact {
-  const domains = normalizedArtifactDomains(input.domains);
-  if (!domains.length) throw new Error("Phone blocklist cannot be generated from an empty domain list.");
-  if (domains.length > MAX_DOMAIN_COUNT) throw new Error(`Phone blocklist exceeds ${MAX_DOMAIN_COUNT} domains.`);
+  const reversedDomains = sortedReversedDomains(input.domains);
+  if (!reversedDomains.length) throw new Error("Phone blocklist cannot be generated from an empty domain list.");
+  if (reversedDomains.length > MAX_DOMAIN_COUNT) throw new Error(`Phone blocklist exceeds ${MAX_DOMAIN_COUNT} domains.`);
 
-  const reversedDomains = domains.map(reverseDomainLabels).sort(compareAscii);
   const encoded = encodeFrontCodedDomains(reversedDomains);
   const index = encodeBlockOffsets(encoded.blockOffsets);
   const metadata: PhoneBlocklistMetadata = {
@@ -139,20 +138,31 @@ export async function writePhoneBlocklistArtifactAtomically(path: string, artifa
 function encodeFrontCodedDomains(domains: string[]): { payload: Buffer; blockOffsets: number[] } {
   const chunks: Buffer[] = [];
   const blockOffsets: number[] = [];
-  let payloadOffset = 0;
+  // Write whole rows into slabs so a large list does not retain millions of
+  // individual header and suffix buffers until the final concatenation.
+  let slab = Buffer.allocUnsafe(64 * 1024);
+  let used = 0;
+  let completedBytes = 0;
   let previous = "";
   for (let index = 0; index < domains.length; index += 1) {
     const domain = domains[index];
-    if (index % PHONE_BLOCKLIST_BLOCK_SIZE === 0) blockOffsets.push(payloadOffset);
-    const prefixBytes = index % PHONE_BLOCKLIST_BLOCK_SIZE === 0 ? 0 : commonAsciiPrefix(previous, domain);
-    const suffix = Buffer.from(domain.slice(prefixBytes), "ascii");
-    if (prefixBytes > 255 || suffix.byteLength > 255) throw new Error("Phone blocklist domain is too long to encode.");
-    const rowHeader = Buffer.from([prefixBytes, suffix.byteLength]);
-    chunks.push(rowHeader, suffix);
-    payloadOffset += rowHeader.byteLength + suffix.byteLength;
+    const startsBlock = index % PHONE_BLOCKLIST_BLOCK_SIZE === 0;
+    if (startsBlock) blockOffsets.push(completedBytes + used);
+    const prefix = startsBlock ? 0 : commonAsciiPrefix(previous, domain);
+    const suffixLength = domain.length - prefix;
+    if (used + 2 + suffixLength > slab.length) {
+      chunks.push(slab.subarray(0, used));
+      completedBytes += used;
+      slab = Buffer.allocUnsafe(64 * 1024);
+      used = 0;
+    }
+    slab[used++] = prefix;
+    slab[used++] = suffixLength;
+    for (let offset = prefix; offset < domain.length; offset++) slab[used++] = domain.charCodeAt(offset);
     previous = domain;
   }
-  return { payload: Buffer.concat(chunks), blockOffsets };
+  chunks.push(slab.subarray(0, used));
+  return { payload: Buffer.concat(chunks, completedBytes + used), blockOffsets };
 }
 
 function encodeBlockOffsets(offsets: number[]): Buffer {
@@ -187,12 +197,12 @@ function decodeFrontCodedDomains(payload: Buffer, expectedCount: number): string
   return output;
 }
 
-function normalizedArtifactDomains(values: string[]): string[] {
+function sortedReversedDomains(values: string[]): string[] {
   const output = new Set<string>();
   for (const raw of values) {
     const domain = normalizeLookupHost(raw);
     if (!domain) throw new Error(`Invalid phone blocklist domain: ${raw}`);
-    output.add(domain);
+    output.add(reverseDomainLabels(domain));
   }
   return [...output].sort(compareAscii);
 }

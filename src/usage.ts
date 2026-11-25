@@ -126,18 +126,17 @@ export function syncDeviceUsageSnapshot(
     || (!segmentTimelineRolledOver && usageSegmentsRegressed(previous.segments, incoming.segments))
   );
   day.devices[device] = stale ? previous : incoming;
-  recomputeDayTotals(day);
+  const devices = recomputeDayTotals(day);
 
-  const aggregate = normalizeUsageDay(day);
   return {
     ok: true,
     stale,
     device,
     dayKey,
-    totalSeconds: aggregate.totalSeconds,
+    totalSeconds: day.totalSeconds,
     distractingSeconds: null,
-    deviceTotalSeconds: aggregate.devices[device]?.totalSeconds || 0,
-    devices: Object.fromEntries(Object.entries(aggregate.devices).map(([key, value]) => [key, {
+    deviceTotalSeconds: devices[device]?.totalSeconds || 0,
+    devices: Object.fromEntries(Object.entries(devices).map(([key, value]) => [key, {
       totalSeconds: value.totalSeconds || 0,
       appCount: Object.keys(value.apps || {}).length,
       siteCount: Object.keys(value.sites || {}).length,
@@ -406,8 +405,9 @@ function ensureDeviceDay(day: UsageDay, device: DeviceTarget): UsageBucket {
   return day.devices[device];
 }
 
-function recomputeDayTotals(day: UsageDay): void {
-  const aggregate = aggregateDeviceBuckets(normalizeDeviceBuckets(day.devices));
+function recomputeDayTotals(day: UsageDay): Record<string, UsageBucket> {
+  const devices = normalizeDeviceBuckets(day.devices);
+  const aggregate = aggregateDeviceBuckets(devices);
   day.totalSeconds = aggregate.totalSeconds;
   day.apps = aggregate.apps;
   day.sites = aggregate.sites;
@@ -418,12 +418,27 @@ function recomputeDayTotals(day: UsageDay): void {
   day.opens = aggregate.opens;
   day.deviceTotalsMode = USAGE_TOTALS_MODE;
   day.updatedAt = new Date().toISOString();
+  return devices;
 }
 
-function normalizeDeviceBuckets(devices: Record<string, Partial<UsageBucket>> = {}): Record<string, UsageBucket> {
+// Limits use each device's counters, including overlapping screen time.
+// Building the merged display timeline here would discard it immediately.
+export function usageLimitBuckets(day: Partial<UsageDay> = {}): UsageBucket[] {
+  const devices = Object.values(deviceUsageCounters(day));
+  return devices.length ? devices : [normalizeUsageDay({ ...day, devices: {} })];
+}
+
+export function deviceUsageCounters(day: Partial<UsageDay> = {}): Record<string, UsageBucket> {
+  return normalizeDeviceBuckets(day.devices, normalizeUsageCounters);
+}
+
+function normalizeDeviceBuckets(
+  devices: Record<string, Partial<UsageBucket>> = {},
+  normalize: (bucket: Partial<UsageBucket>) => UsageBucket = normalizeUsageBucket
+): Record<string, UsageBucket> {
   const output: Record<string, UsageBucket> = {};
   for (const [device, bucket] of Object.entries(devices || {})) {
-    const normalized = normalizeUsageBucket(bucket);
+    const normalized = normalize(bucket);
     if (hasUsageData(normalized)) output[normalizeUsageDevice(device)] = normalized;
   }
   return output;
@@ -431,6 +446,15 @@ function normalizeDeviceBuckets(devices: Record<string, Partial<UsageBucket>> = 
 
 function normalizeUsageBucket(bucket: RawUsageBucket = {}, now = new Date()): UsageBucket {
   const normalizedSegments = normalizeUsageSegments(bucket.segments);
+  return {
+    ...normalizeUsageCounters(bucket),
+    segments: normalizedSegments.segments,
+    segmentTimelineComplete: bucket.segmentTimelineComplete === true && normalizedSegments.complete ? true : undefined,
+    updatedAt: String(bucket.updatedAt || bucket.recordedAt || now.toISOString())
+  };
+}
+
+function normalizeUsageCounters(bucket: RawUsageBucket = {}): UsageBucket {
   const apps = secondsMap(bucket.apps);
   const sites = secondsMap(bucket.sites);
   const contexts = contextMap(bucket.contexts);
@@ -451,10 +475,7 @@ function normalizeUsageBucket(bucket: RawUsageBucket = {}, now = new Date()): Us
     contextVersion: bucket.contextVersion === 1 && usageContextsComplete(contexts, apps, sites) ? 1 : undefined,
     openContextVersion: bucket.openContextVersion === 1 && openContextsComplete(openContexts, opens) ? 1 : undefined,
     legacyTargetAggregation: bucket.legacyTargetAggregation === "sum" ? "sum" : undefined,
-    opens,
-    segments: normalizedSegments.segments,
-    segmentTimelineComplete: bucket.segmentTimelineComplete === true && normalizedSegments.complete ? true : undefined,
-    updatedAt: String(bucket.updatedAt || bucket.recordedAt || now.toISOString())
+    opens
   };
 }
 

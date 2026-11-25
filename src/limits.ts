@@ -1,5 +1,5 @@
 import { endOfToday, dateKey } from "./time.js";
-import { normalizeUsageDay, usageContextSample } from "./usage.js";
+import { usageContextSample, usageLimitBuckets } from "./usage.js";
 import { parseBoolean } from "./booleans.js";
 import { clampInteger, normalizeTextList as normalizeTargets, normalizeWeekdays as normalizeDays } from "./normalizers.js";
 import {
@@ -14,7 +14,7 @@ import {
   normalizeLockLevel,
   normalizeHost
 } from "./policy.js";
-import type { ActivePolicy, DeviceTarget, DeviceTargetInput, LimitBlock, LimitProgress, LimitRule, VigilState, UsageSample, UsageState } from "./types.js";
+import type { ActivePolicy, DeviceTarget, DeviceTargetInput, LimitBlock, LimitProgress, LimitRule, VigilState, UsageBucket, UsageSample, UsageState } from "./types.js";
 
 type TargetLists = { apps: string[]; sites: string[] };
 type GuardOptions = { strictUnsupportedBrowserGuard?: boolean };
@@ -26,6 +26,7 @@ export function activeLimitPolicy(state: VigilState, usage: UsageState, sample: 
   const activeBlock = findActiveBlock(state, sample, now);
   if (activeBlock) return policyFromBlock(state, activeBlock);
 
+  let buckets: UsageBucket[] | undefined;
   for (const rule of (state.limitRules || []).filter((item) => item.enabled)) {
     if (!ruleAppliesToday(rule, now) || !sampleMatchesRule(rule, sample, guardOptions(state))) continue;
     if (!limitRuleContextMatches(state, rule, sample, now)) continue;
@@ -41,7 +42,8 @@ export function activeLimitPolicy(state: VigilState, usage: UsageState, sample: 
       return policyFromBlock(state, activeRuleBlock);
     }
 
-    const rawProgress = rawRuleProgress(usage, rule, now);
+    buckets ??= usageLimitBuckets(usage[dateKey(now)]);
+    const rawProgress = rawRuleProgress(buckets, rule);
     const progress = adjustedRuleProgress(rawProgress, rule, now);
     const hit = rule.type === "open"
       ? (progress.opens ?? 0) > (rule.unlocksAllowed || 0)
@@ -59,9 +61,11 @@ export function activeLimitPolicy(state: VigilState, usage: UsageState, sample: 
 export function limitSummary(state: VigilState, usage: UsageState, now = new Date()) {
   cleanupExpiredLimitBlocks(state, now);
   const activeBlocks = activeLimitBlocks(state, now);
+  const rules = state.limitRules || [];
+  const buckets = rules.length ? usageLimitBuckets(usage[dateKey(now)]) : [];
   return {
-    rules: (state.limitRules || []).map((rule) => {
-      const progress = ruleProgress(usage, rule, now);
+    rules: rules.map((rule) => {
+      const progress = adjustedRuleProgress(rawRuleProgress(buckets, rule), rule, now);
       const limit = rule.type === "open" ? rule.unlocksAllowed || 0 : (rule.limitMinutes || 1) * 60;
       const used = rule.type === "open" ? (progress.opens ?? 0) : (progress.seconds ?? 0);
       return {
@@ -206,16 +210,9 @@ function findActiveBlock(state: VigilState, sample: UsageSample, now: Date): Lim
   });
 }
 
-function ruleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgress {
-  return adjustedRuleProgress(rawRuleProgress(usage, rule, now), rule, now);
-}
-
-function rawRuleProgress(usage: UsageState, rule: LimitRule, now: Date): LimitProgress {
-  const day = normalizeUsageDay(usage[dateKey(now)] || {});
+function rawRuleProgress(buckets: UsageBucket[], rule: LimitRule): LimitProgress {
   const lists = targetListsForRule(rule);
-  const deviceBuckets = Object.values(day.devices || {});
-  if (!deviceBuckets.length) return bucketRuleProgress(day, lists);
-  return deviceBuckets.reduce<LimitProgress>((total, bucket) => {
+  return buckets.reduce<LimitProgress>((total, bucket) => {
     const progress = bucketRuleProgress(bucket, lists);
     return {
       seconds: Number(total.seconds || 0) + Number(progress.seconds || 0),

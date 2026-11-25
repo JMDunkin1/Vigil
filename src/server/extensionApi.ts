@@ -64,7 +64,14 @@ export async function handleExtensionApiRoute(
     }
     if (body.action === "browser-return") {
       const candidates = Array.isArray(body.candidates) ? body.candidates.slice(0, 20) : [];
-      const destination = candidates.map(candidate => safeBackUrl(state, context.usage, candidate, null, new Date())).find(Boolean) || "about:blank";
+      let destination = "about:blank";
+      for (const candidate of candidates) {
+        const allowed = safeBackUrl(state, context.usage, candidate, null, new Date());
+        if (allowed) {
+          destination = allowed;
+          break;
+        }
+      }
       const inspected = typeof body.inspect === "string"
         ? evaluateExtensionCheck(structuredClone(state), structuredClone(context.usage), { url: body.inspect, event: "inspection" }) : null;
       const interstitial = inspected?.blocked && inspected.hostname !== "reddit-review-only" ? inspected.redirectUrl : undefined;
