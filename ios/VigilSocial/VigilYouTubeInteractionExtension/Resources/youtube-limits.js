@@ -525,6 +525,17 @@
     return entries.length > 0 && entries.every(entry => entry.messageRenderer
       && /^No videos in this playlist(?: yet)?[.!]?$/i.test(textOf(entry.messageRenderer.text).trim()));
   }
+  function thumbnailWatchStatus(video) {
+    const legacy = video.thumbnailOverlays;
+    const modern = video.thumbnail?.thumbnailViewModel?.overlays;
+    const overlays = [...(Array.isArray(legacy) ? legacy : []), ...(Array.isArray(modern) ? modern : [])];
+    for (const overlay of overlays) {
+      const percent = overlay?.thumbnailOverlayResumePlaybackRenderer?.percentDurationWatched
+        ?? overlay?.thumbnailBottomOverlayViewModel?.progressBar?.thumbnailOverlayProgressBarViewModel?.startPercent;
+      if (Number.isFinite(percent) && percent > 0 && percent <= 100) return percent === 100 ? 'watched' : 'in-progress';
+    }
+    return '';
+  }
   function watchLaterPage(data, continuation = false, editing = false) {
     const lists = [];
     const visit = value => {
@@ -556,9 +567,11 @@
         const images = video.thumbnail?.thumbnails;
         const thumbnail = Array.isArray(images) && images.findLast(image => typeof image?.url === 'string'
           && ['vi', 'vi_webp'].some(path => image.url.startsWith(`https://i.ytimg.com/${path}/${video.videoId}/`)))?.url;
+        const watchStatus = thumbnailWatchStatus(video);
         cards.push({ videoId: video.videoId, title: textOf(video.title).trim().slice(0, 200) || video.videoId,
           ...(channel ? { channel } : {}), ...(/^\d+(?::\d{2}){1,2}$/.test(duration) ? { duration } : {}),
           ...(thumbnail ? { thumbnail } : {}),
+          ...(watchStatus ? { watchStatus } : {}),
           ...(editing ? { removal: watchLaterRemoval(video) } : {}) });
       } else if (item.continuationItemRenderer) {
         const next = watchLaterContinuationTokens(item.continuationItemRenderer.continuationEndpoint);
@@ -883,6 +896,7 @@
             revision: before.watchLater?.revision || 0, day: before.day });
           watchLaterSnapshot = { ...snapshot, day: reply.day };
           watchLaterCheckedAt = performance.now();
+          render();
           if (watchLaterError && message?.textContent === watchLaterError) show('');
           watchLaterError = '';
           return watchLaterSnapshot;
@@ -1182,6 +1196,8 @@
         .poster{display:grid;place-items:center;position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;
           background:var(--vigil-finished-raised,#242424)}
         .poster img{display:block;width:100%;height:100%;object-fit:cover}
+        .poster[data-watch-progress] img{filter:grayscale(1);opacity:.55}
+        .watch-progress{position:absolute;top:8px;left:8px;padding:2px 5px;border-radius:3px;background:#000d;color:#fff;font-size:12px}
         .duration{position:absolute;right:8px;bottom:8px;padding:2px 5px;border-radius:3px;background:#000d;color:#fff;font:600 12px/1.3 Roboto,Arial,sans-serif}
         .card[data-inactive] .poster{background:none;border:1px solid #8888}
         .card-status,.byline{color:var(--vigil-finished-secondary,#aaa);font-size:13px}
@@ -1226,7 +1242,7 @@
     // when a card or the heading changes.
     const signature = JSON.stringify([state.day, timeFinished, slots.map((slot, index) => [
       slot.videoId, slot.title, Boolean(slot.completed), slot.completed ? false : slot.removed,
-      details[index]?.channel, details[index]?.duration, details[index]?.thumbnail
+      details[index]?.channel, details[index]?.duration, details[index]?.thumbnail, details[index]?.watchStatus
     ])]);
     if (signature === finishedSignature) { finishedScreen.hidden = false; return; }
     finishedSignature = signature;
@@ -1261,7 +1277,7 @@
         status.setAttribute('aria-hidden', 'true');
         poster.append(status);
       } else {
-        const {channel, duration, thumbnail: playlistImage} = details[index] || {};
+        const {channel, duration, thumbnail: playlistImage, watchStatus} = details[index] || {};
         const thumbnail = document.createElement('img');
         thumbnail.alt = ''; thumbnail.decoding = 'async'; thumbnail.referrerPolicy = 'no-referrer';
         const defaultImage = `https://i.ytimg.com/vi/${encodeURIComponent(slot.videoId)}/mqdefault.jpg`;
@@ -1271,6 +1287,12 @@
         });
         thumbnail.src = playlistImage || defaultImage;
         poster.append(thumbnail);
+        if (watchStatus) {
+          poster.setAttribute('data-watch-progress', watchStatus);
+          const status = document.createElement('span'); status.className = 'watch-progress';
+          status.textContent = watchStatus === 'watched' ? 'Watched' : 'In progress';
+          poster.append(status);
+        }
         if (duration) {
           const runtime = document.createElement('span'); runtime.className = 'duration'; runtime.textContent = duration;
           poster.append(runtime);
@@ -1358,6 +1380,12 @@
       style.textContent += 'html[data-vigil-standard-feed] ytd-masthead #background,html[data-vigil-standard-feed] ytd-app #frosted-glass{height:var(--ytd-masthead-height,56px)!important;min-height:0!important;overflow:hidden!important}html[data-vigil-standard-feed] ytd-rich-grid-renderer #header{display:none!important}';
       style.textContent += 'html[data-vigil-saves-finished] body>:not(#vigil-youtube-finished):not(#vigil-youtube-limits):not(#vigil-youtube-notice):not(#vigil-watch-later-tools):not(style):not(script){display:none!important}html[data-vigil-saves-full] :is(ytd-watch-flexy #secondary,ytd-watch-next-secondary-results-renderer,ytm-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,.ytp-pause-overlay,.ytp-suggestion-set){display:none!important}';
       style.textContent += '#vigil-youtube-limits[data-duplicate-status]{display:none!important}';
+      // Native thumbnails already carry YouTube's account-wide watch signal.
+      // Style the image so the progress bar, links, and menus remain usable.
+      style.textContent += `:is(ytd-thumbnail,ytm-thumbnail,ytm-video-thumbnail,yt-thumbnail-view-model,a#thumbnail,.video-thumbnail-container):has(
+        ytd-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytw-thumbnail-overlay-resume-playback-renderer:not([hidden]),
+        .resume-playback-background,.ytThumbnailOverlayProgressBarHostWatchedProgressBar,.yt-thumbnail-overlay-progress-bar-view-model-wiz__progress-bar
+      ) img{filter:grayscale(1)!important;opacity:.55!important}`;
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
       // The mobile topic bar is fixed, but its wrapper still reserves 50–62px

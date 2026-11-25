@@ -8,6 +8,7 @@ async function main() {
   await app.whenReady();
   const win = new BrowserWindow({show:false, width:1200, height:850, webPreferences:{sandbox:true}});
   let slots = [];
+  let accountProgress = [];
   await win.webContents.session.protocol.handle('https', request => {
     const url = new URL(request.url);
     const path = url.pathname;
@@ -16,8 +17,13 @@ async function main() {
         headers: { 'Content-Type': 'image/png' }
       });
     }
-    const playlist = { contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: slots.filter(Boolean).map(slot => ({
-      playlistVideoRenderer: { videoId: slot.videoId, title: { simpleText: slot.title } }
+    const playlist = { contents: { playlistVideoListRenderer: { playlistId: 'WL', contents: slots.filter(Boolean).map((slot, index) => ({
+      playlistVideoRenderer: { videoId: slot.videoId, title: { simpleText: slot.title },
+        ...(index === 0 ? { thumbnailOverlays: [{ thumbnailOverlayResumePlaybackRenderer: { percentDurationWatched: accountProgress[index] } }] }
+          : { thumbnail: { thumbnailViewModel: { overlays: [{ thumbnailBottomOverlayViewModel: {
+            progressBar: { thumbnailOverlayProgressBarViewModel: { startPercent: accountProgress[index] } }
+          } }] } } })
+      }
     })) } } };
     if (path === '/playlist') return new Response('ytcfg.set({"LOGGED_IN":true,"DATASYNC_ID":"fixture","INNERTUBE_CONTEXT":{"client":{}}});var ytInitialData=' + JSON.stringify(playlist) + ';');
     if (path === '/youtubei/v1/browse') return Response.json(playlist);
@@ -38,12 +44,23 @@ async function main() {
   };
   for (const native of [false,true]) {
     slots=[];
+    accountProgress=[];
     win.setSize(native ? 390 : 1200, native ? 844 : 850);
     await win.loadURL('https://www.youtube.com/'); await install(native);
     assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.getElementById('frosted-glass')).height`),'56px');
     assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.getElementById('header')).display`),'none');
     assert.equal(await win.webContents.executeJavaScript(`[...document.querySelectorAll('ytd-rich-item-renderer')].filter(node=>getComputedStyle(node).display!=='none').length`),18, JSON.stringify(await win.webContents.executeJavaScript(`({requests:__testRequests,attrs:document.documentElement.outerHTML.slice(0,200),card:document.querySelector('ytd-rich-item-renderer').outerHTML})`)));
     assert.equal(await win.webContents.executeJavaScript(`__testRequests.some(body=>body.action==='feed')`),false,'a feed refresh never changes the daily ledger');
+    const nativeThumbnails = () => win.webContents.executeJavaScript(`[...document.querySelectorAll('ytd-rich-grid-media > a img')].slice(0,3).map(image=>getComputedStyle(image).filter)`);
+    await win.webContents.executeJavaScript(`[...document.querySelectorAll('ytd-rich-grid-media > a')].slice(0,2).forEach((link,index)=>{
+      link.id='thumbnail';
+      link.insertAdjacentHTML('beforeend',index===0
+        ? '<ytd-thumbnail-overlay-resume-playback-renderer></ytd-thumbnail-overlay-resume-playback-renderer>'
+        : '<yt-thumbnail-view-model><div class="ytThumbnailOverlayProgressBarHostWatchedProgressBar"></div></yt-thumbnail-view-model>');
+    });`);
+    assert.deepEqual(await nativeThumbnails(),['grayscale(1)','grayscale(1)','none']);
+    await win.webContents.executeJavaScript(`document.querySelector('ytd-thumbnail-overlay-resume-playback-renderer').remove();`);
+    assert.deepEqual(await nativeThumbnails(),['none','grayscale(1)','none']);
     // Drive the normal status transport with the mounted handler's next response.
     slots=ids.slice(0,4).map(videoId=>({videoId,title:['The science of building better habits','How a tiny team built something remarkable','A closer look at the world around us','The ideas worth taking your time with'][ids.indexOf(videoId)],locked:true,removed:false}));
     await win.webContents.executeJavaScript(`__testReply=${JSON.stringify(status())}; window.postMessage({type:'VIGIL_YOUTUBE_REPLY'},location.origin);`);
@@ -56,6 +73,15 @@ async function main() {
     assert.equal(complete.links.length,4);
     assert.deepEqual(complete.images,slots.map(slot=>[`https://i.ytimg.com/vi/${slot.videoId}/mqdefault.jpg`,1]));
     assert.deepEqual(complete.titles,slots.map(slot=>slot.title));
+    accountProgress=[100,42,0,101];
+    await win.webContents.executeJavaScript(`window.dispatchEvent(new Event('focus'))`);
+    await wait(650);
+    const savedThumbnailStates = await win.webContents.executeJavaScript(`[...testShadows.get(document.getElementById('vigil-youtube-finished')).querySelectorAll('a.card')].map(card=>[
+      new URL(card.href).searchParams.get('v'), getComputedStyle(card.querySelector('img')).filter, card.querySelector('.watch-progress')?.textContent || ''
+    ])`);
+    assert.deepEqual(savedThumbnailStates, [
+      [ids[0], 'grayscale(1)', 'Watched'], [ids[1], 'grayscale(1)', 'In progress'], [ids[2], 'none', ''], [ids[3], 'none', '']
+    ], 'account progress changes the card appearance while keeping its playback link');
     const appearance = await win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),main=root.querySelector('main');window.fixtureEntrance=main.getAnimations()[0];return {background:getComputedStyle(host).backgroundColor,text:getComputedStyle(main).color,entry:getComputedStyle(root.querySelector('a')).backgroundColor,animation:getComputedStyle(main).animationName}})()`);
     assert.equal(appearance.background,'rgb(15, 15, 15)','native theme wins over the page’s white section styling');
     assert.equal(appearance.text,'rgb(241, 241, 241)');
