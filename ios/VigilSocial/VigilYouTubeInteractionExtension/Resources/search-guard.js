@@ -49,7 +49,7 @@ const checkSearchBreakBeforeNavigation = (() => {
             warningID = limitedSearchPage(url) ? crypto.randomUUID() : "";
             reported = false;
         }
-        const notice = !reported && limitedSearchPage(url) ? findNotice() : "";
+        const notice = !reported && warningID ? findNotice() : "";
         if (!notice && warningsOnly)
             return;
         if (pending)
@@ -81,10 +81,11 @@ const checkSearchBreakBeforeNavigation = (() => {
         // Read visible, standalone notice text, never a search query, result title,
         // quoted code sample, or a result snippet describing this feature.
         for (const node of document.querySelectorAll("[role='alert'], [role='alert'] *, [role='status'], [role='status'] *, [role='dialog'], [role='dialog'] *, [aria-live], [aria-live] *, #taw *, #topstuff *, #botstuff *, #search div, #search span, #search p")) {
+            if (node.closest("#rso, article, a, h3, input, textarea, pre, code, [hidden], [aria-hidden='true']"))
+                continue;
             const text = node.innerText?.trim() || "";
             if (!limitedSearchWarning(text) || !node.getClientRects().length
-                || getComputedStyle(node).visibility !== "visible"
-                || node.closest("#rso, article, a, h3, input, textarea, pre, code, [hidden], [aria-hidden='true']"))
+                || getComputedStyle(node).visibility !== "visible")
                 continue;
             let resultCard = false;
             for (let parent = node.parentElement; parent && parent !== document.body && parent !== document.documentElement && !["search", "topstuff", "botstuff", "taw"].includes(parent.id); parent = parent.parentElement) {
@@ -1440,21 +1441,18 @@ function readerFileDestinations(roots) {
     for (const root of roots) {
         const excluded = "nav, header, footer, aside, [role='navigation'], [role='complementary']";
         for (const anchor of root.querySelectorAll("a[href]")) {
-            if (anchor.closest(excluded))
-                continue;
             const file = sharedFileDestination(anchor.href, location.href);
-            if (file)
+            if (file && !anchor.closest(excluded))
                 files.add(file);
         }
         // PDFs and pastes can expose URLs as text instead of clickable anchors.
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
         for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-            if (node.parentElement?.closest(`${excluded}, script, style, noscript`))
+            const text = node.textContent || "";
+            if (!text.includes("http") || node.parentElement?.closest(`${excluded}, script, style, noscript`))
                 continue;
-            for (const file of sharedFileUrlsInText(node.textContent || "")) {
-                if (file)
-                    files.add(file);
-            }
+            for (const file of sharedFileUrlsInText(text))
+                files.add(file);
         }
     }
     return [...files];
@@ -1500,10 +1498,15 @@ function googleResultsWithSharedFileLinks() {
         const parent = node.parentElement;
         if (!parent || parent.closest("a[href], script, style, noscript, [hidden], [aria-hidden='true']"))
             continue;
+        const text = node.textContent || "";
+        const serviceMention = hasSharedFileSearchResultText(text);
+        const hasFileURL = text.includes("http") && sharedFileUrlsInText(text).length > 0;
+        if (!serviceMention && !hasFileURL)
+            continue;
         // Broader service mentions need a result card. Retain the existing full
         // shared-URL fallback for result layouts without a recognizable wrapper.
         const card = googleSearchResultContainer(parent);
-        if (card ? hasSharedFileSearchResultText(node.textContent || "") : sharedFileUrlsInText(node.textContent || "").length > 0) {
+        if (card ? serviceMention : hasFileURL) {
             matchingElements.add(card || parent);
         }
     }

@@ -17,7 +17,7 @@ export const checkSearchBreakBeforeNavigation: () => Promise<boolean> | undefine
     if (warningURL !== url) {
       warningURL = url; warningID = limitedSearchPage(url) ? crypto.randomUUID() : ""; reported = false;
     }
-    const notice = !reported && limitedSearchPage(url) ? findNotice() : "";
+    const notice = !reported && warningID ? findNotice() : "";
     if (!notice && warningsOnly) return;
     if (pending) return pending.then(blocked => blocked || check(warningsOnly) || false);
     if (!notice && Date.now() - lastStatusAt < 1000) return;
@@ -44,10 +44,10 @@ export const checkSearchBreakBeforeNavigation: () => Promise<boolean> | undefine
     // Read visible, standalone notice text, never a search query, result title,
     // quoted code sample, or a result snippet describing this feature.
     for (const node of document.querySelectorAll<HTMLElement>("[role='alert'], [role='alert'] *, [role='status'], [role='status'] *, [role='dialog'], [role='dialog'] *, [aria-live], [aria-live] *, #taw *, #topstuff *, #botstuff *, #search div, #search span, #search p")) {
+      if (node.closest("#rso, article, a, h3, input, textarea, pre, code, [hidden], [aria-hidden='true']")) continue;
       const text = node.innerText?.trim() || "";
       if (!limitedSearchWarning(text) || !node.getClientRects().length
-          || getComputedStyle(node).visibility !== "visible"
-          || node.closest("#rso, article, a, h3, input, textarea, pre, code, [hidden], [aria-hidden='true']")) continue;
+          || getComputedStyle(node).visibility !== "visible") continue;
       let resultCard = false;
       for (let parent = node.parentElement; parent && parent !== document.body && parent !== document.documentElement && !["search", "topstuff", "botstuff", "taw"].includes(parent.id); parent = parent.parentElement) {
         if (parent.querySelector("a h3")) { resultCard = true; break; }

@@ -27,7 +27,7 @@ import Foundation
                 _ = try await page.evaluateJavaScript("document.getElementById('search').dispatchEvent(new KeyboardEvent('keydown',{key:'a',bubbles:true}));true;")
                 let sample = try await page.evaluateJavaScript("(()=>{metrics={matches:0,fullScans:0};const start=performance.now();for(let i=0;i<5;i++)dispatchEvent(new Event('focus'));return JSON.stringify({...metrics,ms:performance.now()-start});})()")
                 print("\(host) health sample: \(String(describing: sample))")
-                try await check(page, "metrics.matches<1000&&metrics.fullScans===5", "unchanged classifications and full health inspections")
+                try await check(page, "metrics.matches<50&&metrics.fullScans===5", "unchanged classifications and full health inspections")
                 _ = try await page.evaluateJavaScript("""
                 metrics={matches:0,fullScans:0};for(let i=0;i<60;i++){document.getElementById('clock').style.transform='translateX('+i+'px)';document.getElementById('clock').firstChild.data='0:'+i;document.getElementById('player').className='state-'+i;}for(let i=0;i<30;i++)document.getElementById('search').dispatchEvent(new KeyboardEvent('keydown',{key:'a',bubbles:true,cancelable:true}));true;
                 """)

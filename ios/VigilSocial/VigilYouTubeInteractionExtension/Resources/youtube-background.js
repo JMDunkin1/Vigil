@@ -246,7 +246,9 @@ function limitedSearchPage(value) {
                 : await (await globalThis.fetchVigil("/api/extension/youtube", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
             if (!result?.ok)
                 throw new Error("Search break authority unavailable");
-            await api.storage.local.set({ [cacheKey]: result.until || 0 });
+            const until = result.until || 0;
+            if (status?.result.until !== until)
+                await api.storage.local.set({ [cacheKey]: until });
             status = { at: now, result };
             return result;
         }

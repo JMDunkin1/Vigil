@@ -44,7 +44,7 @@ async function main() {
     })()`);
     console.log(JSON.stringify({ coldMs, fullHealthScans: steady }));
     assert.equal(steady.fullScans, 5, 'each full health check shares one complete enumeration between both inspectors');
-    assert.ok(steady.matches < 1000, 'unchanged element text reuses classification without skipping inspection');
+    assert.ok(steady.matches < 50, 'unchanged element text reuses classification without skipping inspection');
 
     await win.webContents.executeJavaScript(`metrics={matches:0,fullScans:0};
       for(let i=0;i<60;i++){

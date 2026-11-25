@@ -75,6 +75,7 @@ let now = 1_000_000;
 let unavailable = false;
 const storage: Record<string, unknown> = {};
 const updates: number[] = [];
+let storageWrites = 0;
 const tabs = [{ id: 1, active: true, url: "https://www.google.com/search?q=trees" }, { id: 2, active: false, url: "https://example.org/" }];
 let listener: (message: unknown, sender: unknown, reply: (value: unknown) => void) => boolean;
 const api = {
@@ -84,7 +85,7 @@ const api = {
       if (unavailable) throw new Error("offline");
       return searchBreakAction(authority, body, now);
     } },
-  storage: { local: { get: async () => storage, set: async (values: Record<string, unknown>) => Object.assign(storage, values) } },
+  storage: { local: { get: async () => storage, set: async (values: Record<string, unknown>) => { storageWrites += 1; Object.assign(storage, values); } } },
   tabs: { query: async () => tabs, get: async (id: number) => tabs.find(tab => tab.id === id),
     update: async (id: number, value: { url: string }) => { updates.push(id); tabs.find(tab => tab.id === id)!.url = value.url; },
     onActivated: { addListener() {} } },
@@ -98,11 +99,18 @@ const sender = () => ({ url: tabs[0].url, frameId: 0, tab: tabs[0] });
 assert.equal((await message({ ...sender(), url: "https://evil.test/" })).ok, false);
 for (let i = 0; i < 3; i++) { now += 1000; await message(sender()); }
 assert.deepEqual(updates, [1, 2], "the break redirects every open browsing tab");
+assert.equal(storageWrites, 2, "only the initial status and the new break write the offline cache");
 const pageSender = { url: "safari-web-extension://vigil/search-break.html" };
 unavailable = true; now += 1000;
 assert.equal((await message(pageSender, "search-break-status")).blocked, true, "an offline authority cannot clear a cached active break");
 unavailable = false; now += 150_000;
 assert.equal((await message(pageSender, "search-break-status")).blocked, false);
+
+for (let i = 0; i < 60; i++) {
+  now += 1000;
+  await message(pageSender, "search-break-status");
+}
+assert.equal(storageWrites, 3, "expiry persists once and a minute of unchanged status causes no writes");
 
 // Exercise the document-start detector with visible notices, hidden markup,
 // result snippets, repaints, and same-document search navigations.

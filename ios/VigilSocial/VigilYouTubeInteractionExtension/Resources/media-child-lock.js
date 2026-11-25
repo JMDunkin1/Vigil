@@ -515,7 +515,7 @@ function googleSearchResultDestinations(anchor) {
   };
   // Classification depends only on this text and the document's fixed host.
   // Compare the current text every time so recycled cards are reclassified.
-  // Weak keys release detached cards; retain at most three short inputs per node.
+  // Weak keys release detached cards; retain at most four short inputs per node.
   const titleClassifications = new WeakMap();
   const explicitTitle = (value, element, field) => {
     const text = String(value || '');
@@ -620,7 +620,7 @@ function googleSearchResultDestinations(anchor) {
       }
     }
     for (const card of selectAll(root, cards)) {
-      if (explicitTitle(describe(card)) || adultWarning(card.textContent || '')
+      if (explicitTitle(describe(card), card, 'card') || adultWarning(card.textContent || '')
         || card.querySelector('[data-nsfw="true"], [data-adult="true"], [data-rating="adult"], [data-x-restrict="1"], [data-x-restrict="2"]')) conceal(card);
     }
     for (const element of elements) {
@@ -762,7 +762,13 @@ function googleSearchResultDestinations(anchor) {
     if (dirtyScopes.size > 64) { dirtyScopes.clear(); fullScanPending = true; }
   };
   const queueMutations = records => {
-    for (const record of records) queueScope(record.target);
+    const targets = new Set();
+    for (const record of records) {
+      if (fullScanPending) break;
+      if (targets.has(record.target)) continue;
+      targets.add(record.target);
+      queueScope(record.target);
+    }
   };
   const flushScopes = () => {
     const scopes = fullScanPending ? undefined : new Set(dirtyScopes);
