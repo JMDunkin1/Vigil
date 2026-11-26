@@ -28,6 +28,41 @@ const scenarios = modes.map(mode => ({name: `Interaction boundary: ${mode}`, htm
   {condition: 'fixtureVerify()'},
   {action: 'fixtureFinish()', condition: 'fixtureReleased()'}
 ]}));
+if (!process.argv[3] || process.argv[3] === 'profile-gestures') {
+  scenarios.push({name: 'Profile taps reach Stories and stationary holds enlarge the portrait', path: '/sam/',
+    html: `<main><header><a id="story" href="/stories/sam/"><img id="avatar" alt="sam's profile picture"
+      src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'/%3E"></a></header></main>
+      <script>let taps=0;story.onclick=e=>{e.preventDefault();taps++};
+      const press=(type,x=0)=>avatar.dispatchEvent(new PointerEvent(type,{bubbles:true,isPrimary:true,pointerId:1,pointerType:'touch',clientX:x}));
+      const viewer=()=>document.getElementById('vigil-instagram-profile-photo');</script>`,
+    steps: [
+      {action:"press('pointerdown');press('pointerup');avatar.click()", condition:"taps===1 && !viewer()"},
+      {action:"press('pointerdown');press('pointermove',30)",delay:600,condition:"!viewer()"},
+      {action:"press('pointerdown')",delay:600,condition:"viewer()?.querySelector('img').src===avatar.currentSrc"},
+      {action:"press('pointerup');avatar.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,detail:1}))",condition:"taps===1 && !!viewer()"}
+    ]},
+    {name:'Direct Notes expose the identified author profile as the sheet changes',path:'/direct/inbox/',
+     html:`<main><section id="sheet" role="dialog"><img id="avatar" alt="sam's profile picture"><input placeholder="Reply to note"></section></main>`,
+     steps:[
+       {condition:"sheet.querySelector('[data-vigil-note-profile]')?.pathname==='/sam/'"},
+       {action:`avatar.alt="ali's profile picture"`,condition:"sheet.querySelector('a')?.pathname==='/ali/'"},
+       {action:`sheet.insertAdjacentHTML('afterbegin','<a href="/ali/">Ali</a>')`,condition:"sheet.querySelectorAll('a').length===1 && !sheet.querySelector('[data-vigil-note-profile]')"}
+     ]});
+}
+if (!process.argv[3] || process.argv[3] === 'account-banner') {
+  scenarios.push({name: 'Account recommendations inside a post hydrate and receive Follow taps',
+    path: '/friend/', html: `<!doctype html><main><article id="post">
+      <header><a href="/friend/">Friend</a></header><a href="/p/Example/">Post</a>
+      <section data-testid="suggested-users"><span>Suggested for you</span><div id="cards"></div></section>
+    </article><article id="suggestedPost"><header><a href="/another/">Another</a><button>Follow</button>
+      <span>Suggested for you</span></header><a href="/p/Other/">Other post</a></article></main>`,
+    steps: [
+      {action: `cards.innerHTML = '<div role="listitem"><a href="/sam/"><img id="portrait" width="40" height="40" alt="Sam profile picture"><span id="handle">sam</span></a><button id="follow">Follow</button></div>';
+        follow.onclick = () => follow.textContent = 'Following'; true`,
+       condition: "portrait.getClientRects().length && handle.getClientRects().length && !suggestedPost.getClientRects().length"},
+      {action: "follow.click(); true", condition: "follow.textContent === 'Following' && follow.getClientRects().length"}
+    ]});
+}
 if (!process.argv[3] || process.argv[3] === 'draft-text') {
   const draftHTML = `<!doctype html><html><body><main>
     <article id="post"><div>Post by a friend</div>

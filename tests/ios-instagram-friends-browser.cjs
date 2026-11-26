@@ -177,14 +177,20 @@ async function main() {
   await run(`document.body.innerHTML='<main><header><a href="/stories/friend/1/"><img id="avatar" alt="friend\\\'s profile picture" src="/avatar.svg"></a></header><article><img id="post" alt="Post photo" src="/post.svg"></article></main>';`);
   await run(stable);
   await settle();
-  await run(`document.getElementById('avatar').click()`);
+  const holdAvatar = async () => {
+    await run(`avatar.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,isPrimary:true,pointerId:1,pointerType:'touch'}))`);
+    await settle();
+    await run(`avatar.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,pointerId:1}))`);
+  };
+  await holdAvatar();
   assert.deepEqual(await run(`(() => {
     const viewer=document.getElementById('vigil-instagram-profile-photo');
     return {open:!!viewer,source:viewer?.querySelector('img').src,viewerFocused:document.activeElement===viewer,circular:getComputedStyle(viewer.querySelector('img')).borderRadius==='50%'};
   })()`),{open:true,source:'https://www.instagram.com/avatar.svg',viewerFocused:true,circular:true});
   await run(`document.getElementById('vigil-instagram-profile-photo').click();document.getElementById('post').click();`);
   assert.equal(await run(`!!document.getElementById('vigil-instagram-profile-photo')`),false,'post images must not be mistaken for avatars');
-  await run(`document.getElementById('avatar').click();history.pushState({},'','/direct/inbox/');`);
+  await holdAvatar();
+  await run(`history.pushState({},'','/direct/inbox/');`);
   await settle();
   assert.equal(await run(`!!document.getElementById('vigil-instagram-profile-photo')`),false,'route changes close the avatar viewer');
   console.log('Instagram profile photo: passed');

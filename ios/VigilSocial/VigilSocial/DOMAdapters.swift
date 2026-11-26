@@ -9827,7 +9827,6 @@ enum DOMAdapters {
             a[href^="/audio/"], a[href^="/music/"], a[href^="/effects/"]
           ),
           [data-vigil-hidden-feature],
-          [data-vigil-instagram-suggestions],
           [data-vigil-instagram-retained-home="true"],
           [data-vigil-instagram-search-discovery="true"],
           a:is([href^="https://www.threads.net/"], [href^="https://www.threads.com/"],
@@ -10553,22 +10552,22 @@ enum DOMAdapters {
       }, true);
 
       const dismissInstagramPhotoViewer = () => document.getElementById('vigil-instagram-profile-photo')?.remove();
-      document.addEventListener('click', (event) => {
-        if (instagramRoute() !== 'profile' || !(event.target instanceof Element)
-            || event.target.closest('nav, article, [role="article"], [role="dialog"], [aria-modal="true"]')) return;
-        const username = location.pathname.split('/').filter(Boolean)[0]?.toLowerCase();
-        const target = event.target;
+      const profilePortrait = target => {
+        if (instagramRoute() !== 'profile' || !(target instanceof Element)
+            || target.closest('nav, article, [role="article"], [role="dialog"], [aria-modal="true"]')) return null;
         const image = target.matches('img') ? target
-          : target.closest('button, [role="button"]')?.querySelector('img');
+          : target.closest('button, [role="button"], a[href]')?.querySelector('img');
         if (!(image instanceof HTMLImageElement) || !image.closest('main, [role="main"]')
-            || normalizedInstagramLabel(image.closest('button, [role="button"]')).match(/change|edit/)) return;
-        const owner = String(image.alt || '').match(/^([a-z0-9._]+)(?:'s|’s) profile picture$/i)?.[1];
-        if (owner?.toLowerCase() !== username || !image.currentSrc) return;
-        // Show only the avatar already rendered on this exact profile. Keep
-        // the surrounding Story ring/link available to Instagram's router.
-        if (!target.matches('img') && target.closest('a[href*="/stories/"]')) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
+            || /change|edit/.test(normalizedInstagramLabel(image.closest('button, [role="button"]')))) return null;
+        const owner = portraitOwner(image);
+        return owner && owner === location.pathname.split('/')[1]?.toLowerCase() && image.currentSrc ? image : null;
+      };
+      const portraitOwner = image => {
+        const alt = (image.alt || '').trim();
+        return (alt.match(/^([a-z0-9._]{1,30})(?:'s|’s) profile picture$/i)?.[1]
+          || alt.match(/^profile picture of ([a-z0-9._]{1,30})$/i)?.[1] || '').toLowerCase();
+      };
+      const showProfilePortrait = image => {
         dismissInstagramPhotoViewer();
         const viewer = document.createElement('div');
         viewer.id = 'vigil-instagram-profile-photo';
@@ -10600,6 +10599,39 @@ enum DOMAdapters {
         viewer.append(photo, close);
         document.body.append(viewer);
         viewer.focus({ preventScroll: true });
+      };
+      let portraitPress = null;
+      let heldPortrait = null;
+      const cancelPortraitPress = () => {
+        if (portraitPress) clearTimeout(portraitPress.timer);
+        portraitPress = null;
+      };
+      document.addEventListener('pointerdown', event => {
+        cancelPortraitPress();
+        heldPortrait = null;
+        const image = profilePortrait(event.target);
+        if (!image || !event.isPrimary || event.button !== 0) return;
+        const path = location.pathname;
+        portraitPress = { id: event.pointerId, x: event.clientX, y: event.clientY, timer: setTimeout(() => {
+          if (!image.isConnected || location.pathname !== path || profilePortrait(event.target) !== image) return;
+          heldPortrait = image;
+          showProfilePortrait(image);
+        }, 500) };
+      }, true);
+      document.addEventListener('pointermove', event => {
+        if (portraitPress?.id === event.pointerId
+            && Math.hypot(event.clientX - portraitPress.x, event.clientY - portraitPress.y) > 10) cancelPortraitPress();
+      }, true);
+      for (const type of ['pointerup', 'pointercancel']) document.addEventListener(type, cancelPortraitPress, true);
+      window.addEventListener('blur', cancelPortraitPress);
+      document.addEventListener('contextmenu', event => {
+        if (profilePortrait(event.target)) event.preventDefault();
+      }, true);
+      document.addEventListener('click', event => {
+        if (!heldPortrait || !document.getElementById('vigil-instagram-profile-photo') || event.detail === 0) return;
+        heldPortrait = null;
+        event.preventDefault();
+        event.stopImmediatePropagation();
       }, true);
 
       let redirectedURL = '';
@@ -10985,98 +11017,69 @@ enum DOMAdapters {
 
       const editorSelector = 'input, textarea, [contenteditable]:not([contenteditable="false" i]), [role="textbox"], [role="searchbox"]';
       const overlapsEditor = node => Boolean(node.closest(editorSelector) || node.querySelector(editorSelector));
-      const exactLeafLabel = (root, expected) => {
-        const expectedLabels = new Set(
-          (Array.isArray(expected) ? expected : [expected]).map((value) => String(value).toLowerCase())
-        );
+      // Inspect the contents of a recommendation, since both posts and people
+      // can have the same heading and Instagram mounts the cards in stages.
+      const accountRecommendationGroup = (group) => {
+        if (group.querySelector('article, [role="article"], video, canvas, time, img:not([alt*="profile picture" i]):not(a[href] img)')) return false;
+        let profile = Boolean(group.querySelector('img[alt*="profile picture" i]'));
+        for (const link of group.querySelectorAll('a[href]')) {
+          let url;
+          try { url = new URL(link.href, location.href); } catch (_) { return false; }
+          if (url.origin !== location.origin) return false;
+          if (/^\/explore\/people(?:\/suggested)?\/?$/i.test(url.pathname)) continue;
+          if (!/^\/[a-z0-9._]{1,30}\/?$/i.test(url.pathname)
+              || /^\/(?:p|explore|reels?|stories|accounts|direct)\/?$/i.test(url.pathname)) return false;
+          profile = true;
+        }
+        return profile && [...group.querySelectorAll('button, [role="button"], a')].some(control =>
+          [control.textContent, control.getAttribute('aria-label')].some(label =>
+            /^(?:follow(?: back|ing)?|requested)$/i.test(String(label || '').trim())));
+      };
+      const inAccountRecommendation = (node, boundary) => {
+        for (let group = node; group; group = group.parentElement) {
+          if (group.matches('main, body, nav, [role="main"], [role="navigation"], [aria-label="Stories" i]')) break;
+          // A post author's own Follow button and portrait also sit in its
+          // header. An embedded people rail has a separate card or track.
+          const postHeader = group.closest('header')?.closest('article, [role="article"]');
+          if (!postHeader && accountRecommendationGroup(group)) return true;
+          if (group === boundary || group.matches('article, [role="article"]')) break;
+        }
+        return false;
+      };
+      const exactLeafLabel = (root, expected, accept = () => true) => {
+        const expectedLabels = new Set(expected);
         let inspected = 0;
         for (const node of root.querySelectorAll('span, div, a')) {
-          inspected += 1;
-          if (node.children.length === 0) {
+          if (!node.children.length) {
             const label = String(node.textContent || node.getAttribute('aria-label') || '')
               .replace(/\s+/g, ' ').trim().toLowerCase();
-            if (expectedLabels.has(label) && !overlapsEditor(node)) return true;
+            if (expectedLabels.has(label) && !overlapsEditor(node) && accept(node)) return true;
           }
-          if (inspected >= 120) break;
+          if (++inspected >= 120) break;
         }
         return false;
       };
       const markFilteredCards = (root) => {
-        const scope = root instanceof Element ? root : document;
-        const candidates = [
-          ...(scope.matches?.('article, [role="article"], [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') ? [scope] : []),
-          ...scope.querySelectorAll?.('article, [role="article"], [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]') || []
-        ];
-        let inspected = 0;
-        for (const candidate of candidates) {
-          inspected += 1;
-          const card = candidate.closest('article, [role="article"]') || candidate;
-          if (featureState('suggested') !== 'available'
-              && (candidate.matches('[data-testid*="suggested" i]')
-                || card.querySelector('a[href*="/explore/people/suggested"]')
-                || exactLeafLabel(card, [
-                  'suggested for you',
-                  'suggestions for you',
-                  'suggested posts',
-                  'suggested reels',
-                  'because you watched',
-                  'because you follow'
-                ]))) {
-            card.dataset.vigilHiddenFeature = 'suggested';
-          } else if (featureState('ads') !== 'available'
-              && (candidate.matches('[data-testid*="sponsored" i], [data-testid*="ad-container" i]')
-                || exactLeafLabel(card, 'sponsored'))) {
+        const selector = 'article, [role="article"], [data-testid*="suggested" i], [data-testid*="sponsored" i], [data-testid*="ad-container" i]';
+        const scope = root.closest?.('article, [role="article"]') || root.closest?.(selector + ', [data-vigil-hidden-feature]') || root;
+        const candidates = [...(scope.matches?.(selector + ', [data-vigil-hidden-feature]') ? [scope] : []),
+          ...scope.querySelectorAll(selector)];
+        const cards = new Set([...candidates].map(node => node.closest('article, [role="article"]') || node));
+        for (const card of cards) {
+          const outsideAccounts = node => !inAccountRecommendation(node, card);
+          const tagged = selector => card.matches(selector) || card.querySelector(selector);
+          if (featureState('ads') !== 'available' && (tagged('[data-testid*="sponsored" i], [data-testid*="ad-container" i]')
+              || exactLeafLabel(card, ['sponsored']))) {
             card.dataset.vigilHiddenFeature = 'ads';
+          } else if (featureState('suggested') !== 'available' && (
+              exactLeafLabel(card, ['suggested posts', 'suggested reels', 'because you watched', 'because you follow'])
+              || exactLeafLabel(card, ['suggested for you', 'suggestions for you'], outsideAccounts)
+              || [card, ...card.querySelectorAll('[data-testid*="suggested" i], a[href*="/explore/people/suggested"]')]
+                .some(node => node.matches('[data-testid*="suggested" i], a[href*="/explore/people/suggested"]') && outsideAccounts(node)))) {
+            card.dataset.vigilHiddenFeature = 'suggested';
+          } else if (['ads', 'suggested'].includes(card.dataset.vigilHiddenFeature)) {
+            delete card.dataset.vigilHiddenFeature;
           }
-          if (inspected >= 80) break;
-        }
-      };
-      const markSuggestedAccountModules = (root) => {
-        // Account carousels are often plain divs, outside any feed article.
-        // Revisit enclosing wrappers when React inserts only a heading, card,
-        // or text node, and clear our marker when a wrapper is recycled.
-        const boundary = 'html, body, main, nav, footer, article, form, [role="banner"], [role="main"], [role="navigation"], [role="article"], [role="dialog"], [aria-modal="true"]';
-        let scope = root;
-        if (root instanceof Element) {
-          scope = root.closest('[data-vigil-instagram-suggestions]') || root;
-          for (let depth = 0; depth < 8 && scope.parentElement
-              && !scope.matches(boundary) && !scope.parentElement.matches(boundary); depth += 1) {
-            scope = scope.parentElement;
-          }
-        }
-        const marked = [
-          ...(scope.matches?.('[data-vigil-instagram-suggestions]') ? [scope] : []),
-          ...scope.querySelectorAll('[data-vigil-instagram-suggestions]')
-        ];
-        marked.forEach(node => node.removeAttribute('data-vigil-instagram-suggestions'));
-        if (featureState('suggested') === 'available') return;
-        const labels = new Set(['suggestions for you', 'suggested for you', 'suggested accounts']);
-        const selector = 'h1, h2, h3, h4, [role="heading"], span, div, a';
-        const normalizedLabel = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
-        const candidates = [
-          ...(scope.matches?.(selector) ? [scope] : []), ...scope.querySelectorAll(selector)
-        ];
-        for (const label of candidates) {
-          if (label.children.length && !label.matches('h1, h2, h3, h4, [role="heading"], span')) continue;
-          if (!labels.has(normalizedLabel(label.textContent))
-              && !labels.has(normalizedLabel(label.getAttribute('aria-label')))) continue;
-          if (overlapsEditor(label)) continue;
-          if (label.closest('nav, footer, form, [role="banner"], [role="navigation"], [role="dialog"], [aria-modal="true"]')) continue;
-          if (label.matches(boundary)) continue;
-          let target = label;
-          for (let parent = label.parentElement, depth = 0; parent && depth < 8;
-              parent = parent.parentElement, depth += 1) {
-            // Never consume the surrounding feed, Stories, post, or composer.
-            if (parent.matches(boundary) || parent.querySelector(
-              `article, [role="article"], nav, [role="navigation"], [role="banner"], ${editorSelector}, video, a[href^="/p/"], a[href^="/reel/"], a[href^="/stories/"]`
-            )) break;
-            const follows = [...parent.querySelectorAll('button, [role="button"], a')].some(control =>
-              normalizedLabel(control.textContent) === 'follow'
-              || normalizedLabel(control.getAttribute('aria-label')) === 'follow'
-            );
-            if (follows) { target = parent; break; }
-          }
-          target.dataset.vigilInstagramSuggestions = 'true';
         }
       };
       // A normal follow is not proof of a social relationship. Home cards stay
@@ -12072,13 +12075,24 @@ enum DOMAdapters {
             && !['stories', 'reels', 'reel', 'explore', 'accounts', 'direct'].includes(path[0]);
         } catch (_) { return false; }
       };
+      const isRecommendationPortrait = control => {
+        if (control.closest('a[href^="/stories/"], [aria-label="Stories" i]')
+            || /\bstor(?:y|ies)\b/i.test(control.getAttribute('aria-label') || '')) return false;
+        for (let group = control.parentElement; group; group = group.parentElement) {
+          if (group.matches('main, body, nav, article, [role="main"], [role="list"], ul')
+              || group.querySelectorAll('img').length !== 1) break;
+          if (accountRecommendationGroup(group)) return true;
+        }
+        return false;
+      };
       const isStoryControl = (control) => {
         if (control.querySelectorAll('img[alt*="profile picture" i]').length > 1) return false;
-        if (isProfileControl(control)) {
+        if (isProfileControl(control) || isRecommendationPortrait(control)) {
           clearStoryClassification(control);
           control.dataset.vigilInstagramProfileControl = 'true';
           return false;
         }
+        delete control.dataset.vigilInstagramProfileControl;
         if (control.matches('a[href^="/stories/"]') || isOwnStoryControl(control)) return true;
         if (!control.querySelector('img[alt*="profile picture" i]')) return false;
         const label = [control.getAttribute('aria-label'), control.textContent]
@@ -13307,6 +13321,37 @@ enum DOMAdapters {
           }
         }
       };
+      const reconcileNoteProfiles = () => {
+        const direct = ['directInbox', 'directThread'].includes(instagramRoute());
+        for (const sheet of document.querySelectorAll('[role="dialog"], [aria-modal="true"]')) {
+          const existing = sheet.querySelector('[data-vigil-note-profile]');
+          const noteLabels = [sheet, ...sheet.querySelectorAll('[aria-label], input[placeholder], textarea[placeholder], h1, h2, [role="heading"]')];
+          const labels = noteLabels.map(node => (node.getAttribute('aria-label') || node.getAttribute('placeholder')
+            || (node.matches('h1, h2, [role="heading"]') ? node.textContent : '') || '').trim());
+          const isNote = direct && labels.some(label => /^(?:notes?$|(?:reply|respond) to (?:.* )?note\b|note (?:by|from) |.+['’]s note\b)/i.test(label));
+          const owners = isNote ? new Set([...sheet.querySelectorAll('img[alt]')].map(portraitOwner).filter(Boolean)) : new Set();
+          if (isNote) for (const label of labels) {
+            const author = label.match(/^@?([a-z0-9._]{1,30})['’]s note$/i)?.[1]
+              || label.match(/^note (?:by|from) @([a-z0-9._]{1,30})$/i)?.[1];
+            // A display name can also be a valid username. Only an explicit
+            // @handle supplies identity independently of the rendered portrait.
+            if (author && label.includes('@')) owners.add(author.toLowerCase());
+          }
+          const owner = owners.size === 1 ? [...owners][0] : '';
+          const path = '/' + owner + '/';
+          const nativeLink = owner && [...sheet.querySelectorAll('a[href]')].some(link =>
+            link !== existing && link.origin === location.origin && link.pathname.replace(/\/?$/, '/') === path);
+          if (!owner || nativeLink) { existing?.remove(); continue; }
+          const link = existing || document.createElement('a');
+          if (link.getAttribute('href') !== path) {
+            link.setAttribute('data-vigil-note-profile', '');
+            link.href = path;
+            link.textContent = 'View @' + owner + '’s profile';
+            link.style.cssText = 'display:block;padding:10px 16px;color:inherit;text-decoration:underline';
+          }
+          if (!existing) sheet.append(link);
+        }
+      };
       let scanScheduled = false;
       const pendingRoots = new Set();
       const scheduleScan = (root = document) => {
@@ -13319,10 +13364,10 @@ enum DOMAdapters {
           pendingRoots.clear();
           roots.slice(0, 24).forEach((candidate) => {
             markFilteredCards(candidate);
-            markSuggestedAccountModules(candidate);
             markNativeAppPrompts(candidate);
             markAccountOnlySearch(candidate);
           });
+          reconcileNoteProfiles();
           normalizeCommentSheets();
           reconcileFriendsFeed();
           reconcileStoryPanels();
@@ -13340,7 +13385,7 @@ enum DOMAdapters {
         if (location.href !== lastURL) scheduleRouteCheck();
       }).observe(document.documentElement, {
         childList: true, subtree: true, attributes: true, characterData: true,
-        attributeFilter: ['href', 'aria-label', 'alt', 'role', 'src', 'srcset', 'poster', 'aria-hidden']
+        attributeFilter: ['href', 'aria-label', 'placeholder', 'alt', 'role', 'src', 'srcset', 'poster', 'aria-hidden', 'data-testid']
       });
       document.addEventListener('load', event => {
         if (instagramRoute() === 'story' && event.target instanceof HTMLImageElement) scheduleScan(event.target);
@@ -13370,8 +13415,8 @@ enum DOMAdapters {
         }
       }, 1000);
 
+      reconcileNoteProfiles();
       markFilteredCards(document);
-      markSuggestedAccountModules(document);
       markNativeAppPrompts(document);
       markAccountOnlySearch(document);
       normalizeCommentSheets();

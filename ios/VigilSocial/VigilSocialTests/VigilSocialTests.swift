@@ -15088,7 +15088,17 @@ extension VigilSocialTests {
             <article><img id="post" alt="Post photo"></article></main></body></html>
             """#, path: "/friend/")
         try await waitForJavaScriptCondition("Boolean(document.getElementById('avatar').currentSrc)", in: webView)
-        _ = try await webView.evaluateJavaScript("document.getElementById('avatar').click()")
+        _ = try await webView.evaluateJavaScript("""
+            const avatar = document.getElementById('avatar');
+            window.storyTaps = 0;
+            avatar.parentElement.addEventListener('click', e => { e.preventDefault(); window.storyTaps++; });
+            avatar.click();
+            """)
+        let storyTap = try await webView.evaluateJavaScript("window.storyTaps === 1 && !document.getElementById('vigil-instagram-profile-photo')") as? Bool
+        XCTAssertEqual(storyTap, true)
+        let pressAvatar = "avatar.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true, pointerId:1, button:0, isPrimary:true, pointerType:'touch'}))"
+        _ = try await webView.evaluateJavaScript(pressAvatar)
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('vigil-instagram-profile-photo'))", in: webView)
         let matching = try await webView.evaluateJavaScript("""
             document.querySelector('#vigil-instagram-profile-photo img')?.src === document.getElementById('avatar').currentSrc
             """) as? Bool
@@ -15106,7 +15116,9 @@ extension VigilSocialTests {
             """)
         let closed = try await webView.evaluateJavaScript("document.getElementById('vigil-instagram-profile-photo') === null") as? Bool
         XCTAssertEqual(closed, true)
-        _ = try await webView.evaluateJavaScript("document.getElementById('avatar').click();history.pushState({}, '', '/direct/inbox/');")
+        _ = try await webView.evaluateJavaScript(pressAvatar)
+        try await waitForJavaScriptCondition("Boolean(document.getElementById('vigil-instagram-profile-photo'))", in: webView)
+        _ = try await webView.evaluateJavaScript("history.pushState({}, '', '/direct/inbox/');")
         try await waitForJavaScriptCondition("document.getElementById('vigil-instagram-profile-photo') === null", in: webView)
     }
 }
