@@ -177,6 +177,35 @@ test('account reconciliation reads every playlist page, excludes recommendations
   assert.equal(JSON.parse(f.requests[2].options.body as string).continuation, 'next');
 });
 
+test('synced thumbnail progress allows for lag based on the video runtime', () => {
+  const { watchLaterPage } = accountFixture().api;
+  const cases = [
+    { percent: 74, lengthText: '4:00', expected: 'in-progress' },
+    { percent: 75, lengthText: '4:00', expected: 'watched' },
+    { percent: 79, lengthSeconds: '1500', expected: 'in-progress' },
+    { percent: 80, lengthSeconds: '1500', expected: 'watched' },
+    { percent: 80, lengthText: '1:00:00', expected: 'in-progress' },
+    { percent: 92, lengthText: '1:00:00', expected: 'watched' },
+    { percent: 79, expected: 'in-progress' },
+    { percent: 80, expected: 'watched' },
+    { percent: 100, lengthText: '3:00:00', expected: 'watched' },
+    { percent: 0, lengthText: '4:00', expected: undefined },
+    { percent: 101, lengthText: '4:00', expected: undefined }
+  ];
+  const contents = cases.map(({ percent, lengthSeconds, lengthText }, i) => ({
+    playlistVideoRenderer: {
+      ...renderer(ids[i]).playlistVideoRenderer,
+      lengthSeconds, lengthText,
+      ...(i % 2 === 0 ? { thumbnailOverlays: [{ thumbnailOverlayResumePlaybackRenderer: { percentDurationWatched: percent } }] }
+        : { thumbnail: { thumbnailViewModel: { overlays: [
+          { thumbnailBottomOverlayViewModel: { progressBar: { thumbnailOverlayProgressBarViewModel: { startPercent: percent } } } }
+        ] } } })
+    }
+  }));
+  const { cards } = watchLaterPage({ playlistVideoListRenderer: { playlistId: 'WL', contents } });
+  assert.deepEqual(Array.from(cards, (card: { watchStatus?: string }) => card.watchStatus), cases.map(entry => entry.expected));
+});
+
 test('signed-out pages, unfamiliar structures, duplicate pages and failed continuations never become empty snapshots', async () => {
   for (const options of [{ signedIn: false }, { malformed: true }, { repeat: true }, { failContinuation: true }]) {
     await assert.rejects(accountFixture(options).api.readWatchLater());

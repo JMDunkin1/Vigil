@@ -525,14 +525,21 @@
     return entries.length > 0 && entries.every(entry => entry.messageRenderer
       && /^No videos in this playlist(?: yet)?[.!]?$/i.test(textOf(entry.messageRenderer.text).trim()));
   }
-  function thumbnailWatchStatus(video) {
+  function thumbnailWatchStatus(video, duration) {
     const legacy = video.thumbnailOverlays;
     const modern = video.thumbnail?.thumbnailViewModel?.overlays;
     const overlays = [...(Array.isArray(legacy) ? legacy : []), ...(Array.isArray(modern) ? modern : [])];
     for (const overlay of overlays) {
       const percent = overlay?.thumbnailOverlayResumePlaybackRenderer?.percentDurationWatched
         ?? overlay?.thumbnailBottomOverlayViewModel?.progressBar?.thumbnailOverlayProgressBarViewModel?.startPercent;
-      if (Number.isFinite(percent) && percent > 0 && percent <= 100) return percent === 100 ? 'watched' : 'in-progress';
+      if (!Number.isFinite(percent) || percent <= 0 || percent > 100) continue;
+      const seconds = /^\d+$/.test(video.lengthSeconds) ? Number(video.lengthSeconds) : 0;
+      const runtime = seconds || (/^\d+(?::[0-5]\d){1,2}$/.test(duration)
+        ? duration.split(':').reduce((total, part) => total * 60 + Number(part), 0) : 0);
+      // Synced account progress can lag behind playback. For the card label,
+      // allow up to the last quarter of the runtime, capped at five minutes.
+      const watchedAt = runtime > 0 ? Math.max(75, 100 - 30000 / runtime) : 80;
+      return percent >= watchedAt ? 'watched' : 'in-progress';
     }
     return '';
   }
@@ -567,7 +574,7 @@
         const images = video.thumbnail?.thumbnails;
         const thumbnail = Array.isArray(images) && images.findLast(image => typeof image?.url === 'string'
           && ['vi', 'vi_webp'].some(path => image.url.startsWith(`https://i.ytimg.com/${path}/${video.videoId}/`)))?.url;
-        const watchStatus = thumbnailWatchStatus(video);
+        const watchStatus = thumbnailWatchStatus(video, duration);
         cards.push({ videoId: video.videoId, title: textOf(video.title).trim().slice(0, 200) || video.videoId,
           ...(channel ? { channel } : {}), ...(/^\d+(?::\d{2}){1,2}$/.test(duration) ? { duration } : {}),
           ...(thumbnail ? { thumbnail } : {}),
