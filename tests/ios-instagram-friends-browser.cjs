@@ -83,7 +83,7 @@ async function main() {
     assert.equal(state.posts.friend, scenario === 'unavailable' ? 'unavailable' : 'friend', scenario);
     assert.equal(state.stories.friend, scenario === 'unavailable' ? 'unavailable' : 'friend', scenario);
     assert.equal(state.posts.dining, 'friend', 'explicit exception survives failed lookups');
-    assert.equal(state.stories.dining, 'friend');
+    assert.notEqual(state.stories.dining, 'friend', 'Story access requires a mutual follow');
     assert.notEqual(state.posts.other, 'friend');
     assert.notEqual(state.stories.other, 'friend');
     if (scenario === 'relay') {

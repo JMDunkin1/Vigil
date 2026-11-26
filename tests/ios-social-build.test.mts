@@ -254,7 +254,7 @@ assert.doesNotMatch(
 );
 assert.match(
   instagramStableAdapterSource,
-  /new MutationObserver\([\s\S]*?attributeFilter: \['href', 'aria-label', 'alt', 'role', 'src', 'aria-hidden'\]/u,
+  /new MutationObserver\([\s\S]*?attributeFilter: \['href', 'aria-label', 'alt', 'role', 'src', 'srcset', 'poster', 'aria-hidden'\]/u,
   "the production Instagram adapter must observe recycled identities without watching style and class churn"
 );
 assert.match(
@@ -309,7 +309,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const relationshipFromUser[\s\S]*?viewerFollows && followsViewer[\s\S]*?const fetchMutualFriendship = async \(username\)[\s\S]*?Nothing from your friends yet/u,
+  /const relationshipFromUser[\s\S]*?viewerFollows && followsViewer[\s\S]*?const fetchMutualFriendship = async \(username\)[\s\S]*?const removeFriendsState/u,
   "Instagram home must show only mutually followed friends and fail closed when no friend content is available"
 );
 assert.match(
@@ -334,7 +334,7 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) :is\(button, \[role="button"\]\):has\(img\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?canViewAccount\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
+  /const homeStoryControls[\s\S]*?:is\(main, \[role="main"\]\) :is\(button, \[role="button"\]\):has\(img\)[\s\S]*?const classifyHomeStory[\s\S]*?isOwnStoryControl\(control\)[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?controls\.forEach\(classifyHomeStory\)/u,
   "Instagram Home Stories must classify both link and button trays with the mutual-friend verifier while retaining the viewer's own Story"
 );
 assert.match(
@@ -352,7 +352,6 @@ assert.match(
   /state\.nextElementSibling !== slot\) slot\.before\(state\)/u,
   "Instagram should place the placeholder at the start of its feed stream"
 );
-assert.match(instagramStableAdapterSource, /renderFriendsState\('loading'\)/u);
 assert.match(instagramStableAdapterSource, /renderFriendsState\('empty'\)/u);
 assert.doesNotMatch(
   instagramStableAdapterSource,
@@ -366,8 +365,8 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /state\.dataset\.vigilState && mode === 'loading'/u,
-  "a settled empty friend feed must not flash back to loading during background pagination"
+  /dataset\.vigilState !== 'refreshing'/u,
+  "background pagination must preserve a manual refresh in progress"
 );
 assert.match(
   instagramStableAdapterSource,
@@ -376,14 +375,10 @@ assert.match(
 );
 assert.match(
   socialWebViewStoreSource,
-  /service == \.instagram[\s\S]*?__vigilResetFriendsFeedForRefresh[\s\S]*?webView\.reloadFromOrigin\(\)/u,
-  "Instagram's native refresh must reset the loading state and revalidate the feed with the server"
+  /@objc private func refreshWebView[\s\S]*?__vigilRecoverEmptyFriendsFeed[\s\S]*?recovered as\? Bool != true[\s\S]*?__vigilResetFriendsFeedForRefresh[\s\S]*?webView\.reloadFromOrigin\(\)/u,
+  "a native pull must try friend recovery before reloading Instagram Home from the server"
 );
-assert.match(
-  socialWebViewStoreSource,
-  /case "instagramFriendsFeedRefresh":[\s\S]*?isCurrentMainDocumentMessage[\s\S]*?url\.path == "\/"[\s\S]*?beginWebViewRefresh\(webView, for: service\)/u,
-  "the Instagram refresh button must share the native refresh path and be confined to the current Home document"
-);
+assert.doesNotMatch(instagramStableAdapterSource, /instagramFriendsFeedRefresh/u);
 assert.match(
   instagramStableAdapterSource,
   /prefers-color-scheme: dark[\s\S]*?svg\[aria-label="Instagram" i\][\s\S]*?color: #f5f5f5 !important/u,
@@ -406,8 +401,8 @@ assert.match(
 );
 assert.match(
   instagramStableAdapterSource,
-  /const reconcileStoryRoute[\s\S]*?vigilInstagramStoryGate = 'pending'[\s\S]*?canViewAccount\(username\)[\s\S]*?generation !== storyAccessGeneration[\s\S]*?skipFilteredStory\(username\)/u,
-  "Stories must remain concealed until the route author is self, a confirmed mutual friend, or an explicitly allowed informational account"
+  /const reconcileStoryRoute[\s\S]*?vigilInstagramStoryGate = 'pending'[\s\S]*?fetchMutualFriendship\(username\)[\s\S]*?generation !== storyAccessGeneration[\s\S]*?skipFilteredStory\(username\)/u,
+  "Stories must remain concealed until the route author is self or a confirmed mutual friend, outside an exact Direct share"
 );
 assert.match(instagramStableAdapterSource,
   /const skipFilteredStory[\s\S]*?const backwards = current >= 0 && current < sequence.order.indexOf\(sequence.active\)[\s\S]*?activateStoryControl\(control, backwards\)/u,

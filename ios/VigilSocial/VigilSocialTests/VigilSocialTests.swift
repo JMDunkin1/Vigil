@@ -8917,7 +8917,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("const isAccountSearchRoute"))
         XCTAssertTrue(script.contains("const markAccountOnlySearch"))
         XCTAssertFalse(script.contains("return { feature: 'explore', mode: 'redirect'"))
-        XCTAssertTrue(script.contains("attributeFilter: ['href', 'aria-label', 'alt', 'role', 'src', 'aria-hidden']"))
+        XCTAssertTrue(script.contains("attributeFilter: ['href', 'aria-label', 'alt', 'role', 'src', 'srcset', 'poster', 'aria-hidden']"))
         XCTAssertTrue(script.contains("fullBleedTop: false"))
         XCTAssertTrue(script.contains("object-fit: contain !important"))
         XCTAssertTrue(script.contains("object-position: center center !important"))
@@ -8954,10 +8954,9 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertTrue(script.contains("/api/v1/friendships/show_many/"))
         XCTAssertTrue(script.contains("/api/v1/friendships/show/"))
         XCTAssertTrue(script.contains("return null"))
-        XCTAssertTrue(script.contains("Nothing from your friends yet."))
+        XCTAssertFalse(script.contains("instagramFriendsFeedRefresh"))
         XCTAssertFalse(script.contains("homeDigestLimit"))
         XCTAssertTrue(script.contains("slot.before(state)"))
-        XCTAssertTrue(script.contains("renderFriendsState('loading')"))
         XCTAssertTrue(script.contains("renderFriendsState('empty')"))
         XCTAssertTrue(script.contains("friendshipCacheTTL = 6 * 60 * 60 * 1000"))
         XCTAssertTrue(script.contains("a[href^=\"/stories/\"]:not("))
@@ -8976,7 +8975,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertFalse(script.contains("background: Canvas"))
         XCTAssertFalse(script.contains("querySelector('main') || document.body)?.prepend(state)"))
         XCTAssertTrue(script.contains("main [role=\"progressbar\"]"))
-        XCTAssertTrue(script.contains("state.dataset.vigilState && mode === 'loading'"))
+        XCTAssertTrue(script.contains("window.__vigilRecoverEmptyFriendsFeed"))
         XCTAssertTrue(script.contains("window.__vigilResetFriendsFeedForRefresh"))
         XCTAssertTrue(script.contains("renderFriendsState('refreshing')"))
         XCTAssertTrue(script.contains("prefers-color-scheme: dark"))
@@ -9115,7 +9114,7 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
-    func testInstagramInformationalAccountsRevealPostsAndStories() async throws {
+    func testInstagramInformationalAccountsRevealPostsButRequireMutualStories() async throws {
         try await verifyInstagramAccountVisibility(informationalAccounts: ["other"])
     }
 
@@ -9206,7 +9205,7 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(state?["otherPostHidden"] as? Bool, informationalAccounts.isEmpty)
         XCTAssertEqual(state?["strangerPostHidden"] as? Bool, true)
         XCTAssertEqual(state?["friendStoryVisible"] as? Bool, true)
-        XCTAssertEqual(state?["otherStoryHidden"] as? Bool, informationalAccounts.isEmpty)
+        XCTAssertEqual(state?["otherStoryHidden"] as? Bool, true)
         XCTAssertEqual(state?["friendStoryRelationship"] as? String, "friend")
         XCTAssertGreaterThanOrEqual(state?["relationshipPosts"] as? Int ?? 0, 2)
         webView.navigationDelegate = nil
@@ -9777,6 +9776,7 @@ final class VigilSocialTests: XCTestCase {
             injectionTime: .atDocumentEnd, forMainFrameOnly: true
         ))
         let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
         configuration.userContentController = controller
         let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
         let loaded = expectation(description: "Role-based paginated feed loaded")
@@ -9800,6 +9800,10 @@ final class VigilSocialTests: XCTestCase {
               #story-track { display:flex; width:max-content; margin:0; padding:0; }
               #story-track > li { width:96px; height:100px; list-style:none; }
             </style><script>
+              Object.defineProperty(document, 'cookie', {get: () => 'ds_user_id=100'});
+              localStorage.setItem('vigil.instagram.mutual-friendships.v1:100', JSON.stringify({
+                other:{mutual:false,checkedAt:Date.now()}, unrelated:{mutual:false,checkedAt:Date.now()}
+              }));
               window.fetch = async input => {
                 const url = new URL(input, location.href);
                 const username = url.searchParams.get('username') || 'viewer';
@@ -9836,26 +9840,18 @@ final class VigilSocialTests: XCTestCase {
               const header = document.getElementById('header').getBoundingClientRect();
               const bottom = document.getElementById('bottom').getBoundingClientRect();
               const card = status.getBoundingClientRect();
-              const media = status.querySelector('div').getBoundingClientRect();
-              const message = status.querySelector('[role="status"]');
-              const button = status.querySelector('button');
-              const empty = status?.dataset.vigilState;
-              const messageCentered = Math.abs(
-                message.getBoundingClientRect().left + message.getBoundingClientRect().right - media.left - media.right
-              ) < 2;
-              const refreshAvailable = !button.disabled && button.textContent === 'Refresh'
-                && button.getBoundingClientRect().height >= 44 && button.getBoundingClientRect().bottom < bottom.top;
+              const media = status.firstElementChild.getBoundingClientRect();
+              const empty = status.dataset.vigilState;
+              const decorative = !status.textContent.trim() && !status.querySelector('button, [role="button"], a, [tabindex]')
+                && status.getAttribute('aria-hidden') === 'true';
+              const postShape = Math.abs(media.width / media.height - 4 / 5) < 0.01
+                && getComputedStyle(status, '::before').height === '48px'
+                && getComputedStyle(status, '::after').height === '62px' && card.bottom <= bottom.top;
               window.__vigilResetFriendsFeedForRefresh();
               window.placeholderFrame = { top: card.top, left: card.left, width: card.width };
-              return { exposed, empty, messageCentered, refreshAvailable,
-                postShape: Math.abs(media.width / media.height - 4 / 5) < 0.01
-                  && media.left === card.left && media.width === card.width && card.bottom <= bottom.top
-                  && getComputedStyle(status).borderRadius === '0px'
-                  && getComputedStyle(status, '::before').height === '48px'
-                  && getComputedStyle(status, '::after').height === '62px',
+              return { exposed, empty, decorative, postShape,
                 sameSlotWhileChecking: status.getBoundingClientRect().top === card.top
-                  && status.getBoundingClientRect().height === card.height && button.disabled
-                  && message.textContent === 'Checking for friends’ posts…',
+                  && status.getBoundingClientRect().height === card.height && status.dataset.vigilState === 'refreshing',
                 storiesAtTop: rail.top >= header.bottom && rail.top <= header.bottom + 8,
                 statusBelowStories: Math.abs(card.top - rail.bottom) < 2,
                 ownVisible: document.querySelector('[aria-label="Your story"]').getBoundingClientRect().width > 0 };
@@ -9865,23 +9861,33 @@ final class VigilSocialTests: XCTestCase {
         XCTAssertEqual(pagination?["empty"] as? String, "empty")
         XCTAssertEqual(pagination?["storiesAtTop"] as? Bool, true, "An empty feed must not center the Stories tray")
         XCTAssertEqual(pagination?["statusBelowStories"] as? Bool, true, "The empty status must not cover Stories")
-        XCTAssertEqual(pagination?["messageCentered"] as? Bool, true)
-        XCTAssertEqual(pagination?["refreshAvailable"] as? Bool, true)
+        XCTAssertEqual(pagination?["decorative"] as? Bool, true)
         XCTAssertEqual(pagination?["postShape"] as? Bool, true)
         XCTAssertEqual(pagination?["sameSlotWhileChecking"] as? Bool, true)
         XCTAssertEqual(pagination?["ownVisible"] as? Bool, true, "Keep the original viewer control accessible")
         try await Task.sleep(nanoseconds: 150_000_000)
         let settled = try await webView.evaluateJavaScript(#"""
-            document.querySelector('#vigil-instagram-friends-empty button').disabled
+            document.getElementById('vigil-instagram-friends-empty').dataset.vigilState === 'refreshing'
               && [...document.querySelectorAll('#feed > :is(article, [role="article"])')]
                 .every(post => getComputedStyle(post).display === 'none')
             """#) as? Bool
         XCTAssertEqual(settled, true)
         let canRetry = try await webView.evaluateJavaScript(#"""
             window.__vigilRestoreFriendsFeedAfterRefreshFailure();
-            !document.querySelector('#vigil-instagram-friends-empty button').disabled
+            document.getElementById('vigil-instagram-friends-empty').dataset.vigilState === 'empty'
             """#) as? Bool
-        XCTAssertEqual(canRetry, true, "A failed refresh should leave the same button ready to retry")
+        XCTAssertEqual(canRetry, true, "A failed refresh should leave the feed ready for another pull")
+        let fallback = try await webView.callAsyncJavaScript(#"""
+            const result = window.__vigilRecoverEmptyFriendsFeed();
+            const duplicate = await window.__vigilRecoverEmptyFriendsFeed();
+            const handled = await result;
+            const saved = JSON.parse(localStorage.getItem('vigil.instagram.mutual-friendships.v1:100'));
+            return [!handled, duplicate, !saved.other, saved.unrelated?.mutual === false,
+              document.getElementById('vigil-instagram-friends-empty').dataset.vigilState === 'empty',
+              getComputedStyle(document.querySelector('#feed article')).display === 'none'];
+            """#, arguments: [:], in: nil, contentWorld: .page) as? [Bool]
+        XCTAssertEqual(fallback, [true, true, true, true, true, true],
+                       "An empty retry requests one origin reload and rechecks relevant denials while keeping posts concealed")
         _ = try await webView.evaluateJavaScript(#"""
             window.__vigilResetFriendsFeedForRefresh();
             document.getElementById('feed').insertAdjacentHTML('beforeend', '<div id="friend-post" role="article"><a href="/friend/">friend</a>Allowed post</div>');
@@ -9900,6 +9906,10 @@ final class VigilSocialTests: XCTestCase {
             })()
             """#) as? Bool
         XCTAssertEqual(replacement, true, "The first verified post takes the placeholder's slot")
+        let populatedPull = try await webView.callAsyncJavaScript("return await window.__vigilRecoverEmptyFriendsFeed();",
+            arguments: [:], in: nil, contentWorld: .page) as? Bool
+        XCTAssertEqual(populatedPull, false, "Pulling a populated Home still fetches the latest feed")
+
         _ = try await webView.evaluateJavaScript(#"""
             window.recycledPostExposed = false;
             const post = document.getElementById('friend-post');
@@ -10213,6 +10223,15 @@ final class VigilSocialTests: XCTestCase {
         try await Task.sleep(nanoseconds: 150_000_000)
         let probe = StoryAdvanceNavigationProbe()
         webView.navigationDelegate = probe
+        _ = try await webView.evaluateJavaScript(#"""
+            document.body.insertAdjacentHTML('beforeend','<section id="preload"><video style="width:390px;height:650px;visibility:visible"></video></section>');
+            """#)
+        try await Task.sleep(for: .milliseconds(40))
+        let unlabelled = try await webView.evaluateJavaScript(#"""
+            getComputedStyle(document.querySelector('#preload video')).opacity==='0'
+              && getComputedStyle(document.getElementById('media')).visibility!=='hidden'
+            """#) as? Bool
+        XCTAssertEqual(unlabelled, true, "A verified URL cannot reveal an adjacent headerless Story")
         _ = try await webView.evaluateJavaScript("document.getElementById('next').click(); true;")
         try await Task.sleep(nanoseconds: 800_000_000)
         let state = try await webView.evaluateJavaScript("({path:location.pathname,advances,leaks,deniedHidden,staleHidden,visible:getComputedStyle(document.getElementById('media')).visibility!=='hidden'})") as? [String: Any]
@@ -10655,6 +10674,7 @@ final class VigilSocialTests: XCTestCase {
               <img id="background-media" alt="Background post" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
               <button id="background-next" aria-label="Next" onclick="window.backgroundAdvances=(window.backgroundAdvances||0)+1">Next post</button>
             </main><div id="viewer" role="dialog">
+              <header><a href="/friend/">friend</a></header>
               <img id="media" alt="Story" src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">
               <button id="next" aria-label="Next" onclick="window.nextCount++;window.nextX=event.clientX;if(window.advanceOnlyMedia){document.getElementById('media').src='data:image/gif;base64,R0lGODlhAQABAAAAACw=#'+nextCount;}else{history.replaceState({},'', '/stories/friend/' + (nextCount+1) + '/');}">Next</button>
               <button id="reply">Reply</button>
@@ -11526,6 +11546,49 @@ final class VigilSocialTests: XCTestCase {
     }
 
     @MainActor
+    func testInstagramPullRunsFriendRecoveryAndRearmsWithoutNavigating() async throws {
+        let store = SocialWebViewStore(defaults: UserDefaults(suiteName: #function)!, fixedService: .instagram,
+                                      loadInitialPages: false)
+        let webView = store.webView(for: .instagram)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController()
+        webView.frame = window.bounds
+        window.rootViewController?.view.addSubview(webView)
+        window.isHidden = false
+        window.layoutIfNeeded()
+        defer { webView.removeFromSuperview(); window.isHidden = true }
+
+        let loaded = expectation(description: "Home loaded")
+        let delegate = FixtureNavigationDelegate { loaded.fulfill() }
+        webView.navigationDelegate = delegate
+        webView.loadHTMLString("<main></main>", baseURL: URL(string: "https://www.instagram.com/")!)
+        await fulfillment(of: [loaded], timeout: 5)
+        _ = try await webView.evaluateJavaScript("""
+            window.pulls = 0;
+            window.__vigilRecoverEmptyFriendsFeed = async () => {
+              window.pulls++;
+              await new Promise(resolve => setTimeout(resolve, 30));
+              return true;
+            };
+            true;
+            """)
+        let control = try XCTUnwrap(webView.scrollView.refreshControl)
+        store.setSurface(SocialSurfaceState(route: "feed", refreshEligible: true, blocksRefresh: false), for: .instagram)
+        for expected in 1...2 {
+            control.beginRefreshing()
+            control.sendActions(for: .valueChanged)
+            control.sendActions(for: .valueChanged)
+            for _ in 0..<100 where control.isRefreshing { try await Task.sleep(for: .milliseconds(20)) }
+            let pulls = try await webView.evaluateJavaScript("window.pulls") as? Int
+            XCTAssertEqual(pulls, expected)
+            XCTAssertFalse(control.isRefreshing)
+            XCTAssertTrue(control.isEnabled)
+            XCTAssertTrue(webView.scrollView.alwaysBounceVertical)
+        }
+        webView.navigationDelegate = nil
+    }
+
+    @MainActor
     func testActivePullToRefreshKeepsBounceAndSpinnerUntilNavigationFinishes() {
         let store = SocialWebViewStore(
             defaults: UserDefaults(suiteName: #function)!,
@@ -11533,6 +11596,14 @@ final class VigilSocialTests: XCTestCase {
             loadInitialPages: false
         )
         let webView = store.webView(for: .instagram)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        window.rootViewController = UIViewController()
+        webView.frame = window.bounds
+        window.rootViewController?.view.addSubview(webView)
+        window.isHidden = false
+        window.layoutIfNeeded()
+        defer { webView.removeFromSuperview(); window.isHidden = true }
+
         let refreshControl = webView.scrollView.refreshControl
         store.setSurface(
             SocialSurfaceState(route: "feed", refreshEligible: true, blocksRefresh: false),
@@ -11543,7 +11614,7 @@ final class VigilSocialTests: XCTestCase {
         refreshControl?.sendActions(for: .valueChanged)
 
         XCTAssertEqual(refreshControl?.isRefreshing, true)
-        XCTAssertEqual(refreshControl?.isEnabled, false)
+        XCTAssertEqual(refreshControl?.isEnabled, true)
         XCTAssertTrue(webView.scrollView.alwaysBounceVertical)
         store.setSurface(.unknown, for: .instagram)
         XCTAssertEqual(refreshControl?.isRefreshing, true)
@@ -15142,6 +15213,177 @@ extension VigilSocialTests {
 
 
         }
+    }
+
+    @MainActor
+    func testInstagramStoryPlayerBindsCurrentFrameAndOwnerWithoutAvatarLabel() async throws {
+        let webView = try await instagramRepairFixture(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+          <style>img{width:350px;height:600px;visibility:visible}</style>
+          <script>
+          sessionStorage.setItem('vigil.instagram.mutual-friendships.v1:session',
+            JSON.stringify({friend:{mutual:true,checkedAt:Date.now()}}));
+          const source={get:id=>({username:id})};
+          window.require=name=>name==='PolarisRelayEnvironment'?{getStore:()=>({getSource:()=>source})}:null;
+          window.fetch=async()=>({ok:true,json:async()=>({user:{username:'viewer'}})});
+          </script></head><body><main id="viewer"></main><script>
+          function bind(frame, panel, author, id, root){
+            const props={reel:{user:{__id:author},__fragments:{PolarisStoriesV3ReelPlayer_reel:{}}},
+              media:{pk:id,__fragments:{PolarisStoriesV3ReelPlayer_media:{}}}};
+            return {stateNode:frame,return:{stateNode:panel,return:{memoizedProps:props,return:root}}};
+          }
+          for(const [name,author,id] of [['active','friend','123'],['old','friend','122'],['other','other','123']]){
+            const panel=document.createElement('div');
+            panel.innerHTML='<a href="/friend/"><img alt="" style="width:32px;height:32px"></a><img id="'+name+'">';
+            document.getElementById('viewer').append(panel);
+            const img=panel.lastChild,root={stateNode:{}},staleRoot={stateNode:root.stateNode};root.stateNode.current=root;
+            img.__reactFiber$test=bind(img,panel,'friend','123',staleRoot);
+            img.__reactFiber$test.alternate=bind(img,panel,author,id,root);
+          }
+          </script></body></html>
+          """#, path: "/stories/friend/123/")
+        try await Task.sleep(for: .milliseconds(120))
+        let visible = try await webView.evaluateJavaScript(#"""
+          ['active','old','other'].map(id=>{const style=getComputedStyle(document.getElementById(id));
+            return style.visibility==='visible' && style.opacity!=='0'})
+          """#) as? [Bool]
+        XCTAssertEqual(visible, [true, false, false])
+    }
+
+    @MainActor
+    func testInstagramFirstStoryResolvesAfterSilentPlayerCommitOnAuthorRoute() async throws {
+        let webView = try await instagramRepairFixture(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><script>
+          sessionStorage.setItem('vigil.instagram.mutual-friendships.v1:session',
+            JSON.stringify({friend:{mutual:true,checkedAt:Date.now()}}));
+          const source={get:id=>({username:id})};
+          window.require=name=>name==='PolarisRelayEnvironment'?{getStore:()=>({getSource:()=>source})}:null;
+          window.fetch=async()=>({ok:true,json:async()=>({user:{username:'viewer'}})});
+          </script></head><body><button id="open">Story</button><script>
+          document.getElementById('open').onclick=()=>{
+            history.pushState({},'', '/stories/friend/');
+            document.body.innerHTML='<div id="panel"><img id="first" style="width:120px;height:180px"></div>';
+            window.first=document.getElementById('first');
+            window.visible=()=>getComputedStyle(first).visibility==='visible' && getComputedStyle(first).opacity!=='0';
+            setTimeout(()=>{
+              window.concealedBeforeProof=!visible();
+              const root={stateNode:{}};root.stateNode.current=root;
+              first.__reactFiber$test={stateNode:first,return:{stateNode:first.parentElement,return:{
+                memoizedProps:{reel:{user:{__id:'friend'},__fragments:{PolarisStoriesV3ReelPlayer_reel:{}}},
+                  media:{pk:'123',__fragments:{PolarisStoriesV3ReelPlayer_media:{}}}},return:root}}};
+            },140);
+          };
+          </script></body></html>
+          """#)
+        _ = try await webView.evaluateJavaScript("document.getElementById('open').click()")
+        try await Task.sleep(for: .milliseconds(500))
+        let state = try await webView.evaluateJavaScript("[concealedBeforeProof, visible(), location.pathname==='/stories/friend/']") as? [Bool]
+        XCTAssertEqual(state, [true, true, true], "The first verified frame opens without advancing, returning or reloading")
+    }
+
+    @MainActor
+    func testInstagramNativeStoryQueueUsesBothFollowDirectionsBeforeVirtualization() async throws {
+        try await checkInstagramStoryQueue(afterExpiry: false)
+    }
+
+    @MainActor
+    func testInstagramStoryQueueRecoversFromExpiredCacheAndFailedBatchWithoutASwipe() async throws {
+        try await checkInstagramStoryQueue(afterExpiry: true)
+    }
+
+    @MainActor
+    func testInstagramEmptyFeedRefreshImmediatelyResumesInterruptedFriendLists() async throws {
+        try await checkInstagramStoryQueue(afterExpiry: true, manualRefresh: true)
+    }
+
+    @MainActor
+    private func checkInstagramStoryQueue(afterExpiry: Bool, manualRefresh: Bool = false) async throws {
+        let webView = try await instagramRepairFixture(#"""
+          <html><head><meta name="viewport" content="width=device-width,initial-scale=1"><script>
+          Object.defineProperty(document,'cookie',{get:()=> 'ds_user_id=100'});
+          const expired=\#(afterExpiry);
+          const cacheKey='vigil.instagram.mutual-friendships.v1:100';
+          if(expired)localStorage.setItem(cacheKey,JSON.stringify({
+            watched:{mutual:true,checkedAt:Date.now()-86400000},
+            stranger:{mutual:true,checkedAt:Date.now()-86400000}
+          }));
+          const names=['unread','stranger','watched','wrongid','oneway'];
+          const owners=names.map((username,i)=>({pk:String(i+101),username}));
+          const reels=owners.map(user=>({getLinkedRecord:()=>({getValue:key=>user[key]})}));
+          const source={get:id=>id==='client:root'?{xdt_api__v1__feed__reels_tray:{__ref:'tray'}}:
+            {__typename:'XDTMaterialTray',tray:{__refs:names}}};
+          let changes=0, pages=0, secondAttempts=0, followingPages=0;
+          function apply(update){
+            update.storeUpdater({get:()=>({getLinkedRecords:()=>reels,setLinkedRecords:allowed=>{
+              const members=allowed.map(reel=>names[reels.indexOf(reel)]);
+              window.queue=members;
+              const track=document.querySelector('#track');
+              if(track && track.dataset.members!==members.join(',')){
+                track.dataset.members=members.join(',');
+                track.querySelectorAll('a').forEach(a=>a.remove());
+                for(const name of members){
+                  const a=document.createElement('a');a.href='/stories/'+name+'/123/';
+                  a.innerHTML='<img alt="'+name+String.fromCharCode(39)+'s profile picture">';
+                  a.onclick=e=>{e.preventDefault();history.pushState({},'',a.pathname)};
+                  track.append(a);
+                }
+              }
+            }})});
+            changes++;
+          }
+          const environment={getStore:()=>({getSource:()=>source}),applyUpdate:apply,replaceUpdate:(_,u)=>apply(u)};
+          const api={apiPost:async(path,{body})=>{
+            if(expired)throw Error('batch temporarily unavailable');
+            if(path!=='/api/v1/friendships/show_many/'||body.user_ids!=='101,102,103,104,105')throw Error('wrong batch');
+            return {data:{friendship_statuses:Object.fromEntries(owners.map(u=>[u.pk,{following:u.username!=='oneway'}]))}};
+          },apiGet:async path=>{
+            if(expired&&path.startsWith('/api/v1/friendships/100/following/?')){
+              followingPages++;return {data:{users:[...owners.slice(0,4),{pk:'110',username:'postfriend'}]}}
+            }
+            if(!path.startsWith('/api/v1/friendships/100/followers/?'))throw Error('wrong viewer');
+            pages++;
+            if(expired && path.includes('max_id=more') && secondAttempts++===0)throw Error('temporary page failure');
+            return {data:path.includes('max_id=more')?{users:[owners[2],owners[4],{pk:'999',username:'wrongid'},{pk:'110',username:'postfriend'}]}:
+              {users:[owners[0]],next_max_id:'more'}};
+          }};
+          window.require=name=>name==='PolarisRelayEnvironment'?environment:name==='PolarisInstapi'?api:null;
+          window.fetch=async()=>({ok:false,status:400});
+          </script><style>#rail{width:200px;overflow-x:auto}#track{width:max-content;display:flex}
+          #track>*{display:block;width:100px;flex:none}</style></head><body>
+          <nav><a href="/viewer/" aria-label="Profile">Profile</a></nav><main>
+          <div id="rail"><div id="track"><button aria-label="Your story"><img alt=""></button></div></div>
+          <script>if(expired)document.write('<article id="postfriend"><header><a href="/postfriend/">postfriend</a></header>Post</article>')</script>
+          </main></body></html>
+          """#)
+        if afterExpiry {
+            try await Task.sleep(for: .milliseconds(350))
+            let partial = try await webView.evaluateJavaScript("JSON.stringify(window.queue)") as? String
+            XCTAssertEqual(partial, #"["unread"]"#, "A failed second page must neither hide the first verified friend nor authorize yesterday's stranger")
+        }
+        if manualRefresh {
+            let handled = try await webView.callAsyncJavaScript(#"""
+                const started = performance.now();
+                const recovered = await window.__vigilRecoverEmptyFriendsFeed();
+                return recovered && performance.now() - started < 1500
+                  && !document.getElementById('vigil-instagram-friends-empty');
+                """#, arguments: [:], in: nil, contentWorld: .page) as? Bool
+            XCTAssertEqual(handled, true, "A refresh resumes the failed page before backoff expires and keeps the recovered document")
+        } else {
+            try await Task.sleep(for: .milliseconds(afterExpiry ? 2200 : 300))
+        }
+        let state = try await webView.evaluateJavaScript(#"""
+          (()=>{const rail=document.getElementById('rail');rail.scrollLeft=100;const right=rail.scrollLeft;
+            rail.scrollLeft=0;const own=rail.querySelector('button');
+            return [JSON.stringify(window.queue)===JSON.stringify(['unread','watched']),pages===(expired?3:2),
+              !expired || (followingPages===1 && document.getElementById('postfriend').dataset.vigilInstagramHomeRelationship==='friend'),
+              right===100, own.getBoundingClientRect().left===rail.getBoundingClientRect().left,
+              [...rail.querySelectorAll('a')].every(a=>a.dataset.vigilInstagramStoryRelationship==='friend')];
+          })()
+          """#) as? [Bool]
+        XCTAssertEqual(state, [true, true, true, true, true, true])
+        _ = try await webView.evaluateJavaScript("document.querySelector('#track a:last-child').click()")
+        let path = try await webView.evaluateJavaScript("location.pathname") as? String
+        XCTAssertEqual(path, "/stories/watched/123/")
     }
 
     @MainActor

@@ -455,7 +455,7 @@ final class SocialWebViewStore: NSObject, ObservableObject {
     private var mediaRetryTasks: [MediaRequestKey: Task<Void, Never>] = [:]
     @Published private var surfaceStates: [SocialService: SocialSurfaceState] = [:]
     private var webContentRecovery: [SocialService: WebContentRecoveryState] = [:]
-    private var refreshingServices: Set<SocialService> = []
+    private var activeRefreshIDs: [SocialService: UUID] = [:]
     private var mediaPlaybackIsSuspended = false
     private var externalPlaybackMayRelinquish = false
     private var externalPlaybackRelinquishTask: Task<Void, Never>?
@@ -1432,37 +1432,50 @@ final class SocialWebViewStore: NSObject, ObservableObject {
 
     @objc private func refreshWebView(_ sender: UIRefreshControl) {
         guard let webView = webViews.values.first(where: { $0.scrollView.refreshControl === sender }),
-              let service = service(for: webView),
-              beginWebViewRefresh(webView, for: service) else {
-            sender.endRefreshing()
+              let service = service(for: webView) else { sender.endRefreshing(); return }
+        guard activeRefreshIDs[service] == nil else { return }
+        guard let surface = surfaceStates[service], surface.allowsRefresh,
+              service != .instagram || (selectedService == service && !instagramSuggestedReelsBlocked && !instagramSharedViewerScrollLocked)
+        else { sender.endRefreshing(); return }
+        let refreshID = UUID()
+        activeRefreshIDs[service] = refreshID
+        guard service == .instagram else {
+            setSurface(.unknown, for: service)
+            webView.reload()
             return
         }
-    }
 
-    @discardableResult
-    private func beginWebViewRefresh(_ webView: WKWebView, for service: SocialService) -> Bool {
-        guard surfaceStates[service]?.allowsRefresh == true,
-              refreshingServices.insert(service).inserted else { return false }
-        setSurface(.unknown, for: service)
-        if service == .instagram {
-            let url = webView.url
-            webView.evaluateJavaScript("window.__vigilResetFriendsFeedForRefresh?.();")
-            DispatchQueue.main.async { [weak self, weak webView] in
-                guard let self, let webView, self.webViews[service] === webView else { return }
-                if webView.url != url || webView.reloadFromOrigin() == nil {
-                    self.finishWebViewRefresh(webView, for: service, restoreInstagramFeed: true)
-                }
+        setSurface(surface, for: service)
+        let url = webView.url
+        let documentID = mainDocumentIDs[service]
+        let generation = mainDocumentGenerations[service]
+        Task { [weak self, weak webView] in
+            guard let self, let webView else { return }
+            let recovered = try? await webView.callAsyncJavaScript(
+                "return await window.__vigilRecoverEmptyFriendsFeed?.();",
+                arguments: [:], in: nil, contentWorld: .page)
+            guard self.webViews[service] === webView, self.activeRefreshIDs[service] == refreshID else { return }
+            guard recovered as? Bool != true, self.selectedService == service, webView.url == url,
+                  let url, url.path.isEmpty || url.path == "/",
+                  self.mainDocumentIDs[service] == documentID, self.mainDocumentGenerations[service] == generation,
+                  self.surfaceStates[service]?.allowsRefresh == true,
+                  !self.instagramSuggestedReelsBlocked, !self.instagramSharedViewerScrollLocked else {
+                self.finishWebViewRefresh(webView, for: service)
+                return
             }
-        } else {
-            webView.reload()
+            self.setSurface(.unknown, for: service)
+            webView.evaluateJavaScript("window.__vigilResetFriendsFeedForRefresh?.();", completionHandler: nil)
+            if webView.reloadFromOrigin() == nil {
+                self.finishWebViewRefresh(webView, for: service, restoreInstagramFeed: true)
+            }
         }
-        return true
     }
 
     private func finishWebViewRefresh(_ webView: WKWebView, for service: SocialService,
                                       restoreInstagramFeed: Bool = false) {
-        let wasRefreshing = refreshingServices.remove(service) != nil
+        let wasRefreshing = activeRefreshIDs.removeValue(forKey: service) != nil
         webView.scrollView.refreshControl?.endRefreshing()
+        if wasRefreshing, let surface = surfaceStates[service] { setSurface(surface, for: service) }
         if wasRefreshing, service == .instagram, restoreInstagramFeed {
             webView.evaluateJavaScript("window.__vigilRestoreFriendsFeedAfterRefreshFailure?.();")
         }
@@ -1518,13 +1531,6 @@ final class SocialWebViewStore: NSObject, ObservableObject {
             ) else { return }
         }
         switch type {
-        case "instagramFriendsFeedRefresh":
-            guard service == .instagram, selectedService == .instagram,
-                  !instagramSuggestedReelsBlocked, !instagramSharedViewerScrollLocked,
-                  Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
-                  let webView = message.webView, webViews[service] === webView,
-                  let url = webView.url, url.path.isEmpty || url.path == "/" else { return }
-            beginWebViewRefresh(webView, for: service)
         case "instagramSearchOpen":
             guard service == .instagram, frame.isMainFrame,
                   Self.isCurrentMainDocumentMessage(body["documentID"], currentDocumentID: mainDocumentIDs[service]),
@@ -2374,11 +2380,12 @@ final class SocialWebViewStore: NSObject, ObservableObject {
         }
         let scrollView = webView.scrollView
         let allowsRefresh = surface.allowsRefresh
-        let isRefreshing = refreshingServices.contains(service)
+        let isRefreshing = activeRefreshIDs[service] != nil
         // A reload temporarily reports an unknown surface. Keep the active
         // refresh presentation alive until navigation completes, while
-        // disabling the control so a second pull cannot start concurrently.
-        scrollView.refreshControl?.isEnabled = allowsRefresh && !isRefreshing
+        // UIKit stops its spinner when disabled. The active refresh ID
+        // coalesces additional pulls until the current one completes.
+        scrollView.refreshControl?.isEnabled = (service == .instagram && isRefreshing) || (allowsRefresh && !isRefreshing)
         scrollView.alwaysBounceVertical = allowsRefresh || isRefreshing
         if !allowsRefresh && !isRefreshing {
             scrollView.refreshControl?.endRefreshing()
@@ -2866,7 +2873,7 @@ extension SocialWebViewStore: WKNavigationDelegate {
         // during ordinary Instagram document navigations. The document-start
         // policy still hides unclassified page/media content fail-closed, while
         // avoiding a full-screen loading takeover for stories and Direct.
-        if !refreshingServices.contains(service),
+        if activeRefreshIDs[service] == nil,
            !servicesWithUsableContent.contains(service) {
             health[service] = .loading
         }

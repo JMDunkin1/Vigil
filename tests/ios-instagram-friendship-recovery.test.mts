@@ -9,7 +9,7 @@ import { runInNewContext } from 'node:vm';
 const runtimeRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = existsSync(join(runtimeRoot, 'ios')) ? runtimeRoot : resolve(runtimeRoot, '..', '..');
 const source = await readFile(join(root, 'ios/VigilSocial/VigilSocial/DOMAdapters.swift'), 'utf8');
-const queue = source.slice(source.indexOf('const friendshipLookupQueue ='), source.indexOf('let emptyStateTimer ='));
+const queue = source.slice(source.indexOf('const friendshipLookupQueue ='), source.indexOf('let finishEmptyFeedRecovery ='));
 const recovery = source.slice(source.indexOf('const retryUnavailableFriendships ='), source.indexOf('const removeStoryPlaceholders ='));
 assert.ok(queue.includes('const fetchMutualFriendship ='));
 assert.ok(recovery.includes("window.addEventListener('online'"));
@@ -40,7 +40,6 @@ function fixture(): RecoveryFixture {
     const window = { addEventListener: (event, callback) => { events[event] = callback; } };
     const document = { addEventListener() {} };
     const friendshipCache = new Map(), friendshipChecks = new Map();
-    let friendshipLookupFailed = false;
     const currentMutualFriendship = async username => {
       calls.push(username);
       if (!available) throw new Error('temporary outage');
