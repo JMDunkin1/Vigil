@@ -121,10 +121,19 @@ test('watched cards keep their position and the final grid remains visible with 
     assert.deepEqual(f.cards().map(card => card.children[0].children.map(child => child.textContent)), Array(4).fill(['Watched']));
   }
 });
+test('local playback progress blacks out a playable card before account progress syncs', () => {
+  const f = fixture(), state = f.api.state();
+  state.slots[0].locked = true;
+  f.api.update();
+  const card = f.links()[0];
+  assert.equal(card.href, '/watch?v=' + ids[0]);
+  assert.equal(card.children[0].querySelector('img'), undefined);
+  assert.equal(card.children[0].children[0].textContent, 'In progress');
+});
 test('first activation directly opens a save and polling does not replace the clicked card', () => {
   const f = fixture(); f.api.update();
   const first = f.links()[0], heading = f.content().querySelector('h1');
-  const state = f.api.state(); state.slots[0].locked = true; state.usedMs = 16000;
+  const state = f.api.state(); state.usedMs = 16000;
   f.api.update();
   assert.equal(f.links()[0], first); assert.equal(f.content().querySelector('h1'), heading);
   let prevented = 0, stopped = 0;

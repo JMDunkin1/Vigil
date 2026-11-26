@@ -1190,34 +1190,31 @@
           background:var(--vigil-finished-bg,#0f0f0f)!important;color:var(--vigil-finished-text,#f1f1f1)!important;
           font:16px/1.5 Roboto,Arial,sans-serif}
         :host([hidden]){display:none!important}*{box-sizing:border-box}
-        main{--heading-size:clamp(22px,3.5vw,28px);max-width:1040px;margin:0 auto;color:var(--vigil-finished-text,#f1f1f1);
+        main{--heading-size:clamp(22px,3.5vw,28px);max-width:1920px;margin:0 auto;color:var(--vigil-finished-text,#f1f1f1);
           animation:vigil-content-in 300ms cubic-bezier(.2,0,0,1) both}
         .brand{min-height:44px;font-size:16px;font-weight:600;letter-spacing:-.2px}
         .brand-label{border:0;background:transparent;color:inherit;font:inherit;padding:0;min-height:44px;cursor:pointer}
         .brand-label:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:4px;border-radius:4px}
         h1{margin:12px 0 24px;font-size:var(--heading-size);font-weight:650;line-height:1.2}
-        .cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:30px 18px}
+        .cards{display:grid;grid-template-columns:var(--vigil-home-columns,repeat(auto-fill,minmax(min(100%,300px),1fr)));column-gap:16px;row-gap:0}
         .cards[data-watched]{margin-top:calc(var(--heading-size) * 1.2 + 36px)}
         .card{display:block;min-width:0;color:inherit;text-decoration:none;touch-action:manipulation}
         a.card:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:3px}
-        .poster{display:grid;place-items:center;position:relative;aspect-ratio:16/9;border-radius:8px;overflow:hidden;
+        .poster{display:grid;place-items:center;position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;
           background:var(--vigil-finished-raised,#242424)}
         .poster img{display:block;width:100%;height:100%;object-fit:cover}
-        .poster[data-watch-progress] img{filter:grayscale(1);opacity:.55}
-        .watch-progress{position:absolute;top:8px;left:8px;padding:2px 5px;border-radius:3px;background:#000d;color:#fff;font-size:12px}
+        .poster[data-watch-progress]{background:#000}
+        .card-status{color:#fff;font:500 14px/1.4 Roboto,Arial,sans-serif}
         .duration{position:absolute;right:8px;bottom:8px;padding:2px 5px;border-radius:3px;background:#000d;color:#fff;font:600 12px/1.3 Roboto,Arial,sans-serif}
-        .card[data-inactive] .poster{background:none;border:1px solid #8888}
-        .card-status,.byline{color:var(--vigil-finished-secondary,#aaa);font-size:13px}
-        .card-copy{display:block;height:72px;padding-top:9px}
+        .card-copy{display:block;padding:10px 0 14px}
         .title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:16px;font-weight:600;line-height:1.3}
-        .byline{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-        .card[data-inactive] .card-copy{visibility:hidden}
+        .byline{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vigil-finished-secondary,#aaa);font-size:14px}
         .finished-message{position:fixed;inset:0;display:grid;place-items:center;padding:24px;pointer-events:none}
         .finished-message h1{max-width:calc(100vw - 48px);text-align:center;text-wrap:balance;margin:0;padding:16px 22px;
           border:1px solid #8886;border-radius:8px;background:var(--vigil-finished-raised,#242424);box-shadow:0 6px 26px #0005;
           font-size:clamp(18px,3.5vw,24px)}
         @keyframes vigil-content-in{from{opacity:0}to{opacity:1}}
-        @media(max-width:600px){:host{padding-top:calc(env(safe-area-inset-top) + 24px);padding-left:16px;padding-right:16px}.cards{grid-template-columns:minmax(0,1fr);gap:10px}}
+        @media(max-width:600px){:host{padding-top:calc(env(safe-area-inset-top) + 24px);padding-inline:0}.brand,main>h1{padding-inline:12px}.cards{grid-template-columns:minmax(0,1fr)}.poster{border-radius:0}.card-copy{padding-inline:12px}.title{font-size:14px}}
         @media(prefers-reduced-motion:reduce){main{animation:none!important}}
       `;
       shadow.append(style, document.createElement('main'));
@@ -1229,6 +1226,12 @@
     // its dark appearance into a black-on-white document.
     if (typeof window.getComputedStyle === 'function') {
       const theme = window.getComputedStyle(document.querySelector('ytd-app,ytm-app') || document.documentElement);
+      const homeGrid = document.querySelector('ytd-rich-grid-renderer');
+      const columns = homeGrid && window.getComputedStyle(homeGrid).getPropertyValue('--ytd-rich-grid-items-per-row').trim();
+      const layout = /^([1-9]|10)$/.test(columns) ? `repeat(${columns},minmax(0,1fr))` : '';
+      if (finishedScreen.style.getPropertyValue('--vigil-home-columns') !== layout) {
+        finishedScreen.style.setProperty('--vigil-home-columns', layout);
+      }
       for (const [own, native] of [
         ['bg', '--yt-spec-base-background'], ['text', '--yt-spec-text-primary'],
         ['secondary', '--yt-spec-text-secondary'], ['raised', '--yt-spec-raised-background'],
@@ -1244,12 +1247,17 @@
     const allWatched = saved.length === 4 && saved.every(slot => slot.completed);
     const slots = timeFinished && !allWatched ? [] : saved;
     const playlist = watchLaterSnapshot?.day === state.day ? watchLaterSnapshot.cards : null;
-    const details = slots.map(slot => slot.completed || slot.removed ? null : playlist?.find(card => card.videoId === slot.videoId));
-    // Playback counters and slot locks change during polling. Rebuild only
-    // when a card or the heading changes.
+    const details = slots.map(slot => playlist?.find(card => card.videoId === slot.videoId));
+    const statuses = slots.map((slot, index) => {
+      if (slot.completed) return 'Watched';
+      if (slot.removed) return 'Removed';
+      if (details[index]?.watchStatus === 'watched') return 'Watched';
+      return details[index]?.watchStatus === 'in-progress' || slot.locked ? 'In progress' : '';
+    });
+    // Keep the existing cards throughout polls that only change playback counters.
     const signature = JSON.stringify([state.day, timeFinished, slots.map((slot, index) => [
       slot.videoId, slot.title, Boolean(slot.completed), slot.completed ? false : slot.removed,
-      details[index]?.channel, details[index]?.duration, details[index]?.thumbnail, details[index]?.watchStatus
+      details[index]?.channel, details[index]?.duration, details[index]?.thumbnail, statuses[index]
     ])]);
     if (signature === finishedSignature) { finishedScreen.hidden = false; return; }
     finishedSignature = signature;
@@ -1276,15 +1284,13 @@
       title.textContent = slot.title && slot.title !== slot.videoId ? slot.title : 'Saved video';
       copy.append(title);
       card.append(poster, copy); item.append(card);
-      if (inactive) {
-        card.setAttribute('data-inactive', '');
+      const {channel, duration, thumbnail: playlistImage} = details[index] || {};
+      if (statuses[index]) {
+        poster.setAttribute('data-watch-progress', '');
         const status = document.createElement('span'); status.className = 'card-status';
-        status.textContent = slot.completed ? 'Watched' : 'Removed';
-        item.setAttribute('aria-label', `${title.textContent} · ${status.textContent}`);
-        status.setAttribute('aria-hidden', 'true');
+        status.textContent = statuses[index];
         poster.append(status);
       } else {
-        const {channel, duration, thumbnail: playlistImage, watchStatus} = details[index] || {};
         const thumbnail = document.createElement('img');
         thumbnail.alt = ''; thumbnail.decoding = 'async'; thumbnail.referrerPolicy = 'no-referrer';
         const defaultImage = `https://i.ytimg.com/vi/${encodeURIComponent(slot.videoId)}/mqdefault.jpg`;
@@ -1294,20 +1300,19 @@
         });
         thumbnail.src = playlistImage || defaultImage;
         poster.append(thumbnail);
-        if (watchStatus) {
-          poster.setAttribute('data-watch-progress', watchStatus);
-          const status = document.createElement('span'); status.className = 'watch-progress';
-          status.textContent = watchStatus === 'watched' ? 'Watched' : 'In progress';
-          poster.append(status);
-        }
-        if (duration) {
-          const runtime = document.createElement('span'); runtime.className = 'duration'; runtime.textContent = duration;
-          poster.append(runtime);
-        }
-        if (channel) {
-          const byline = document.createElement('span'); byline.className = 'byline'; byline.textContent = channel;
-          copy.append(byline);
-        }
+      }
+      if (duration) {
+        const runtime = document.createElement('span'); runtime.className = 'duration'; runtime.textContent = duration;
+        poster.append(runtime);
+      }
+      if (channel) {
+        const byline = document.createElement('span'); byline.className = 'byline'; byline.textContent = channel;
+        copy.append(byline);
+      }
+      if (inactive) {
+        card.setAttribute('data-inactive', '');
+        item.setAttribute('aria-label', `${title.textContent} · ${statuses[index]}`);
+      } else {
         card.href = `/watch?v=${encodeURIComponent(slot.videoId)}`;
         wireSavedCard(card);
       }
@@ -1389,10 +1394,12 @@
       style.textContent += '#vigil-youtube-limits[data-duplicate-status]{display:none!important}';
       // Native thumbnails already carry YouTube's account-wide watch signal.
       // Style the image so the progress bar, links, and menus remain usable.
-      style.textContent += `:is(ytd-thumbnail,ytm-thumbnail,ytm-video-thumbnail,yt-thumbnail-view-model,a#thumbnail,.video-thumbnail-container):has(
-        ytd-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytw-thumbnail-overlay-resume-playback-renderer:not([hidden]),
+      const progressedThumbnail = `:is(ytd-thumbnail,ytm-thumbnail,ytm-video-thumbnail,yt-thumbnail-view-model,ytm-thumbnail-view-model,a#thumbnail,.video-thumbnail-container):has(
+        ytd-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytm-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytw-thumbnail-overlay-resume-playback-renderer:not([hidden]),
         .resume-playback-background,.ytThumbnailOverlayProgressBarHostWatchedProgressBar,.yt-thumbnail-overlay-progress-bar-view-model-wiz__progress-bar
-      ) img{filter:grayscale(1)!important;opacity:.55!important}`;
+      )`;
+      style.textContent += `${progressedThumbnail}{background:#000!important}
+        ${progressedThumbnail} :is(img,video,canvas){filter:brightness(0)!important;opacity:1!important;background:#000!important}`;
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
       // The mobile topic bar is fixed, but its wrapper still reserves 50–62px
