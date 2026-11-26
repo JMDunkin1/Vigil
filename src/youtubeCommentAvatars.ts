@@ -12,7 +12,7 @@ export function installYouTubeCommentAvatarMask(): void {
   // Reply expanders are siblings of the comment renderer and can show a
   // creator-thumbnail preview beside their show/hide replies controls.
   const comments = ":is(ytd-comment-renderer, ytd-comment-view-model, ytd-comment-replies-renderer, ytm-comment-renderer, ytm-comment-view-model, ytm-comment-replies-renderer, ytd-comment-simplebox-renderer, ytm-comment-simplebox-renderer, ytm-comments-entry-point-header-renderer, ytm-comments-entry-point-teaser-renderer, comments-entry-point-teaser-view-model)";
-  const avatars = ":is(#author-thumbnail, #author-photo, #creator-thumbnail, .comment-icon-container, .comment-icon, .comment-author-thumbnail, .ytmCommentViewModelAuthorThumbnail, .ytmCommentViewModelAuthorAvatar, .ytmCommentViewModelAvatar, .yt-spec-avatar-shape, yt-avatar-shape)";
+  const avatars = ":is(#author-thumbnail, #author-photo, #creator-thumbnail, #hearted-thumbnail, ytd-creator-heart-renderer yt-img-shadow img, .comment-icon-container, .comment-icon, .comment-author-thumbnail, .ytmCommentViewModelAuthorThumbnail, .ytmCommentViewModelAuthorAvatar, .ytmCommentViewModelAvatar, .yt-spec-avatar-shape, yt-avatar-shape)";
   const avatar = `${comments} ${avatars}`;
   const style = document.createElement("style");
   style.id = styleID;
@@ -23,6 +23,11 @@ export function installYouTubeCommentAvatarMask(): void {
       box-shadow: none !important;
       -webkit-mask-image: none !important;
       mask-image: none !important;
+    }
+    /* A comment's author link can span the whole reply rail. Only its
+       image needs a gray fill when YouTube provides an image element. */
+    ${avatar}:has(img), ${avatar} picture:has(img) {
+      background: transparent !important;
     }
     ${avatar}::before, ${avatar}::after {
       content: none !important;

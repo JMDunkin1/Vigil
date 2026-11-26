@@ -5,6 +5,9 @@ body { margin: 20px; background: #fff; color: #222; font: 14px system-ui; }
 .row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .avatar { display: block; width: 40px; height: 40px; border-radius: 50%; }
 .avatar img { display: block; width: 100%; height: 100%; border-radius: 50%; }
+#desktop #author-thumbnail { position: relative; height: 64px; }
+#desktop #desktop-image { height: 40px; }
+#desktop .reply-connector { position: absolute; top: 40px; bottom: 0; left: 19px; border-left: 2px solid #444; }
 .small { width: 24px; height: 24px; }
 .background { background: linear-gradient(45deg, #008000, #00ff00); }
 .background::before { content: '★'; }
@@ -23,8 +26,8 @@ window.avatarLoaded = node => window.coldLoads.push(window.isMasked(node));
 <h3>Comments and replies · benign fixture</h3>
 <ytd-comment-thread-renderer id="desktop-thread">
 <ytd-comment-view-model class="row" id="desktop">
-  <a id="author-thumbnail" class="avatar" href="#author" aria-label="Alex's channel"><img id="desktop-image" alt="Alex profile picture" onload="avatarLoaded(this)" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='lime'/%3E%3Ccircle cx='20' cy='20' r='12' fill='green'/%3E%3C/svg%3E"></a>
-  <div class="text"><a id="username" href="#author">@Alex</a><span id="comment-text">Thanks for the useful explanation.</span><button id="like" onclick="window.fixtureLiked=true">Like</button></div>
+  <a id="author-thumbnail" class="avatar" href="#author" aria-label="Alex's channel"><img id="desktop-image" alt="Alex profile picture" onload="avatarLoaded(this)" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='lime'/%3E%3Ccircle cx='20' cy='20' r='12' fill='green'/%3E%3C/svg%3E"><span class="reply-connector" aria-hidden="true"></span></a>
+  <div class="text"><a id="username" href="#author">@Alex</a><span id="comment-text">Thanks for the useful explanation.</span><button id="like" onclick="window.fixtureLiked=true">Like</button><ytd-creator-heart-renderer><yt-img-shadow id="hearted-thumbnail"><img width="16" height="16" alt="Creator"></yt-img-shadow><svg width="8" height="8" aria-label="Heart"><circle cx="4" cy="4" r="4" fill="red"/></svg></ytd-creator-heart-renderer></div>
 </ytd-comment-view-model>
 <ytd-comment-replies-renderer class="row" id="reply-preview">
   <yt-img-shadow id="creator-thumbnail" class="avatar small"><img id="reply-preview-image" alt="Creator reply preview" onload="avatarLoaded(this)" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='40' height='40'%3E%3Crect width='40' height='40' fill='green'/%3E%3C/svg%3E"></yt-img-shadow>
@@ -78,13 +81,20 @@ window.runAvatarChecks = async masked => {
   assert('guard before body parsing', window.guardInHead);
   assert('cold render styles', cold.masked);
   assert('image load callbacks masked', coldLoads.length === 3 && coldLoads.every(Boolean));
-  assert('gray background', getComputedStyle(document.querySelector('#desktop #author-thumbnail')).backgroundColor === 'rgb(158, 158, 158)');
+  const image = document.getElementById('desktop-image');
+  const rail = image.parentElement;
+  assert('only the circular author image paints gray', getComputedStyle(image).backgroundColor === 'rgb(158, 158, 158)'
+    && image.offsetHeight === image.offsetWidth && rail.offsetHeight > image.offsetHeight
+    && getComputedStyle(rail).backgroundColor === 'rgba(0, 0, 0, 0)');
+  assert('reply connector starts below avatar', rail.querySelector('.reply-connector').getBoundingClientRect().top === image.getBoundingClientRect().bottom);
+  assert('creator portrait masked with heart still visible', isMasked(document.querySelector('#hearted-thumbnail img'))
+    && getComputedStyle(document.querySelector('ytd-creator-heart-renderer svg')).opacity === '1');
   const preview = document.getElementById('reply-preview');
   assert('reply preview is a sibling outside the comment renderer', preview.previousElementSibling === document.getElementById('desktop')
     && preview.parentElement === document.getElementById('desktop-thread')
     && !preview.closest('ytd-comment-renderer, ytd-comment-view-model'));
   assert('reply preview photo and background masked', isMasked(document.getElementById('reply-preview-image'))
-    && getComputedStyle(preview.querySelector('#creator-thumbnail')).backgroundColor === 'rgb(158, 158, 158)');
+    && getComputedStyle(document.getElementById('reply-preview-image')).backgroundColor === 'rgb(158, 158, 158)');
   document.getElementById('show-replies').click();
   assert('show replies action retained', document.getElementById('show-replies').getAttribute('aria-expanded') === 'true');
   document.getElementById('hide-replies').click();
