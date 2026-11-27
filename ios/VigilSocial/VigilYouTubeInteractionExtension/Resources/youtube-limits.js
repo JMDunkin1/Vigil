@@ -525,6 +525,15 @@
     return entries.length > 0 && entries.every(entry => entry.messageRenderer
       && /^No videos in this playlist(?: yet)?[.!]?$/i.test(textOf(entry.messageRenderer.text).trim()));
   }
+  function progressStatus(percent, lengthSeconds, duration) {
+    const seconds = /^\d+$/.test(lengthSeconds) ? Number(lengthSeconds) : 0;
+    const runtime = seconds || (/^\d+(?::[0-5]\d){1,2}$/.test(duration)
+      ? duration.split(':').reduce((total, part) => total * 60 + Number(part), 0) : 0);
+    // Synced account progress can lag behind playback. For the card label,
+    // allow up to the last quarter of the runtime, capped at five minutes.
+    const watchedAt = runtime > 0 ? Math.max(75, 100 - 30000 / runtime) : 80;
+    return percent >= watchedAt ? 'watched' : 'in-progress';
+  }
   function thumbnailWatchStatus(video, duration) {
     const legacy = video.thumbnailOverlays;
     const modern = video.thumbnail?.thumbnailViewModel?.overlays;
@@ -533,13 +542,7 @@
       const percent = overlay?.thumbnailOverlayResumePlaybackRenderer?.percentDurationWatched
         ?? overlay?.thumbnailBottomOverlayViewModel?.progressBar?.thumbnailOverlayProgressBarViewModel?.startPercent;
       if (!Number.isFinite(percent) || percent <= 0 || percent > 100) continue;
-      const seconds = /^\d+$/.test(video.lengthSeconds) ? Number(video.lengthSeconds) : 0;
-      const runtime = seconds || (/^\d+(?::[0-5]\d){1,2}$/.test(duration)
-        ? duration.split(':').reduce((total, part) => total * 60 + Number(part), 0) : 0);
-      // Synced account progress can lag behind playback. For the card label,
-      // allow up to the last quarter of the runtime, capped at five minutes.
-      const watchedAt = runtime > 0 ? Math.max(75, 100 - 30000 / runtime) : 80;
-      return percent >= watchedAt ? 'watched' : 'in-progress';
+      return progressStatus(percent, video.lengthSeconds, duration);
     }
     return '';
   }
@@ -1203,8 +1206,9 @@
         .poster{display:grid;place-items:center;position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;
           background:var(--vigil-finished-raised,#242424)}
         .poster img{display:block;width:100%;height:100%;object-fit:cover}
-        .poster[data-watch-progress]{background:#000}
+        .poster[data-blacked-out]{background:#000}
         .card-status{color:#fff;font:500 14px/1.4 Roboto,Arial,sans-serif}
+        .poster[data-in-progress] .card-status{position:absolute;z-index:1;top:8px;left:8px;padding:2px 6px;border-radius:4px;background:#000d;pointer-events:none}
         .duration{position:absolute;right:8px;bottom:8px;padding:2px 5px;border-radius:3px;background:#000d;color:#fff;font:600 12px/1.3 Roboto,Arial,sans-serif}
         .card-copy{display:block;padding:10px 0 14px}
         .title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:16px;font-weight:600;line-height:1.3}
@@ -1286,11 +1290,12 @@
       card.append(poster, copy); item.append(card);
       const {channel, duration, thumbnail: playlistImage} = details[index] || {};
       if (statuses[index]) {
-        poster.setAttribute('data-watch-progress', '');
+        poster.setAttribute(statuses[index] === 'In progress' ? 'data-in-progress' : 'data-blacked-out', '');
         const status = document.createElement('span'); status.className = 'card-status';
         status.textContent = statuses[index];
         poster.append(status);
-      } else {
+      }
+      if (!statuses[index] || statuses[index] === 'In progress') {
         const thumbnail = document.createElement('img');
         thumbnail.alt = ''; thumbnail.decoding = 'async'; thumbnail.referrerPolicy = 'no-referrer';
         const defaultImage = `https://i.ytimg.com/vi/${encodeURIComponent(slot.videoId)}/mqdefault.jpg`;
@@ -1376,6 +1381,34 @@
     'ytd-rich-section-renderer:has(ytd-feed-nudge-renderer)',
     'ytd-feed-nudge-renderer'
   ].join(',');
+  const nativePoster = 'ytd-thumbnail,ytm-thumbnail,ytm-video-thumbnail,yt-thumbnail-view-model,ytm-thumbnail-view-model,a#thumbnail,.video-thumbnail-container';
+  const nativeProgress = 'ytd-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytm-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytw-thumbnail-overlay-resume-playback-renderer:not([hidden]),.resume-playback-background,.ytThumbnailOverlayProgressBarHostWatchedProgressBar,.yt-thumbnail-overlay-progress-bar-view-model-wiz__progress-bar';
+  function updateNativeThumbnailProgress() {
+    const active = new Set();
+    for (const bar of document.querySelectorAll(nativeProgress)) {
+      if (bar.closest('[hidden]')) continue;
+      let poster = bar.closest(nativePoster);
+      while (poster && !poster.querySelector('img')) poster = poster.parentElement?.closest(nativePoster);
+      if (!poster || active.has(poster)) continue;
+      active.add(poster);
+      const fill = bar.querySelector('#progress,.resume-playback-progress,[aria-valuenow],[style*="%"]') || bar;
+      const width = fill.style.width;
+      const percent = Number(fill.getAttribute('aria-valuenow') ?? (width.endsWith('%') ? width.slice(0, -1) : NaN));
+      const duration = poster.querySelector('ytd-thumbnail-overlay-time-status-renderer,.yt-badge-shape__text')?.textContent.trim();
+      const status = progressStatus(percent, null, duration);
+      if (poster.getAttribute('data-vigil-native-progress') !== status) {
+        poster.setAttribute('data-vigil-native-progress', status);
+        poster.toggleAttribute('data-vigil-native-anchor', status === 'in-progress' &&
+          (poster.hasAttribute('data-vigil-native-anchor') || getComputedStyle(poster).position === 'static'));
+      }
+    }
+    for (const poster of document.querySelectorAll('[data-vigil-native-progress]')) {
+      if (!active.has(poster)) {
+        poster.removeAttribute('data-vigil-native-progress');
+        poster.removeAttribute('data-vigil-native-anchor');
+      }
+    }
+  }
   function clean() {
     if (!document.documentElement) return;
     updateHeldPlayer();
@@ -1384,6 +1417,7 @@
     mountWatchLaterMenu();
     updateFinishedScreen();
     void filterNativeFeed();
+    updateNativeThumbnailProgress();
     if (!document.getElementById('vigil-limits-style')) {
       const style = document.createElement('style'); style.id = 'vigil-limits-style';
       style.textContent = `html[data-vigil-feed-pending] :is(${nativeCardSelector}){display:none!important}` + 'a[href*="/shorts/"],ytd-reel-shelf-renderer,ytm-reel-shelf-renderer,ytd-video-preview,ytm-video-preview,.ytp-autonav-toggle-button,.ytp-autonav-endscreen-countdown-container,[data-vigil-feed-hidden],html[data-vigil-feed-complete] ytd-continuation-item-renderer,html[data-vigil-feed-complete] ytm-continuation-item-renderer{display:none!important}';
@@ -1392,14 +1426,12 @@
       style.textContent += 'html[data-vigil-standard-feed] ytd-masthead #background,html[data-vigil-standard-feed] ytd-app #frosted-glass{height:var(--ytd-masthead-height,56px)!important;min-height:0!important;overflow:hidden!important}html[data-vigil-standard-feed] ytd-rich-grid-renderer #header{display:none!important}';
       style.textContent += 'html[data-vigil-saves-finished] body>:not(#vigil-youtube-finished):not(#vigil-youtube-limits):not(#vigil-youtube-notice):not(#vigil-watch-later-tools):not(style):not(script){display:none!important}html[data-vigil-saves-full] :is(ytd-watch-flexy #secondary,ytd-watch-next-secondary-results-renderer,ytm-watch-next-secondary-results-renderer,.ytp-endscreen-content,.ytp-ce-element,.ytp-pause-overlay,.ytp-suggestion-set){display:none!important}';
       style.textContent += '#vigil-youtube-limits[data-duplicate-status]{display:none!important}';
-      // Native thumbnails already carry YouTube's account-wide watch signal.
-      // Style the image so the progress bar, links, and menus remain usable.
-      const progressedThumbnail = `:is(ytd-thumbnail,ytm-thumbnail,ytm-video-thumbnail,yt-thumbnail-view-model,ytm-thumbnail-view-model,a#thumbnail,.video-thumbnail-container):has(
-        ytd-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytm-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytw-thumbnail-overlay-resume-playback-renderer:not([hidden]),
-        .resume-playback-background,.ytThumbnailOverlayProgressBarHostWatchedProgressBar,.yt-thumbnail-overlay-progress-bar-view-model-wiz__progress-bar
-      )`;
-      style.textContent += `${progressedThumbnail}{background:#000!important}
-        ${progressedThumbnail} :is(img,video,canvas){filter:brightness(0)!important;opacity:1!important;background:#000!important}`;
+      style.textContent += `[data-vigil-native-progress="watched"]{background:#000!important}
+        [data-vigil-native-progress="watched"] :is(img,video,canvas){filter:brightness(0)!important;opacity:1!important;background:#000!important}
+        [data-vigil-native-progress="in-progress"]::after{content:"In progress";position:absolute;z-index:2;top:8px;left:8px;
+          right:auto;bottom:auto;width:max-content;height:fit-content;padding:2px 6px;border-radius:4px;
+          background:#000d;color:white;font:500 14px/1.4 Roboto,Arial,sans-serif;pointer-events:none}
+        [data-vigil-native-anchor]{position:relative!important}`;
       style.textContent += `${unwantedShelfSelector},[data-vigil-shelf-hidden]{display:none!important}`;
       style.textContent += `html[data-vigil-standard-feed] :is(${feedModuleSelector}){display:none!important}`;
       // The mobile topic bar is fixed, but its wrapper still reserves 50–62px

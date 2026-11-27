@@ -55,12 +55,15 @@ async function main() {
     await win.webContents.executeJavaScript(`[...document.querySelectorAll('ytd-rich-grid-media > a')].slice(0,2).forEach((link,index)=>{
       link.id='thumbnail';
       link.insertAdjacentHTML('beforeend',index===0
-        ? '<ytd-thumbnail-overlay-resume-playback-renderer></ytd-thumbnail-overlay-resume-playback-renderer>'
+        ? '<ytd-thumbnail-overlay-resume-playback-renderer><i id="progress" style="width:100%"></i></ytd-thumbnail-overlay-resume-playback-renderer>'
         : '<yt-thumbnail-view-model><div class="ytThumbnailOverlayProgressBarHostWatchedProgressBar"></div></yt-thumbnail-view-model>');
     });`);
-    assert.deepEqual(await nativeThumbnails(),['brightness(0)','brightness(0)','none']);
+    await wait(600);
+    assert.deepEqual(await nativeThumbnails(),['brightness(0)','none','none']);
+    assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.querySelector('[data-vigil-native-progress="in-progress"]'),'::after').content`),'"In progress"');
     await win.webContents.executeJavaScript(`document.querySelector('ytd-thumbnail-overlay-resume-playback-renderer').remove();`);
-    assert.deepEqual(await nativeThumbnails(),['none','brightness(0)','none']);
+    await wait(600);
+    assert.deepEqual(await nativeThumbnails(),['none','none','none']);
     // Drive the normal status transport with the mounted handler's next response.
     slots=ids.slice(0,4).map(videoId=>({videoId,title:['The science of building better habits','How a tiny team built something remarkable','A closer look at the world around us','The ideas worth taking your time with'][ids.indexOf(videoId)],locked:false,removed:false}));
     await win.webContents.executeJavaScript(`__testReply=${JSON.stringify(status())}; window.postMessage({type:'VIGIL_YOUTUBE_REPLY'},location.origin);`);
@@ -80,7 +83,7 @@ async function main() {
       new URL(card.href).searchParams.get('v'), !!card.querySelector('img'), getComputedStyle(card.querySelector('.poster')).backgroundColor, card.querySelector('.card-status')?.textContent || ''
     ])`);
     assert.deepEqual(savedThumbnailStates, [
-      [ids[0], false, 'rgb(0, 0, 0)', 'Watched'], [ids[1], false, 'rgb(0, 0, 0)', 'In progress'],
+      [ids[0], false, 'rgb(0, 0, 0)', 'Watched'], [ids[1], true, 'rgb(33, 33, 33)', 'In progress'],
       [ids[2], true, 'rgb(33, 33, 33)', ''], [ids[3], true, 'rgb(33, 33, 33)', '']
     ], 'account progress changes the card appearance while keeping its playback link');
     const appearance = await win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),main=root.querySelector('main');window.fixtureEntrance=main.getAnimations()[0];return {background:getComputedStyle(host).backgroundColor,text:getComputedStyle(main).color,entry:getComputedStyle(root.querySelector('a')).backgroundColor,animation:getComputedStyle(main).animationName}})()`);
@@ -138,7 +141,7 @@ async function main() {
     assert.equal(partial.cards[0].status,'Watched');
     assert.equal(partial.cards[0].photo,false);
     assert.equal(partial.cards[0].background,'rgb(0, 0, 0)');
-    assert.equal(partial.cards[1].photo,false);
+    assert.equal(partial.cards[1].photo,true);
     await refresh({},`/watch?v=${ids[0]}`);
     assert.equal((await screen()).hidden,false,'a cached successful check cannot reopen a completed saved video');
     await refresh({slots:completed.map(slot=>({...slot,completed:true}))},'/watch?v=other000004');

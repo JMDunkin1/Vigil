@@ -121,13 +121,14 @@ test('watched cards keep their position and the final grid remains visible with 
     assert.deepEqual(f.cards().map(card => card.children[0].children.map(child => child.textContent)), Array(4).fill(['Watched']));
   }
 });
-test('local playback progress blacks out a playable card before account progress syncs', () => {
+test('local playback progress labels a full-color playable card before account progress syncs', () => {
   const f = fixture(), state = f.api.state();
   state.slots[0].locked = true;
   f.api.update();
   const card = f.links()[0];
   assert.equal(card.href, '/watch?v=' + ids[0]);
-  assert.equal(card.children[0].querySelector('img'), undefined);
+  assert.equal(card.children[0].querySelector('img')?.src, `https://i.ytimg.com/vi/${ids[0]}/mqdefault.jpg`);
+  assert.equal(card.children[0].attributes.has('data-in-progress'), true);
   assert.equal(card.children[0].children[0].textContent, 'In progress');
 });
 test('first activation directly opens a save and polling does not replace the clicked card', () => {
