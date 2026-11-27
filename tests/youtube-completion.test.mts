@@ -121,6 +121,16 @@ test('watched cards keep their position and the final grid remains visible with 
     assert.deepEqual(f.cards().map(card => card.children[0].children.map(child => child.textContent)), Array(4).fill(['Watched']));
   }
 });
+test('an account-watched save is disabled even with an existing external grant', () => {
+  const f = fixture(), state = f.api.state();
+  f.api.playlist({ day: state.day, cards: [{ videoId: ids[0], watchStatus: 'watched' }] });
+  state.external = [ids[0]];
+  f.api.route(ids[0]); f.api.verify(ids[0]); f.api.update();
+  assert.equal(f.api.screen().hidden, false);
+  assert.equal(f.cards()[0].tag, 'div');
+  assert.equal(f.cards()[0].children[0].querySelector('img'), undefined);
+  assert.deepEqual(f.links().map(card => card.href), ids.slice(1).map(id => '/watch?v=' + id));
+});
 test('local playback progress labels a full-color playable card before account progress syncs', () => {
   const f = fixture(), state = f.api.state();
   state.slots[0].locked = true;

@@ -23,6 +23,7 @@ export interface YouTubeDay {
   timezone: string;
   baselineInitializedAt?: string;
   slots: (YouTubeSlot | null)[];
+  completedIds?: string[];
   played: Record<string, number>;
   usedMs: number;
   grace: { status: "unused" | "active" | "ended"; videoId: string | null; usedMs: number };
@@ -94,9 +95,18 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
     charge(day, day.lease.videoId, day.lease.milliseconds - day.lease.settledMs);
     day.lease = null;
   }
+  function markCompleted(id: string) {
+    const ids = day.completedIds ||= [];
+    if (!ids.includes(id)) ids.push(id);
+    const saved = day.slots.find(item => item?.videoId === id);
+    if (saved) saved.completed = true;
+  }
+  // Migrate previously completed slots before a playlist edit can remove them.
+  for (const saved of day.slots) if (saved?.completed && !day.completedIds?.includes(saved.videoId)) markCompleted(saved.videoId);
   const result = (ok = true, message = "", lease: Lease | null = null) => ({
     ok, message, day: day.day, slots: structuredClone(day.slots), usedMs: day.usedMs,
     grace: { ...day.grace }, feeds: structuredClone(day.feeds), external: [...day.external], lease,
+    completedIds: [...(day.completedIds || [])],
     watchLaterOverflow: day.watchLaterOverflow === true,
     // The full checkpoint is needed only before reconciliation; never send a
     // potentially large playlist back with every short playback renewal.
@@ -109,6 +119,11 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
   switch (input.action) {
     case "status": return result();
     case "watch-later-checkpoint": return result();
+    case "watched-thumbnails":
+      if (input.day !== day.day || !Array.isArray(input.videoIds) || input.videoIds.length > 100
+          || !input.videoIds.every(id => Boolean(videoId(id)))) return result(false, "Invalid watched videos.");
+      for (const id of input.videoIds) markCompleted(id);
+      return result();
     case "watch-later-sync": {
       if (input.complete !== true || typeof input.accountKey !== "string" || !/^[a-f0-9]{64}$/.test(input.accountKey)
           || !Array.isArray(input.videoIds) || input.videoIds.length > YOUTUBE_WATCH_LATER_MAX
@@ -137,6 +152,11 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
         if (index < 0 || day.watchLaterOverflow) { day.watchLaterOverflow = true; continue; }
         day.slots[index] = { videoId: id, title: titles.get(id) || id, locked: (day.played[id] || 0) > 15_000, removed: false };
       }
+      for (const card of input.cards) {
+        if (card.watchStatus === "watched" && day.slots.some(slot => slot?.videoId === card.videoId)
+            && input.videoIds.includes(card.videoId)) markCompleted(card.videoId);
+      }
+      for (const slot of day.slots) if (slot && day.completedIds?.includes(slot.videoId)) markCompleted(slot.videoId);
       // Absence is not a refund: another surface may have watched and removed
       // a video, or this snapshot may predate a pending YouTube save.
       const videoIds = [...input.videoIds as string[]].sort();
@@ -151,10 +171,12 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
     case "search":
     case "external":
       if (!id) return result(false, "Invalid video.");
+      if (day.completedIds?.includes(id)) return result(false, "You’ve finished this video today.");
       if (!day.external.includes(id)) day.external.push(id);
       return result();
     case "save": {
       if (!id) return result(false, "Invalid video.");
+      if (day.completedIds?.includes(id) && !slot) return result(false, "You’ve finished this video today.");
       if (slot) { slot.removed = false; return result(); }
       if (day.watchLaterOverflow) return result(false, YOUTUBE_USED);
       let index = day.slots.indexOf(null);
@@ -206,8 +228,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
       charge(day, lease.videoId, elapsed - lease.settledMs);
       lease.settledMs = elapsed;
       if (input.completed === true || (input.action === "settle" && input.ended === true)) {
-        const finished = day.slots.find(item => item?.videoId === lease.videoId);
-        if (finished) finished.completed = true;
+        markCompleted(lease.videoId);
       }
       if (input.action === "renew" && day.grace.status !== "ended") {
         const remaining = day.usedMs < YOUTUBE_BASE_MS ? YOUTUBE_BASE_MS - day.usedMs : YOUTUBE_GRACE_MS - day.grace.usedMs;
@@ -233,7 +254,7 @@ export function youtubeAction(state: VigilState, input: YouTubeRequest, now = ne
         day.grace.status = "ended";
       }
       if (day.grace.status === "ended") return result(false, YOUTUBE_TIME);
-      if (slot?.completed && !day.external.includes(id)) return result(false, "You’ve finished this saved video today.");
+      if (day.completedIds?.includes(id)) return result(false, "You’ve finished this video today.");
       if ((!slot || slot.removed) && !day.external.includes(id)) return result(false, "Save this video to Watch Later before playing.");
       if (input.action === "check") return result();
       if (day.lease) return result(false, "Pause playback in the other tab or device first.");

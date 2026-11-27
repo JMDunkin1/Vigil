@@ -31,6 +31,7 @@ export function validateYouTubeLedgerSeed(value: unknown): { youtubeLimits: YouT
       || day.slots.some(slot => slot !== null && (!/^[\w-]{11}$/.test(slot.videoId) || typeof slot.title !== "string"
         || typeof slot.locked !== "boolean" || typeof slot.removed !== "boolean"
         || slot.completed !== undefined && typeof slot.completed !== "boolean"))
+      || day.completedIds !== undefined && (!Array.isArray(day.completedIds) || day.completedIds.some(id => typeof id !== "string" || !/^[\w-]{11}$/.test(id)))
       || day.watchLater !== undefined && !validYouTubeWatchLaterCheckpoint(day.watchLater)
       || day.watchLaterOverflow !== undefined && typeof day.watchLaterOverflow !== "boolean") throw new Error("A verified, settled migration seed is required.");
   if (new Set(day.slots.filter(slot => slot !== null).map(slot => slot.videoId)).size !== day.slots.filter(Boolean).length

@@ -220,3 +220,25 @@ test('pausing or an invalid completion settlement cannot mark a saved video fini
   assert.equal(act({ action: 'settle', leaseId: 'invalid', playedMs: 0, ended: true }).ok, false);
   assert.equal(act({ action: 'status' }).slots[0]!.completed, undefined);
 });
+
+test('watched cards deny replay through old grants, playlist edits and reloads until the daily reset', () => {
+  const { act, state } = setup();
+  const day = act({ action: 'external', videoId: ids[0] }).day;
+  act({ action: 'watch-later-sync', day, revision: 0, complete: true, accountKey: 'a'.repeat(64),
+    videoIds: ids.slice(0, 2), cards: [{ videoId: ids[0], title: 'Finished', watchStatus: 'watched' },
+      { videoId: ids[1], title: 'Continue', watchStatus: 'in-progress' }] });
+  assert.equal(act({ action: 'status' }).slots[0]?.completed, true);
+  assert.equal(act({ action: 'check', videoId: ids[1] }).ok, true);
+  act({ action: 'remove', videoId: ids[0] });
+  act({ action: 'watched-thumbnails', day, videoIds: [ids[2]] });
+  for (const videoId of [ids[0], ids[2]]) {
+    for (const action of ['search', 'external', 'check', 'start']) {
+      assert.equal(youtubeAction(structuredClone(state), { action, videoId, client: 'new-tab' },
+        new Date('2026-09-07T17:00:00Z')).ok, false);
+    }
+  }
+  const tomorrow = new Date('2026-09-08T17:00:00Z');
+  assert.equal(youtubeAction(state, { action: 'watched-thumbnails', day, videoIds: [ids[0]] }, tomorrow).ok, false);
+  assert.equal(youtubeAction(state, { action: 'external', videoId: ids[0] }, tomorrow).ok, true);
+  assert.equal(youtubeAction(state, { action: 'start', videoId: ids[0], client: 'new-tab' }, tomorrow).ok, true);
+});

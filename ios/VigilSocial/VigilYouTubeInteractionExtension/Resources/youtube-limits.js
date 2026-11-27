@@ -902,7 +902,7 @@
         try {
           const reply = await request({ action: 'watch-later-sync', accountKey: snapshot.accountKey,
             videoIds: snapshot.cards.map(card => card.videoId),
-            cards: candidates.map(({videoId, title}) => ({videoId, title})), complete: true,
+            cards: candidates.map(({videoId, title, watchStatus}) => ({videoId, title, watchStatus})), complete: true,
             revision: before.watchLater?.revision || 0, day: before.day });
           watchLaterSnapshot = { ...snapshot, day: reply.day };
           watchLaterCheckedAt = performance.now();
@@ -1174,9 +1174,10 @@
     const grace = state?.grace;
     const timeFinished = Boolean(state && (grace?.status === 'ended'
       || state.usedMs >= 7200000 && !(grace?.status === 'active' && grace.usedMs < 1200000 && grace.videoId === id)));
-    const permittedWatch = Boolean(id && ((slot && !slot.removed && !slot.completed)
-      || playing && !settlingPlayback && lease?.videoId === id
-      || state?.external?.includes(id) || !slot?.completed && verifiedWatchPages.has(`${state?.day}:${id}`)));
+    const completed = slot?.completed || state?.completedIds?.includes(id)
+      || watchLaterSnapshot?.day === state?.day && watchLaterSnapshot?.cards.some(card => card.videoId === id && card.watchStatus === 'watched');
+    const permittedWatch = Boolean(id && (playing && !settlingPlayback && lease?.videoId === id
+      || !completed && (slot && !slot.removed || state?.external?.includes(id) || verifiedWatchPages.has(`${state?.day}:${id}`))));
     const gated = timeFinished || full && !permittedWatch;
     document.documentElement.toggleAttribute('data-vigil-saves-finished', gated);
     document.documentElement.toggleAttribute('data-vigil-saves-full', full);
@@ -1280,7 +1281,7 @@
     const list = document.createElement('div'); list.className = 'cards'; list.setAttribute('role', 'list');
     const cards = slots.map((slot, index) => {
       const item = document.createElement('div'); item.setAttribute('role', 'listitem');
-      const inactive = slot.completed || slot.removed;
+      const inactive = statuses[index] === 'Watched' || slot.removed;
       const card = document.createElement(inactive ? 'div' : 'a'); card.className = 'card';
       const poster = document.createElement('span'); poster.className = 'poster';
       const copy = document.createElement('span'); copy.className = 'card-copy';
@@ -1383,7 +1384,9 @@
   ].join(',');
   const nativePoster = 'ytd-thumbnail,ytm-thumbnail,ytm-video-thumbnail,yt-thumbnail-view-model,ytm-thumbnail-view-model,a#thumbnail,.video-thumbnail-container';
   const nativeProgress = 'ytd-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytm-thumbnail-overlay-resume-playback-renderer:not([hidden]),ytw-thumbnail-overlay-resume-playback-renderer:not([hidden]),.resume-playback-background,.ytThumbnailOverlayProgressBarHostWatchedProgressBar,.yt-thumbnail-overlay-progress-bar-view-model-wiz__progress-bar';
+  let nextWatchedReport = 0;
   function updateNativeThumbnailProgress() {
+    const observed = new Set();
     const active = new Set();
     for (const bar of document.querySelectorAll(nativeProgress)) {
       if (bar.closest('[hidden]')) continue;
@@ -1395,12 +1398,20 @@
       const width = fill.style.width;
       const percent = Number(fill.getAttribute('aria-valuenow') ?? (width.endsWith('%') ? width.slice(0, -1) : NaN));
       const duration = poster.querySelector('ytd-thumbnail-overlay-time-status-renderer,.yt-badge-shape__text')?.textContent.trim();
-      const status = progressStatus(percent, null, duration);
+      const link = poster.closest('a[href]') || poster.querySelector('a[href]') || poster.closest(nativeCardSelector)?.querySelector('a[href*="watch?v="]');
+      const id = link && idFrom(link.href);
+      const known = id && state?.completedIds?.includes(id);
+      const status = known ? 'watched' : progressStatus(percent, null, duration);
+      if (id && !known && status === 'watched') observed.add(id);
       if (poster.getAttribute('data-vigil-native-progress') !== status) {
         poster.setAttribute('data-vigil-native-progress', status);
         poster.toggleAttribute('data-vigil-native-anchor', status === 'in-progress' &&
           (poster.hasAttribute('data-vigil-native-anchor') || getComputedStyle(poster).position === 'static'));
       }
+    }
+    if (state?.day && observed.size && performance.now() >= nextWatchedReport) {
+      nextWatchedReport = performance.now() + 5000;
+      void request({ action: 'watched-thumbnails', day: state.day, videoIds: [...observed].slice(0, 100) }).catch(() => {});
     }
     for (const poster of document.querySelectorAll('[data-vigil-native-progress]')) {
       if (!active.has(poster)) {
@@ -1502,6 +1513,15 @@
   }, true);
   document.addEventListener('click', event => {
     if (replayingSave || !event.isTrusted || !(event.target instanceof Element)) return;
+    const link = event.target.closest('a[href]');
+    const linkedId = link && idFrom(link.href);
+    const card = event.target.closest(nativeCardSelector);
+    if (linkedId && (state?.completedIds?.includes(linkedId) || link.closest('[data-vigil-native-progress="watched"]')
+        || link.querySelector('[data-vigil-native-progress="watched"]') || card?.querySelector('[data-vigil-native-progress="watched"]'))) {
+      event.preventDefault(); event.stopImmediatePropagation();
+      show('You’ve finished this video today.');
+      return;
+    }
     // A deliberate search result uses watch time without allocating Watch Later.
     // Persist the grant before same-tab navigation can tear down this bridge.
     const resultCard = event.target.closest('ytm-video-with-context-renderer,ytm-video-renderer,ytd-video-renderer,yt-lockup-view-model');

@@ -79,13 +79,13 @@ async function main() {
     accountProgress=[100,42,0,101];
     await win.webContents.executeJavaScript(`window.dispatchEvent(new Event('focus'))`);
     await wait(650);
-    const savedThumbnailStates = await win.webContents.executeJavaScript(`[...testShadows.get(document.getElementById('vigil-youtube-finished')).querySelectorAll('a.card')].map(card=>[
-      new URL(card.href).searchParams.get('v'), !!card.querySelector('img'), getComputedStyle(card.querySelector('.poster')).backgroundColor, card.querySelector('.card-status')?.textContent || ''
+    const savedThumbnailStates = await win.webContents.executeJavaScript(`[...testShadows.get(document.getElementById('vigil-youtube-finished')).querySelectorAll('.card')].map(card=>[
+      card.href ? new URL(card.href).searchParams.get('v') : null, !!card.querySelector('img'), getComputedStyle(card.querySelector('.poster')).backgroundColor, card.querySelector('.card-status')?.textContent || ''
     ])`);
     assert.deepEqual(savedThumbnailStates, [
-      [ids[0], false, 'rgb(0, 0, 0)', 'Watched'], [ids[1], true, 'rgb(33, 33, 33)', 'In progress'],
+      [null, false, 'rgb(0, 0, 0)', 'Watched'], [ids[1], true, 'rgb(33, 33, 33)', 'In progress'],
       [ids[2], true, 'rgb(33, 33, 33)', ''], [ids[3], true, 'rgb(33, 33, 33)', '']
-    ], 'account progress changes the card appearance while keeping its playback link');
+    ], 'watched cards lose their links while in-progress cards stay playable');
     const appearance = await win.webContents.executeJavaScript(`(()=>{const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),main=root.querySelector('main');window.fixtureEntrance=main.getAnimations()[0];return {background:getComputedStyle(host).backgroundColor,text:getComputedStyle(main).color,entry:getComputedStyle(root.querySelector('a')).backgroundColor,animation:getComputedStyle(main).animationName}})()`);
     assert.equal(appearance.background,'rgb(15, 15, 15)','native theme wins over the page’s white section styling');
     assert.equal(appearance.text,'rgb(241, 241, 241)');
@@ -106,7 +106,7 @@ async function main() {
 
     await win.webContents.executeJavaScript(`history.pushState({},'', '/@channel')`); await wait(600);
     assert.equal(await win.webContents.executeJavaScript(`document.documentElement.hasAttribute('data-vigil-saves-finished')`),true,'channel browsing remains closed');
-    await win.webContents.executeJavaScript(`history.pushState({},'', '/watch?v=${ids[0]}')`); await wait(600);
+    await win.webContents.executeJavaScript(`history.pushState({},'', '/watch?v=${ids[1]}')`); await wait(600);
     assert.equal(await win.webContents.executeJavaScript(`document.documentElement.hasAttribute('data-vigil-saves-finished')`),false,'saved watch pages remain available');
     assert.equal(await win.webContents.executeJavaScript(`getComputedStyle(document.getElementById('related')).display`),'none','saved playback does not expose a recommendation feed');
     await win.webContents.executeJavaScript(`history.pushState({},'', '/watch?v=external001')`); await wait(600);
@@ -163,9 +163,9 @@ async function main() {
       await refresh({},'/watch?v=external001');
       assert.equal((await screen()).hidden,false,'time exhaustion also closes verified external watch pages');
     }
-    await refresh({slots,grace:{status:'active',videoId:ids[0],usedMs:1000}},`/watch?v=${ids[0]}`);
+    await refresh({slots,grace:{status:'active',videoId:ids[1],usedMs:1000}},`/watch?v=${ids[1]}`);
     assert.equal((await screen()).hidden,true,'the established finish-current-video grace remains available');
-    await refresh({},`/watch?v=${ids[1]}`);
+    await refresh({},`/watch?v=${ids[2]}`);
     assert.equal((await screen()).links.length,0,'grace never offers other saved videos');
 
     // Exercise a real first click/tap, including a YouTube delegated click
@@ -185,7 +185,7 @@ async function main() {
       win.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...point});
     }
     await Promise.race([navigated,wait(3000).then(()=>{throw new Error('First saved-video activation did not navigate');})]);
-    assert.equal(new URL(win.webContents.getURL()).searchParams.get('v'),ids[0],'one activation opens the selected saved video');
+    assert.equal(new URL(win.webContents.getURL()).searchParams.get('v'),ids[1],'one activation opens the selected saved video');
     if(native) win.webContents.debugger.detach();
   }
   console.log('YouTube browser checks passed: 18-video feed, collapsed header backdrop, completion states, single-click/tap navigation, stable animation, saved playback, hidden recommendations, and external links on web and app.');
