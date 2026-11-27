@@ -44,9 +44,8 @@ function fixture(bodyReady = true) {
   const grid = () => content()?.children.find(node => node.className === 'cards');
   const cards = () => grid()?.children.map(item => item.children[0]) || [];
   const links = () => cards().filter(card => card.tag === 'a');
-  const completion = () => content()?.children.find(node => node.className === 'finished-message');
-  const heading = () => (completion() || content())?.querySelector('h1')?.textContent;
-  return { api, document, body, panel, statusLine, navigations, content, grid, cards, links, completion, heading };
+  const heading = () => content()?.querySelector('h1')?.textContent;
+  return { api, document, body, panel, statusLine, navigations, content, grid, cards, links, heading };
 }
 test('four saved videos show their thumbnails and titles alongside the remaining time', () => {
   const f = fixture(), state = f.api.state();
@@ -115,8 +114,8 @@ test('watched cards keep their position and the final grid remains visible with 
   for (const slot of state.slots) slot.completed = true;
   for (const grace of ['unused', 'ended']) {
     state.grace.status = grace;
-    f.api.update(); assert.equal(f.heading(), 'You’ve watched all your saved videos for today.');
-    assert.equal(f.completion()?.attributes.get('role'), 'status');
+    f.api.update(); assert.equal(f.heading(), 'Today’s saved videos');
+    assert.deepEqual(f.content().children.map(child => child.tag), ['div', 'h1', 'div']);
     assert.equal(f.links().length, 0);
     assert.deepEqual(f.cards().map(card => card.children[0].children.map(child => child.textContent)), Array(4).fill(['Watched']));
   }

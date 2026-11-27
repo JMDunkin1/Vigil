@@ -118,13 +118,13 @@ async function main() {
     };
     const screen = () => win.webContents.executeJavaScript(`(()=>{
       const host=document.getElementById('vigil-youtube-finished'),root=testShadows.get(host),heading=root.querySelector('h1');
-      const message=root.querySelector('.finished-message'),headingBox=heading.getBoundingClientRect();
+      const grid=root.querySelector('.cards');
       return {hidden:host.hidden,heading:heading.textContent,links:[...root.querySelectorAll('a')].map(a=>a.href),
         cards:[...root.querySelectorAll('.card')].map(card=>{
           const box=card.getBoundingClientRect(),poster=card.querySelector('.poster');
           return {title:card.querySelector('.title').textContent,status:card.querySelector('.card-status')?.textContent,
             photo:!!poster.querySelector('img'),background:getComputedStyle(poster).backgroundColor,box:[box.x,box.y,box.width,box.height]};
-        }),centered:!!message && Math.abs(headingBox.y+headingBox.height/2-innerHeight/2)<1,opacity:getComputedStyle(host).opacity};
+        }),headingAboveGrid:!!grid && heading.getBoundingClientRect().bottom <= grid.getBoundingClientRect().top,opacity:getComputedStyle(host).opacity};
     })()`);
     await refresh({},'/watch?v=other000006');
     const before = await screen();
@@ -146,8 +146,8 @@ async function main() {
     assert.equal((await screen()).hidden,false,'a cached successful check cannot reopen a completed saved video');
     await refresh({slots:completed.map(slot=>({...slot,completed:true}))},'/watch?v=other000004');
     const done = await screen();
-    assert.equal(done.heading,'You’ve watched all your saved videos for today.');
-    assert.equal(done.centered,true);
+    assert.equal(done.heading,'Today’s saved videos');
+    assert.equal(done.headingAboveGrid,true);
     assert.equal(done.links.length,0);
     assert.deepEqual(done.cards.map(card=>card.status),Array(4).fill('Watched'));
     assert.ok(done.cards.every(card=>!card.photo && card.background==='rgb(0, 0, 0)'));

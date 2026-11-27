@@ -1201,7 +1201,6 @@
         .brand-label:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:4px;border-radius:4px}
         h1{margin:12px 0 24px;font-size:var(--heading-size);font-weight:650;line-height:1.2}
         .cards{display:grid;grid-template-columns:var(--vigil-home-columns,repeat(auto-fill,minmax(min(100%,300px),1fr)));column-gap:16px;row-gap:0}
-        .cards[data-watched]{margin-top:calc(var(--heading-size) * 1.2 + 36px)}
         .card{display:block;min-width:0;color:inherit;text-decoration:none;touch-action:manipulation}
         a.card:focus-visible{outline:2px solid var(--vigil-finished-focus,#3ea6ff);outline-offset:3px}
         .poster{display:grid;place-items:center;position:relative;aspect-ratio:16/9;border-radius:12px;overflow:hidden;
@@ -1214,10 +1213,6 @@
         .card-copy{display:block;padding:10px 0 14px}
         .title{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere;font-size:16px;font-weight:600;line-height:1.3}
         .byline{display:block;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--vigil-finished-secondary,#aaa);font-size:14px}
-        .finished-message{position:fixed;inset:0;display:grid;place-items:center;padding:24px;pointer-events:none}
-        .finished-message h1{max-width:calc(100vw - 48px);text-align:center;text-wrap:balance;margin:0;padding:16px 22px;
-          border:1px solid #8886;border-radius:8px;background:var(--vigil-finished-raised,#242424);box-shadow:0 6px 26px #0005;
-          font-size:clamp(18px,3.5vw,24px)}
         @keyframes vigil-content-in{from{opacity:0}to{opacity:1}}
         @media(max-width:600px){:host{padding-top:calc(env(safe-area-inset-top) + 24px);padding-inline:0}.brand,main>h1{padding-inline:12px}.cards{grid-template-columns:minmax(0,1fr)}.poster{border-radius:0}.card-copy{padding-inline:12px}.title{font-size:14px}}
         @media(prefers-reduced-motion:reduce){main{animation:none!important}}
@@ -1266,9 +1261,8 @@
     ])]);
     if (signature === finishedSignature) { finishedScreen.hidden = false; return; }
     finishedSignature = signature;
-    const heading = document.createElement('h1'); heading.textContent = allWatched
-      ? 'You’ve watched all your saved videos for today.'
-      : timeFinished ? 'You’ve run out of watch time today.' : 'Today’s saved videos';
+    const heading = document.createElement('h1');
+    heading.textContent = timeFinished && !allWatched ? 'You’ve run out of watch time today.' : 'Today’s saved videos';
     finishedScreen.setAttribute('aria-label', timeFinished && !allWatched ? 'Daily YouTube watch time complete' : 'Today’s saved videos');
     const brand = document.createElement('div'); brand.className = 'brand';
     const label = document.createElement(timeFinished ? 'span' : 'button'); label.textContent = timeFinished ? 'YouTube' : 'Watch Later';
@@ -1325,13 +1319,7 @@
       return item;
     });
     list.append(...cards);
-    if (allWatched) {
-      list.setAttribute('data-watched', '');
-      const message = document.createElement('div'); message.className = 'finished-message';
-      message.setAttribute('role', 'status');
-      message.append(heading);
-      finishedScreen._content.replaceChildren(brand, list, message);
-    } else finishedScreen._content.replaceChildren(brand, heading, ...(cards.length ? [list] : []));
+    finishedScreen._content.replaceChildren(brand, heading, ...(cards.length ? [list] : []));
     finishedScreen.hidden = false;
 
     function wireSavedCard(link) {
