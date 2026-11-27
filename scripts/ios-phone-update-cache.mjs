@@ -64,20 +64,14 @@ function hasCompleteServiceLaunches(receipt) {
   return COMBINED_SOCIAL_SERVICE_IDS.every(service => verified.has(service));
 }
 
-export function reusableServiceLaunchBuild(receipt, { device, installedApp, edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications, replaceLegacy, verifyServices }) {
-  if (verifyServices || replaceLegacy || settingsChanged || !policyAlreadyCurrent || !policyFingerprint
-    || edition !== "personal" || receipt?.edition !== edition || receipt.socialContainer !== true
-    || !device?.udid || receipt.device?.udid !== device.udid
-    || !device.osVersion || receipt.device.osVersion !== device.osVersion
-    || receipt.policyFingerprint !== policyFingerprint
-    || (receipt.notificationPushEnvironment ?? "off") !== pushNotifications
-    || !hasCompleteServiceLaunches(receipt)) return null;
+export function reusableServiceLaunchBuild(receipt, { device, verifyServices }) {
+  if (verifyServices || !device?.udid || receipt?.device?.udid !== device.udid
+    || receipt.socialContainer !== true || !hasCompleteServiceLaunches(receipt)) return null;
 
+  // These timestamps describe the last service audit on this iPhone. The
+  // transaction independently checks the currently installed app and policy.
   const app = Array.isArray(receipt.apps) && receipt.apps.find(entry => entry?.bundleId === "tech.caseline.vigil.instagram");
-  if (!app?.version || installedApp?.version !== app.version || String(installedApp.bundleVersion) !== String(app.build)
-    || !Number.isFinite(Date.parse(app.launchVerifiedAt))) return null;
-  // Older receipts ran all services in the deployed build. Keep that build
-  // number when carrying the original evidence into a routine update.
+  if (!Number.isFinite(Date.parse(app?.launchVerifiedAt))) return null;
   const build = receipt.serviceLaunchBuild ?? app.build;
   return Number.isInteger(build) && build > 0 ? build : null;
 }

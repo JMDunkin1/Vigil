@@ -22,13 +22,12 @@ editing policy code or deleting/changing a compiled module invalidates it.
 Signing renewal checks the app and every extension, and performs a clean
 rebuild if Xcode has to replace stale provisioning profiles. Changed updates
 validate all four protection levels and verify the exact live supervised policy.
-A routine Personal update checks that the newly installed Vigil app launches
-and stays running, then retains the previous service verification build and
-timestamps if the same iPhone, iOS version and policy are verified. This also
-applies to forced reinstalls. Migration, policy changes, missing service receipts
-and an explicit `--verify-services` run open and verify all eight services. An
-unchanged installed policy with a matching receipt can also reuse its existing
-signed profile.
+After migration, a routine update launches the combined Vigil app once and
+checks that it stays running. The updater verifies the exact live policy and
+records the build and timestamps of the last full service check on this iPhone.
+App, policy, signing and iOS changes do not trigger a tour of the eight services.
+The updater opens each service only during migration, when the phone lacks a
+complete service verification record, or when you request `--verify-services`.
 If source edits land while an update is building or verifying, it retries the
 verified transaction with the incremental cache, up to three attempts. Changes
 detected before installation stop that attempt before it touches the phone.

@@ -201,7 +201,7 @@ assert.match(
 );
 assert.match(
   phoneSuiteSource,
-  /Verifying installed \$\{social\.name\} launches and remains running[\s\S]*?verifySocialAppLaunch[\s\S]*?failed its required launch verification[\s\S]*?writeReceipt/u,
+  /await activateSocialContainer[\s\S]*?verifySocialAppLaunch\(device.identifier, combined[\s\S]*?launchVerifications.set\(combined.bundleId, launch\)[\s\S]*?await writeReceipt/u,
   "the updater must verify launch survival before publishing its success receipt"
 );
 

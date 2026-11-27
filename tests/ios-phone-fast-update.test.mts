@@ -85,20 +85,19 @@ try {
   assert.equal(reusableServiceLaunchBuild(verified, { ...fullVerification, ...routine }), null);
   assert.equal(reusableServiceLaunchBuild({
     ...verified, serviceLaunchBuild: 261, apps: [{ ...combinedApp, build: 262 }]
-  }, { ...routine, installedApp: { ...installedApp, bundleVersion: "262" } }), 261, "routine updates preserve the historical service verification build");
+  }, routine), 261, "routine updates preserve the historical service verification build");
   for (const changed of [
     { edition: "enhanced" },
     { policyFingerprint: "changed-policy" },
     { policyAlreadyCurrent: false },
     { settingsChanged: true },
-    { verifyServices: true },
     { replaceLegacy: true },
     { pushNotifications: "development" },
     { installedApp: undefined },
     { installedApp: { ...installedApp, bundleVersion: "260" } },
-    { device: { ...device, udid: "other-phone" } },
     { device: { ...device, osVersion: "27.4" } }
-  ]) assert.equal(reusableServiceLaunchBuild(verified, { ...routine, ...changed }), null);
+  ]) assert.equal(reusableServiceLaunchBuild(verified, { ...routine, ...changed }), 261, "routine updates keep the historical service audit");
+  assert.equal(reusableServiceLaunchBuild(verified, { device: { udid: "other-phone" } }), null);
   for (const changed of [
     null,
     { ...verified, socialContainer: false },

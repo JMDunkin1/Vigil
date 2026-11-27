@@ -1296,7 +1296,7 @@ async function updatePhoneTransaction(selectedOptions) {
 
   phoneProgress("launch", "Verify app launch and live policy");
   const combined = DEFAULT_SOCIAL_APPS[0];
-  const { launch, settingsChanged } = await activateSocialContainer(selectedOptions.server, async () => {
+  const { launch } = await activateSocialContainer(selectedOptions.server, async () => {
     return launchVerifications.get(combined.bundleId) ?? verifySocialAppLaunch(device.identifier, combined, toolEnvironment);
   });
   launchVerifications.set(combined.bundleId, launch);
@@ -1320,25 +1320,12 @@ async function updatePhoneTransaction(selectedOptions) {
   }
   await persistPhoneEdition(edition);
 
-  const previousServiceLaunchBuild = reusableServiceLaunchBuild(previousReceipt, {
-    device, installedApp: installedApps.find(app => app.bundleIdentifier === combined.bundleId),
-    edition, policyFingerprint, policyAlreadyCurrent, settingsChanged, pushNotifications,
-    replaceLegacy, verifyServices
-  });
+  const previousServiceLaunchBuild = reusableServiceLaunchBuild(previousReceipt, { device, verifyServices });
   let serviceLaunches;
   if (previousServiceLaunchBuild !== null) {
     serviceLaunches = previousReceipt.serviceLaunches;
-    console.log(`Vigil launched. Retaining service launch checks from build ${previousServiceLaunchBuild} for the unchanged policy.`);
+    console.log(`Vigil launched. Last full service check was on build ${previousServiceLaunchBuild}.`);
   } else {
-    for (const social of targetedSocialApps) {
-      console.log(`Verifying installed ${social.name} launches and remains running…`);
-      const verifiedLaunch = await verifySocialAppLaunch(device.identifier, social, toolEnvironment);
-      if (!verifiedLaunch.ok) {
-        throw new Error(`${social.name} was installed but failed its required launch verification: ${verifiedLaunch.detail}`);
-      }
-      launchVerifications.set(social.bundleId, verifiedLaunch);
-    }
-
     const verifiedProfiles = await configurationProfileStatus(device.identifier, toolEnvironment);
     if (!verifiedProfiles.available || !verifiedProfiles.profiles.some((profile) =>
       profile.identifier === PROFILE_IDENTIFIER && profileName(profile).includes(policyFingerprint.slice(0, 12)))) {
