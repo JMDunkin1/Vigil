@@ -1,36 +1,36 @@
 {
   "schemaVersion": 3,
-  "version": "0.3.296",
-  "build": 299,
+  "version": "0.3.297",
+  "build": 300,
   "sourceFingerprints": {
     "personal": "79aef623f773eeca7df282aa6c6cca7b941db37dd23eee3053fbbfec0c707e61",
     "enhanced": "33c130da2542d9371f096f10b7c54e9d19cb3f7fafbbbb750be7b501ec3bd51b"
   },
-  "releasedAt": "2026-11-27T00:03:32.446Z",
+  "releasedAt": "2026-11-27T00:04:32.108Z",
   "apps": {
     "instagram": {
-      "version": "0.3.272",
-      "build": 275,
+      "version": "0.3.273",
+      "build": 276,
       "sourceFingerprint": "22d3bc4ef10e2f247f306bea1ac16e62d08c0d41828e823245af05fe81d048bd",
-      "releasedAt": "2026-11-27T00:01:33.787Z"
+      "releasedAt": "2026-11-27T00:04:32.108Z"
     },
     "youtube": {
-      "version": "0.3.269",
-      "build": 272,
+      "version": "0.3.270",
+      "build": 273,
       "sourceFingerprint": "392c7a06db78ff1b391ff2614541009b82372a49f61e022427486ba543c7b4c5",
-      "releasedAt": "2026-11-27T00:01:33.787Z"
+      "releasedAt": "2026-11-27T00:04:32.108Z"
     },
     "snapchat": {
-      "version": "0.1.199",
-      "build": 200,
+      "version": "0.1.200",
+      "build": 201,
       "sourceFingerprint": "73b258ee1a4c5820fd585390dc1f9d806009612b8ec010e079fde1821384a27e",
-      "releasedAt": "2026-11-27T00:01:33.787Z"
+      "releasedAt": "2026-11-27T00:04:32.108Z"
     },
     "linkedin": {
-      "version": "0.1.190",
-      "build": 191,
+      "version": "0.1.191",
+      "build": 192,
       "sourceFingerprint": "47b8c77888349957aa6be7e0873d69665f1eb67d92888eb218c446a8a1c4c57f",
-      "releasedAt": "2026-11-27T00:01:33.787Z"
+      "releasedAt": "2026-11-27T00:04:32.108Z"
     }
   }
 }
